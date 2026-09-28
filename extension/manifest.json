@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Manga Translator - Gemini",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Japanese manga OCR + batch translation with Gemini API.",
   "permissions": [
     "activeTab",
