@@ -7,9 +7,9 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from .image.decode import decode_image
 from .ocr.paddle_ocr_engine import recognize
-from .translation.ollama_vision_translator import DEFAULT_MODEL, OllamaError, test_connection, translate_batch
+from .translation.ollama_text_translator import DEFAULT_MODEL, OllamaError, test_connection, translate_batch
 
-app = FastAPI(title="Manga Translator PaddleOCR + Ollama Vision Backend")
+app = FastAPI(title="Manga Translator MangaOCR + Ollama Text Backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,7 +19,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"ok": True, "backend": "ready", "translation": "ollama-local-vision", "default_model": DEFAULT_MODEL}
+    return {"ok": True, "backend": "ready", "translation": "ollama-local-text", "default_model": DEFAULT_MODEL}
 
 @app.post("/api/test-ollama")
 def test_ollama(x_ollama_model: str | None = Header(default=None)):
@@ -41,7 +41,7 @@ async def translate_image(
         img = decode_image(raw)
         items = recognize(img)
         model = x_ollama_model or DEFAULT_MODEL
-        translations = translate_batch(items, img, model)
+        translations = translate_batch(items, model)
         return {
             "ok": True,
             "model": model,

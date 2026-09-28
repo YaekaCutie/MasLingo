@@ -21,7 +21,10 @@ async function fetchBackend(path, options = {}) {
 
 async function refreshConfig() {
   const cfg = await chrome.storage.local.get(["ollamaModel"]);
-  modelName.textContent = cfg.ollamaModel || "qwen2.5vl:7b";
+  modelName.textContent = cfg.ollamaModel && cfg.ollamaModel !== "qwen2.5vl:7b" ? cfg.ollamaModel : "qwen2.5:7b";
+  if (modelName.textContent !== cfg.ollamaModel) {
+    await chrome.storage.local.set({ ollamaModel: modelName.textContent });
+  }
   ollamaStatus.textContent = "本机模式";
 }
 

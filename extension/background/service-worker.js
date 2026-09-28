@@ -21,6 +21,8 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
   (async()=>{
     try{
       const cfg=await chrome.storage.local.get(["ollamaModel","debugMode"]);
+      const model=cfg.ollamaModel && cfg.ollamaModel!=="qwen2.5vl:7b" ? cfg.ollamaModel : "qwen2.5:7b";
+      if(model!==cfg.ollamaModel) await chrome.storage.local.set({ollamaModel:model});
 
       const tab=await chrome.tabs.get(sender.tab.id);
       const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"});
@@ -48,7 +50,7 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
       const fd=new FormData();
       fd.append("image",cropped,"manga.png");
 
-      const headers={"X-Ollama-Model":cfg.ollamaModel || "qwen2.5vl:7b"};
+      const headers={"X-Ollama-Model":model};
       const resp=await fetchBackend("/api/translate-image",{
         method:"POST",headers,body:fd
       });

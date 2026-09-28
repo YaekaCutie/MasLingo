@@ -1,11 +1,9 @@
-import base64
 import json
 import os
-from io import BytesIO
 
 import requests
 
-DEFAULT_MODEL = "qwen2.5vl:7b"
+DEFAULT_MODEL = "qwen2.5:7b"
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
 
 
@@ -30,15 +28,20 @@ def _request(method, path, **kwargs):
     if not response.ok:
         try:
             detail = response.json().get("error", "")
-        except ValueError:
+        except (ValueError, AttributeError):
             detail = ""
+        if "model" in detail.lower() and "not found" in detail.lower():
+            raise OllamaError("Ollama 模型未下载。请检查模型名称并运行 `ollama pull <模型名>`。")
         raise OllamaError(detail or f"Ollama 返回 HTTP {response.status_code}")
     return response
 
 
 def test_connection(model=DEFAULT_MODEL):
     response = _request("GET", "/api/tags", timeout=10)
-    models = [item.get("name", "") for item in response.json().get("models", [])]
+    try:
+        models = [item.get("name", "") for item in response.json().get("models", [])]
+    except (ValueError, AttributeError, TypeError) as error:
+        raise OllamaError("Ollama 返回格式异常，无法读取本机模型列表。") from error
     if model not in models:
         available = ", ".join(models) or "无"
         raise OllamaError(
@@ -48,13 +51,10 @@ def test_connection(model=DEFAULT_MODEL):
     return {"model": model, "installed_models": models}
 
 
-def translate_batch(items, image, model=DEFAULT_MODEL):
+def translate_batch(items, model=DEFAULT_MODEL):
     if not items:
         return []
 
-    image_buffer = BytesIO()
-    image.convert("RGB").save(image_buffer, format="JPEG", quality=90, optimize=True)
-    image_data = base64.b64encode(image_buffer.getvalue()).decode("ascii")
     payload = {
         "model": model,
         "stream": False,
@@ -64,15 +64,16 @@ def translate_batch(items, image, model=DEFAULT_MODEL):
             {
                 "role": "system",
                 "content": (
-                    "你是专业的日中漫画翻译器。结合附图语境，把 OCR 提供的日文逐条翻译成自然简体中文。"
+                    "你是专业的日中漫画翻译器。将给定的日文 OCR 条目逐条翻译为自然简体中文。"
+                    "你只能依据文本，不会看到漫画图片；不得猜测画面信息。"
                     "保留条目顺序，不合并、不遗漏、不解释。严格返回 JSON 对象，"
-                    "格式为 {\"translations\":[\"译文1\",\"译文2\"]}，数组长度必须与 OCR 条目数完全相同。"
+                    "格式为 {\"translations\":[\"译文1\",\"译文2\"]}，"
+                    "数组长度必须与 OCR 条目数完全相同。"
                 ),
             },
             {
                 "role": "user",
                 "content": json.dumps({"ocr_items": items}, ensure_ascii=False),
-                "images": [image_data],
             },
         ],
     }

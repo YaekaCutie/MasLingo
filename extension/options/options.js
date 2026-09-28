@@ -21,7 +21,8 @@ async function fetchBackend(path, options = {}) {
 
 async function load() {
   const cfg = await chrome.storage.local.get(["ollamaModel", "debugMode"]);
-  model.value = cfg.ollamaModel || "qwen2.5vl:7b";
+  model.value = cfg.ollamaModel && cfg.ollamaModel !== "qwen2.5vl:7b" ? cfg.ollamaModel : "qwen2.5:7b";
+  if (model.value !== cfg.ollamaModel) await chrome.storage.local.set({ ollamaModel: model.value });
   debugMode.checked = cfg.debugMode !== false;
 }
 
@@ -51,7 +52,7 @@ document.getElementById("test").onclick = async () => {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || "测试失败");
-    result.textContent=`Ollama 已连接\n视觉模型：${j.model}\n本机已安装：${j.installed_models.join(", ")}`;
+    result.textContent=`Ollama 已连接\n文本模型：${j.model}\n本机已安装：${j.installed_models.join(", ")}`;
   } catch (e) {
     result.textContent="测试失败：" + e.message;
   }

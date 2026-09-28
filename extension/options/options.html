@@ -9,14 +9,14 @@
 <body>
   <main>
     <h1>Manga Translator</h1>
-    <p class="sub">本机 PaddleOCR + Ollama 视觉模型设置</p>
+    <p class="sub">本机 MangaOCR + Ollama 文本模型设置</p>
 
     <section class="panel">
-      <label for="model">Ollama 视觉模型</label>
+      <label for="model">Ollama 文本模型</label>
       <div class="key-row">
-        <input id="model" type="text" autocomplete="off" value="qwen2.5vl:7b" placeholder="qwen2.5vl:7b">
+        <input id="model" type="text" autocomplete="off" value="qwen2.5:7b" placeholder="qwen2.5:7b">
       </div>
-      <div class="hint">模型在本机运行并接收选区图片与 OCR 文本。可用 `ollama pull qwen2.5vl:7b` 下载。</div>
+      <div class="hint">只发送 OCR 文本，不发送漫画图片。资源较少的电脑可选择较小的 Ollama 文本模型。</div>
 
       <label class="toggle-row" for="debugMode">
         <input id="debugMode" type="checkbox" checked>
