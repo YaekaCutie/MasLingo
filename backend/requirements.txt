@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+manga-ocr==0.1.16
+requests
+python-dotenv

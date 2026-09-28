@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Manga Translator 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>Manga Translator</h1>
+    <p class="sub">Gemini API 设置</p>
+
+    <section class="panel">
+      <label for="apiKey">Gemini API Key</label>
+      <div class="key-row">
+        <input id="apiKey" type="password" autocomplete="off" placeholder="AIza...">
+        <button id="toggleKey" type="button">显示</button>
+      </div>
+      <div class="hint">Key 只保存在此浏览器的扩展本地存储中。翻译时由扩展通过本机后端发送给 Gemini。</div>
+
+      <label for="model">Gemini 模型</label>
+      <select id="model">
+        <option value="gemini-3.8-flash">Gemini 3.8 Flash</option>
+        <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+        <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+        <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+        <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
+      </select>
+      <div class="hint">自动切换开启时，模型失败会按列表顺序尝试后续可用型号。</div>
+
+      <label class="toggle-row" for="autoFallbackEnabled">
+        <input id="autoFallbackEnabled" type="checkbox" checked>
+        <span>主模型失败时自动切换到下级模型</span>
+      </label>
+      <div class="hint">按模型列表顺序逐级尝试；鉴权失败不会切换。关闭后只使用所选模型。</div>
+
+      <label class="toggle-row" for="debugMode">
+        <input id="debugMode" type="checkbox" checked>
+        <span>调试模式：显示 OCR 原文和中文译文</span>
+      </label>
+      <div class="hint">开启后会在结果窗逐条显示 OCR 识别内容及对应译文。</div>
+
+      <div class="actions">
+        <button id="save" class="primary">保存</button>
+        <button id="test">测试 API Key</button>
+      </div>
+      <div id="result" class="result">尚未测试</div>
+    </section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
