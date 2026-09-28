@@ -1,5 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(Path(__file__).resolve().parent / ".env")
+
 from .image.decode import decode_image
 from .ocr.paddle_ocr_engine import recognize
 from .translation.ollama_vision_translator import DEFAULT_MODEL, OllamaError, test_connection, translate_batch
