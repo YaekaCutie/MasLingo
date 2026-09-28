@@ -1,12 +1,10 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from .image.decode import decode_image
-from .ocr.manga_ocr_engine import recognize
-from .translation.gemini_translator import translate_batch, test_model, GeminiError
+from .ocr.paddle_ocr_engine import recognize
+from .translation.ollama_vision_translator import DEFAULT_MODEL, OllamaError, test_connection, translate_batch
 
-DEFAULT_MODEL = "gemini-3.8-flash"
-
-app = FastAPI(title="Manga Translator Gemini Backend")
+app = FastAPI(title="Manga Translator PaddleOCR + Ollama Vision Backend")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,51 +14,36 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"ok": True, "backend": "ready", "default_model": DEFAULT_MODEL}
+    return {"ok": True, "backend": "ready", "translation": "ollama-local-vision", "default_model": DEFAULT_MODEL}
 
-@app.post("/api/test-gemini")
-def test_gemini(
-    x_gemini_api_key: str | None = Header(default=None),
-    x_gemini_model: str | None = Header(default=None)
-):
+@app.post("/api/test-ollama")
+def test_ollama(x_ollama_model: str | None = Header(default=None)):
     try:
-        return {"ok": True, **test_model(
-            x_gemini_api_key or "",
-            x_gemini_model or DEFAULT_MODEL
-        )}
-    except GeminiError as e:
-        raise HTTPException(502, str(e))
+        return {"ok": True, **test_connection(x_ollama_model or DEFAULT_MODEL)}
+    except OllamaError as e:
+        raise HTTPException(503, str(e))
 
 @app.post("/api/translate-image")
 async def translate_image(
     image: UploadFile = File(...),
-    x_gemini_api_key: str | None = Header(default=None),
-    x_gemini_model: str | None = Header(default=None),
-    x_gemini_auto_fallback: bool = Header(default=True)
+    x_ollama_model: str | None = Header(default=None)
 ):
-    if not x_gemini_api_key:
-        raise HTTPException(401, "未配置 Gemini API Key")
     raw = await image.read()
     if len(raw) > 15 * 1024 * 1024:
         raise HTTPException(413, "图片过大")
 
     try:
         img = decode_image(raw)
-        text = recognize(img).strip()
-        items = [x.strip() for x in text.splitlines() if x.strip()]
-        model = x_gemini_model or DEFAULT_MODEL
-        translations, used_model = translate_batch(
-            items, x_gemini_api_key, model, image=img,
-            auto_fallback=x_gemini_auto_fallback
-        )
+        items = recognize(img)
+        model = x_ollama_model or DEFAULT_MODEL
+        translations = translate_batch(items, img, model)
         return {
             "ok": True,
-            "model": used_model,
+            "model": model,
             "requested_model": model,
-            "fallback_used": used_model != model,
             "items": translations
         }
-    except GeminiError as e:
-        raise HTTPException(502, str(e))
+    except OllamaError as e:
+        raise HTTPException(503, str(e))
     except Exception as e:
         raise HTTPException(500, str(e))

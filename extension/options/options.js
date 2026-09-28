@@ -1,13 +1,7 @@
-const apiKey = document.getElementById("apiKey");
 const model = document.getElementById("model");
-const autoFallbackEnabled = document.getElementById("autoFallbackEnabled");
 const debugMode = document.getElementById("debugMode");
 const result = document.getElementById("result");
 const BACKEND_URLS = ["http://127.0.0.1:8001", "http://localhost:8001"];
-const RETIRED_MODELS = {
-  "gemini-2.5-flash": "gemini-3.8-flash",
-  "gemini-2.5-flash-lite": "gemini-3.5-flash-lite"
-};
 
 async function fetchBackend(path, options = {}) {
   let lastError = null;
@@ -26,15 +20,9 @@ async function fetchBackend(path, options = {}) {
 }
 
 async function load() {
-  const cfg = await chrome.storage.local.get(["geminiApiKey","geminiModel","debugMode","autoFallbackEnabled"]);
-  apiKey.value = cfg.geminiApiKey || "";
-  model.value = RETIRED_MODELS[cfg.geminiModel] || cfg.geminiModel || "gemini-3.8-flash";
-  if (cfg.geminiModel && RETIRED_MODELS[cfg.geminiModel]) {
-    await chrome.storage.local.set({ geminiModel: model.value });
-    result.textContent = `已将停用模型替换为 ${model.value}。`;
-  }
+  const cfg = await chrome.storage.local.get(["ollamaModel", "debugMode"]);
+  model.value = cfg.ollamaModel || "qwen2.5vl:7b";
   debugMode.checked = cfg.debugMode !== false;
-  autoFallbackEnabled.checked = cfg.autoFallbackEnabled !== false;
 }
 
 debugMode.addEventListener("change", async () => {
@@ -42,44 +30,28 @@ debugMode.addEventListener("change", async () => {
   result.textContent = debugMode.checked ? "调试模式已开启。" : "调试模式已关闭。";
 });
 
-autoFallbackEnabled.addEventListener("change", async () => {
-  await chrome.storage.local.set({ autoFallbackEnabled: autoFallbackEnabled.checked });
-  result.textContent = autoFallbackEnabled.checked ? "自动切换下级模型已开启。" : "自动切换下级模型已关闭。";
-});
-
-document.getElementById("toggleKey").onclick = () => {
-  const b = document.getElementById("toggleKey");
-  if (apiKey.type === "password") { apiKey.type="text"; b.textContent="隐藏"; }
-  else { apiKey.type="password"; b.textContent="显示"; }
-};
-
 document.getElementById("save").onclick = async () => {
-  const key = apiKey.value.trim();
-  if (!key) { result.textContent="API Key 不能为空。"; return; }
+  const selectedModel = model.value.trim();
+  if (!selectedModel) { result.textContent="请填写 Ollama 模型名称。"; return; }
   await chrome.storage.local.set({
-    geminiApiKey: key,
-    geminiModel: model.value
+    ollamaModel: selectedModel
   });
   result.textContent="已保存。";
 };
 
 document.getElementById("test").onclick = async () => {
-  const key = apiKey.value.trim();
-  const selectedModel = model.value;
-  if (!key) { result.textContent="请先填写 API Key。"; return; }
+  const selectedModel = model.value.trim();
+  if (!selectedModel) { result.textContent="请先填写 Ollama 模型名称。"; return; }
 
   result.textContent="正在测试…";
   try {
-    const r = await fetchBackend("/api/test-gemini", {
+    const r = await fetchBackend("/api/test-ollama", {
       method:"POST",
-      headers:{
-        "X-Gemini-API-Key": key,
-        "X-Gemini-Model": selectedModel
-      }
+      headers:{"X-Ollama-Model": selectedModel}
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || "测试失败");
-    result.textContent=`连接成功\n模型：${j.model}\n模型名称：${j.display_name || "—"}`;
+    result.textContent=`Ollama 已连接\n视觉模型：${j.model}\n本机已安装：${j.installed_models.join(", ")}`;
   } catch (e) {
     result.textContent="测试失败：" + e.message;
   }

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Manga Translator - Gemini",
+  "name": "Manga Translator - PaddleOCR + Ollama Vision",
   "version": "0.0.1",
-  "description": "Japanese manga OCR + batch translation with Gemini API.",
+  "description": "Local Japanese manga OCR and vision translation with PaddleOCR and Ollama.",
   "permissions": [
     "activeTab",
     "scripting",

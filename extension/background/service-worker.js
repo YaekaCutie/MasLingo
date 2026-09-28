@@ -20,8 +20,7 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
   if(msg.type!=="TRANSLATE_REGION") return;
   (async()=>{
     try{
-      const cfg=await chrome.storage.local.get(["geminiApiKey","geminiModel","debugMode","autoFallbackEnabled"]);
-      if(!cfg.geminiApiKey) throw new Error("未配置 Gemini API Key");
+      const cfg=await chrome.storage.local.get(["ollamaModel","debugMode"]);
 
       const tab=await chrome.tabs.get(sender.tab.id);
       const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"});
@@ -49,11 +48,7 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
       const fd=new FormData();
       fd.append("image",cropped,"manga.png");
 
-      const headers={
-        "X-Gemini-API-Key":cfg.geminiApiKey,
-        "X-Gemini-Model":cfg.geminiModel || "gemini-3.8-flash",
-        "X-Gemini-Auto-Fallback":String(cfg.autoFallbackEnabled!==false)
-      };
+      const headers={"X-Ollama-Model":cfg.ollamaModel || "qwen2.5vl:7b"};
       const resp=await fetchBackend("/api/translate-image",{
         method:"POST",headers,body:fd
       });

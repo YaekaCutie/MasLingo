@@ -6,15 +6,15 @@ User selects region
   ↓
 captureVisibleTab + crop
   ↓
-POST multipart image + X-Gemini-API-Key + X-Gemini-Model
+POST multipart image + X-Ollama-Model
   ↓
 Local FastAPI
   ↓
-Manga OCR
+PaddleOCR Japanese OCR
   ↓
 Split multiple OCR lines
   ↓
-ONE Gemini generateContent request
+ONE local Ollama vision request with OCR text + image
   ↓
 JSON array preserving order
   ↓
@@ -28,6 +28,6 @@ Options UI → chrome.storage.local
           local backend request header
 
 Security model:
-- API Key is not hard-coded in extension source.
-- API Key is not stored in backend/.env by default.
-- Backend receives the key per request and forwards it to Google.
+- OCR and translation run locally; the image and text are not sent to a cloud API.
+- The extension sends only the selected Ollama model name to the local FastAPI backend.
+- Ollama listens on the local machine at `127.0.0.1:11434` by default.
