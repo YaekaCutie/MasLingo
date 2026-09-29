@@ -10,13 +10,11 @@ POST multipart image + X-Ollama-Model
   ↓
 Local FastAPI
   ↓
-PaddleOCR detects ordered text regions
+MangaOCR recognizes Japanese text from the selected region
   ↓
-MangaOCR recognizes Japanese text from each region
+One local Ollama text request with the OCR result
   ↓
-One local Ollama text request with ordered OCR strings
-  ↓
-Validate JSON translations and preserve item order
+Validate the JSON translation and preserve the result
   ↓
 Chrome overlay
 
@@ -36,4 +34,4 @@ Security model:
 
 Limitations:
 - Text-only translation cannot use visual context for character voice, names, or omitted phrases.
-- OCR recognition order is right-to-left by region center, then top-to-bottom.
+- Each selected region is recognized as a single text item; the user should select one text area at a time.
