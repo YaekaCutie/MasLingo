@@ -3,5 +3,3 @@ uvicorn[standard]
 python-multipart
 pillow
 manga-ocr
-requests
-python-dotenv

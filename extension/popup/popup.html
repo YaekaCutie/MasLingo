@@ -11,19 +11,19 @@
     <div class="title-row">
       <div>
         <h1>Manga Translator</h1>
-        <p>本机 MangaOCR + Ollama 文本翻译</p>
+        <p>本机 MangaOCR 日文识别</p>
       </div>
       <button id="settings" class="icon-btn" title="设置">⚙</button>
     </div>
 
     <section class="card">
-      <div class="row"><span>Ollama</span><strong id="ollamaStatus">本机模式</strong></div>
-      <div class="row"><span>模型</span><span id="modelName">—</span></div>
+      <div class="row"><span>OCR 引擎</span><strong>MangaOCR</strong></div>
+      <div class="row"><span>运行方式</span><span>本机离线</span></div>
     </section>
 
-    <button id="select" class="primary">选择漫画区域并翻译</button>
+    <button id="select" class="primary">选择漫画区域并识别</button>
     <button id="health">检查后端</button>
-    <button id="settings2">本机模型设置</button>
+    <button id="settings2">识别设置</button>
     <pre id="status">准备就绪</pre>
   </main>
   <script src="popup.js"></script>

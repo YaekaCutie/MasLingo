@@ -9,26 +9,19 @@
 <body>
   <main>
     <h1>Manga Translator</h1>
-    <p class="sub">本机 MangaOCR + Ollama 文本模型设置</p>
+    <p class="sub">本机 MangaOCR 识别设置</p>
 
     <section class="panel">
-      <label for="model">Ollama 文本模型</label>
-      <div class="key-row">
-        <input id="model" type="text" autocomplete="off" value="qwen2.5:7b" placeholder="qwen2.5:7b">
-      </div>
-      <div class="hint">只发送 OCR 文本，不发送漫画图片。资源较少的电脑可选择较小的 Ollama 文本模型。</div>
-
       <label class="toggle-row" for="debugMode">
         <input id="debugMode" type="checkbox" checked>
-        <span>调试模式：显示 OCR 原文和中文译文</span>
+        <span>显示 OCR 识别结果</span>
       </label>
-      <div class="hint">开启后会在结果窗逐条显示 OCR 识别内容及对应译文。</div>
+      <div class="hint">关闭后只保留识别流程，不影响结果内容。</div>
 
       <div class="actions">
         <button id="save" class="primary">保存</button>
-        <button id="test">测试本机模型</button>
       </div>
-      <div id="result" class="result">尚未测试</div>
+      <div id="result" class="result">MangaOCR 本地识别模式</div>
     </section>
   </main>
   <script src="options.js"></script>

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Manga Translator - MangaOCR + Ollama Text",
+  "name": "MangaOCR Local Reader",
   "version": "0.0.1",
-  "description": "Local Japanese manga OCR with MangaOCR and text translation using Ollama.",
+  "description": "Local Japanese manga OCR powered by MangaOCR.",
   "permissions": [
     "activeTab",
     "scripting",

@@ -17,12 +17,10 @@ async function fetchBackend(path,options={}){
 }
 
 chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
-  if(msg.type!=="TRANSLATE_REGION") return;
+  if(msg.type!=="RECOGNIZE_REGION") return;
   (async()=>{
     try{
-      const cfg=await chrome.storage.local.get(["ollamaModel","debugMode"]);
-      const model=cfg.ollamaModel && cfg.ollamaModel!=="qwen2.5vl:7b" ? cfg.ollamaModel : "qwen2.5:7b";
-      if(model!==cfg.ollamaModel) await chrome.storage.local.set({ollamaModel:model});
+      const cfg=await chrome.storage.local.get(["debugMode"]);
 
       const tab=await chrome.tabs.get(sender.tab.id);
       const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"});
@@ -46,13 +44,12 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
         bmp,sx,sy,cropWidth,cropHeight,0,0,cropWidth,cropHeight
       );
       const cropped=await canvas.convertToBlob({type:"image/png"});
-      await chrome.tabs.sendMessage(tab.id,{type:"TRANSLATION_CAPTURED",rect:r});
+      await chrome.tabs.sendMessage(tab.id,{type:"RECOGNITION_CAPTURED",rect:r});
       const fd=new FormData();
       fd.append("image",cropped,"manga.png");
 
-      const headers={"X-Ollama-Model":model};
-      const resp=await fetchBackend("/api/translate-image",{
-        method:"POST",headers,body:fd
+      const resp=await fetchBackend("/api/recognize-image",{
+        method:"POST",body:fd
       });
       const json=await resp.json();
       if(!resp.ok) throw new Error(json.detail||"后端错误");
