@@ -2,14 +2,22 @@ import logging
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from PIL import UnidentifiedImageError
 
 from .image.decode import decode_image
 from .ocr.manga_ocr_engine import recognize
+from .translation.local_translator import translate_texts
 
 app = FastAPI(title="MangaOCR Local Backend")
 logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
+
+
+class TranslationRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,6 +28,29 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"ok": True, "backend": "ready", "ocr": "mangaocr"}
+
+
+@app.post("/api/translate-text")
+async def translate_text(request: TranslationRequest):
+    items = [str(text).strip() for text in request.texts if str(text).strip()]
+    if not items:
+        raise HTTPException(400, "未提供可翻译文本。")
+
+    try:
+        translated = translate_texts(items)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+    if len(translated) != len(items):
+        translated = translated[: len(items)] + [items[-1]] * max(0, len(items) - len(translated))
+
+    return {
+        "ok": True,
+        "items": [
+            {"text": original, "translated": translated_text}
+            for original, translated_text in zip(items, translated)
+        ],
+    }
 
 
 async def _read_image(upload: UploadFile) -> bytes:

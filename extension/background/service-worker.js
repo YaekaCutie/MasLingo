@@ -53,6 +53,27 @@ chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
       });
       const json=await resp.json();
       if(!resp.ok) throw new Error(json.detail||"后端错误");
+
+      const texts=(json.items||[]).map(item=>item.text).filter(Boolean);
+      if(texts.length){
+        try{
+          const translateResp=await fetchBackend("/api/translate-text",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({texts})
+          });
+          const translateJson=await translateResp.json();
+          if(translateResp.ok && Array.isArray(translateJson.items)){
+            json.items=json.items.map((item,index)=>({
+              ...item,
+              translated:translateJson.items[index]?.translated || item.text
+            }));
+          }
+        }catch(e){
+          console.warn("本地翻译未启用，继续显示原始 OCR：", e.message);
+        }
+      }
+
       json.debug_mode=cfg.debugMode!==false;
       sendResponse(json);
     }catch(e){
