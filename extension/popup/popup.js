@@ -20,6 +20,27 @@ async function fetchBackend(path, options = {}) {
 async function refreshConfig() {
 }
 
+async function startSelection(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, {type:"START_SELECT"});
+    return;
+  } catch (error) {
+    if (!error.message?.includes("Receiving end does not exist")) {
+      throw error;
+    }
+  }
+
+  await chrome.scripting.insertCSS({
+    target:{tabId},
+    files:["content/styles.css"]
+  });
+  await chrome.scripting.executeScript({
+    target:{tabId},
+    files:["content/content.js"]
+  });
+  await chrome.tabs.sendMessage(tabId, {type:"START_SELECT"});
+}
+
 document.getElementById("settings").onclick =
 document.getElementById("settings2").onclick = () => chrome.runtime.openOptionsPage();
 
@@ -38,10 +59,14 @@ document.getElementById("select").onclick = async () => {
   await refreshConfig();
   const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
   try {
-    await chrome.tabs.sendMessage(tab.id, {type:"START_SELECT"});
+    if (!tab?.id) throw new Error("无法获取当前页面");
+    await startSelection(tab.id);
     window.close();
   } catch (e) {
-    status.textContent = "无法注入当前页面：" + e.message;
+    const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(e.message);
+    status.textContent = restrictedPage
+      ? "当前页面受 Chrome 限制，无法框选。请切换到普通网页后重试。"
+      : "无法启动框选：" + e.message;
   }
 };
 

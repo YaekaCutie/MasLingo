@@ -1,13 +1,23 @@
 import re
 from functools import lru_cache
+from pathlib import Path
 
+import numpy as np
+from huggingface_hub import snapshot_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, ImageEnhance, ImageOps
 from manga_ocr import MangaOcr
+
+MODEL_ID = "kha-white/manga-ocr-base"
 
 
 @lru_cache(maxsize=1)
 def get_engine():
-    return MangaOcr()
+    try:
+        model_path = snapshot_download(MODEL_ID, local_files_only=True)
+    except LocalEntryNotFoundError:
+        model_path = snapshot_download(MODEL_ID)
+    return MangaOcr(str(Path(model_path)))
 
 
 def _prepare_image(image):
@@ -50,7 +60,187 @@ def _normalize_texts(raw_text):
     return normalized
 
 
+def _otsu_threshold(gray):
+    histogram = np.asarray(gray.histogram(), dtype=np.float64)
+    total = histogram.sum()
+    levels = np.arange(256, dtype=np.float64)
+    background_weight = np.cumsum(histogram)
+    background_sum = np.cumsum(histogram * levels)
+    denominator = background_weight * (total - background_weight)
+    between_class_variance = np.zeros(256, dtype=np.float64)
+    valid = denominator > 0
+    between_class_variance[valid] = (
+        (background_sum[-1] * background_weight[valid] - background_sum[valid] * total) ** 2
+        / denominator[valid]
+    )
+    return min(220, max(80, int(np.argmax(between_class_variance))))
+
+
+def _detect_text_direction(image):
+    gray = ImageOps.grayscale(image)
+    width, height = gray.size
+    scale = min(1.0, 512 / width, 768 / height)
+    if scale < 1.0:
+        gray = gray.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.BOX,
+        )
+
+    width, height = gray.size
+    gray_pixels = np.asarray(gray, dtype=np.uint8)
+    shortest_side = min(width, height)
+    if shortest_side < 24:
+        return None
+
+    threshold = _otsu_threshold(gray)
+    smallest_cell = max(4, shortest_side // 28)
+    cell_step = max(2, shortest_side // 24)
+    largest_cell = max(smallest_cell + 1, shortest_side // 2)
+    scale_votes = []
+
+    for cell_size in range(smallest_cell, largest_cell, cell_step):
+        offset_scores = {"horizontal": [], "vertical": []}
+        for offset_y in (0, cell_size // 2):
+            for offset_x in (0, cell_size // 2):
+                right = width - offset_x
+                bottom = height - offset_y
+                columns = right // cell_size
+                rows = bottom // cell_size
+                if columns < 2 or rows < 2:
+                    continue
+
+                sample = gray_pixels[
+                    offset_y:offset_y + rows * cell_size,
+                    offset_x:offset_x + columns * cell_size,
+                ]
+                cell_density = sample.reshape(
+                    rows, cell_size, columns, cell_size
+                ).__lt__(threshold).mean(axis=(1, 3))
+                occupied = cell_density >= 0.12
+                occupied_count = int(occupied.sum())
+                coverage = occupied_count / occupied.size
+                if occupied_count < 4 or coverage < 0.01 or coverage > 0.6:
+                    continue
+
+                horizontal_pairs = int(np.count_nonzero(occupied[:, :-1] & occupied[:, 1:]))
+                vertical_pairs = int(np.count_nonzero(occupied[:-1, :] & occupied[1:, :]))
+                pair_count = horizontal_pairs + vertical_pairs
+                if pair_count < 2:
+                    continue
+
+                difference = horizontal_pairs - vertical_pairs
+                dominance = abs(difference) / pair_count
+                support = min(1.0, pair_count / (occupied_count * 0.5))
+                score = dominance * support
+                direction = "horizontal" if difference > 0 else "vertical"
+                offset_scores[direction].append(score)
+
+        horizontal_score = sum(offset_scores["horizontal"])
+        vertical_score = sum(offset_scores["vertical"])
+        if max(horizontal_score, vertical_score) >= 0.2:
+            scale_votes.append((horizontal_score, vertical_score))
+
+    if len(scale_votes) < 2:
+        return None
+
+    horizontal_votes = sum(horizontal > vertical for horizontal, vertical in scale_votes)
+    vertical_votes = sum(vertical > horizontal for horizontal, vertical in scale_votes)
+    winning_votes = max(horizontal_votes, vertical_votes)
+    if winning_votes / len(scale_votes) < 0.7:
+        return None
+
+    if horizontal_votes > vertical_votes:
+        direction_scores = [horizontal - vertical for horizontal, vertical in scale_votes]
+        direction = "horizontal"
+    else:
+        direction_scores = [vertical - horizontal for horizontal, vertical in scale_votes]
+        direction = "vertical"
+
+    confidence = sum(score for score in direction_scores if score > 0) / winning_votes
+    return direction if confidence >= 0.35 else None
+
+
+def _vertical_column_bounds(image):
+    gray = ImageOps.grayscale(image)
+    width, height = gray.size
+    if width < 32 or height < 48 or _detect_text_direction(image) != "vertical":
+        return []
+
+    scale = min(1.0, 512 / width, 768 / height)
+    if scale < 1.0:
+        scan = gray.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.BILINEAR,
+        )
+    else:
+        scan = gray
+
+    scan_width, scan_height = scan.size
+    pixels = scan.load()
+    ink_threshold = max(2, int(scan_height * 0.01))
+    ink_by_column = [0] * scan_width
+    for y in range(scan_height):
+        for x in range(scan_width):
+            if pixels[x, y] < 160:
+                ink_by_column[x] += 1
+
+    active = [count >= ink_threshold for count in ink_by_column]
+    max_gap = max(3, int(scan_height * 0.025))
+    groups = []
+    group_start = None
+    last_active = None
+    for x, has_ink in enumerate(active):
+        if has_ink:
+            if group_start is None:
+                group_start = x
+            elif x - last_active - 1 > max_gap:
+                groups.append((group_start, last_active + 1))
+                group_start = x
+            last_active = x
+    if group_start is not None:
+        groups.append((group_start, last_active + 1))
+
+    min_width = max(4, int(scan_height * 0.035))
+    max_width = int(scan_height * 0.4)
+    min_vertical_span = int(scan_height * 0.3)
+    columns = []
+    for left, right in groups:
+        if right - left < min_width or right - left > max_width:
+            continue
+        occupied_rows = [
+            y
+            for y in range(scan_height)
+            if any(pixels[x, y] < 160 for x in range(left, right))
+        ]
+        if occupied_rows and occupied_rows[-1] - occupied_rows[0] >= min_vertical_span:
+            columns.append((left, right))
+
+    if len(columns) < 2:
+        return []
+
+    columns.sort(key=lambda bounds: bounds[0], reverse=True)
+    return [
+        (
+            max(0, int(left / scale)),
+            min(width, int((right - 1) / scale) + 1),
+        )
+        for left, right in columns
+    ]
+
+
 def recognize(image):
+    columns = _vertical_column_bounds(image)
+    if columns:
+        text = "".join(
+            "".join(
+                _normalize_texts(
+                    get_engine()(_prepare_image(image.crop((left, 0, right, image.height))))
+                )
+            )
+            for left, right in columns
+        )
+        return [text] if text else []
+
     prepared = _prepare_image(image)
     raw = get_engine()(prepared)
     return _normalize_texts(raw)
