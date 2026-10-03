@@ -9,7 +9,7 @@
 <body>
   <main>
     <h1>Manga Translator</h1>
-    <p class="sub">本机 MangaOCR 识别设置</p>
+    <p class="sub">OCR 默认完全本地运行；翻译服务需显式启用。</p>
 
     <section class="panel">
       <label class="toggle-row" for="debugMode">
@@ -17,6 +17,31 @@
         <span>显示 OCR 识别结果</span>
       </label>
       <div class="hint">关闭后只保留识别流程，不影响结果内容。</div>
+
+      <hr>
+      <h2>翻译模式</h2>
+      <label for="translationMode">模式</label>
+      <select id="translationMode">
+        <option value="none">关闭翻译（默认，无云端请求）</option>
+        <option value="openai-compatible">OpenAI-compatible API（日文 → 简体中文）</option>
+        <option value="free-translate">Google 翻译（日文 → 简体中文，在线）</option>
+      </select>
+      <div class="hint">启用翻译时，OCR 文本会按日文翻译为简体中文；默认关闭翻译。</div>
+      <div class="hint">OpenAI-compatible 可配置云端服务或本地兼容服务（如 Ollama）。只有选择相应模式后才会发起翻译请求。</div>
+
+      <div id="openaiSettings">
+        <label for="translationEndpoint">接口地址</label>
+        <input id="translationEndpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions">
+        <label for="translationModel">模型</label>
+        <input id="translationModel" type="text" placeholder="例如：gpt-4o-mini">
+        <label for="translationApiKey">API Key（可选）</label>
+        <input id="translationApiKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存的 Key">
+        <label class="toggle-row" for="clearApiKey">
+          <input id="clearApiKey" type="checkbox">
+          <span>清除本机保存的 API Key</span>
+        </label>
+        <div id="keyStatus" class="hint">API Key 仅保存在此浏览器的扩展本地存储中。</div>
+      </div>
 
       <div class="actions">
         <button id="save" class="primary">保存</button>

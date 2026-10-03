@@ -7,6 +7,7 @@ from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, ImageDraw
 
 from backend.app import app
+from backend.ocr.bubble_detector import MAX_TEXT_REGIONS
 from backend.ocr.manga_ocr_engine import (
     _detect_text_direction,
     _vertical_column_bounds,
@@ -102,6 +103,14 @@ class AppTests(unittest.TestCase):
         self.assertEqual(_detect_text_direction(horizontal), "horizontal")
         self.assertEqual(_detect_text_direction(vertical), "vertical")
 
+    def test_direction_detection_handles_light_text_on_dark_background(self):
+        image = Image.new("L", (60, 180), 12)
+        draw = ImageDraw.Draw(image)
+        for index in range(5):
+            draw.rectangle((18, 12 + index * 30, 35, 29 + index * 30), fill=245)
+
+        self.assertEqual(_detect_text_direction(image), "vertical")
+
     def test_direction_detection_returns_unknown_for_single_glyph(self):
         image = Image.new("L", (48, 48), 255)
         ImageDraw.Draw(image).rectangle((12, 12, 35, 35), fill=0)
@@ -119,6 +128,20 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(recognize(image), ["rightleft"])
         self.assertEqual(engine.call_count, 2)
+
+    @patch("backend.ocr.manga_ocr_engine.get_engine")
+    def test_splits_light_vertical_text_into_columns(self, engine_factory):
+        image = Image.new("RGB", (140, 240), (12, 12, 12))
+        draw = ImageDraw.Draw(image)
+        for left in (20, 70):
+            for top in range(15, 220, 35):
+                draw.rectangle((left, top, left + 18, top + 18), fill=(245, 245, 245))
+        engine_factory.return_value.side_effect = ["right", "left"]
+
+        result = recognize(image)
+
+        self.assertEqual(result, ["rightleft"])
+        self.assertEqual(engine_factory.return_value.call_count, 2)
 
     @patch("backend.ocr.manga_ocr_engine.MangaOcr")
     @patch("backend.ocr.manga_ocr_engine.snapshot_download")
@@ -160,7 +183,7 @@ class AppTests(unittest.TestCase):
     def test_translate_text_route(self, translate_texts_mock):
         response = self.client.post(
             "/api/translate-text",
-            json={"texts": ["こんにちは", "テスト"]},
+            json={"texts": ["こんにちは", "テスト"], "mode": "free-translate"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -173,19 +196,154 @@ class AppTests(unittest.TestCase):
         )
         translate_texts_mock.assert_called_once_with(["こんにちは", "テスト"])
 
-    @patch("backend.translation.local_translator._translate_single", return_value="你好")
-    def test_translate_mixed_text_preserves_non_japanese_segments(self, translate_single_mock):
+    @patch("backend.translation.local_translator._translate_single", return_value="今天天气很好。你好")
+    def test_google_translation_receives_full_japanese_sentence(self, translate_single_mock):
+        source = "今日は晴れです。こんにちは"
         result = self.client.post(
             "/api/translate-text",
-            json={"texts": ["下午好，先生。こんにちは"]},
+            json={"texts": [source], "mode": "free-translate"},
         )
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(
             result.json()["items"][0]["translated"],
-            "下午好，先生。你好",
+            "今天天气很好。你好",
         )
-        translate_single_mock.assert_called_once_with("こんにちは")
+        translate_single_mock.assert_called_once_with(source)
+
+    @patch("backend.app.translate_texts")
+    def test_translation_is_disabled_by_default(self, translate_texts_mock):
+        response = self.client.post(
+            "/api/translate-text",
+            json={"texts": ["こんにちは"]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["translated"], "こんにちは")
+        translate_texts_mock.assert_not_called()
+
+    @patch("backend.app.translate_openai_compatible", return_value=["你好"])
+    def test_openai_compatible_translation_mode(self, translate_mock):
+        response = self.client.post(
+            "/api/translate-text",
+            json={
+                "texts": ["こんにちは"],
+                "mode": "openai-compatible",
+                "endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+                "model": "local-model",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["translated"], "你好")
+        translate_mock.assert_called_once_with(
+            ["こんにちは"],
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "local-model",
+            "",
+        )
+
+    @patch("backend.app.detect_text_regions", return_value=[(10, 12, 60, 55)])
+    @patch("backend.app.recognize", return_value=["こんにちは"])
+    def test_recognize_page_detects_and_recognizes_regions(self, recognize_mock, detect_mock):
+        image = io.BytesIO()
+        Image.new("RGB", (100, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["items"],
+            [{
+                "text": "こんにちは",
+                "bbox": {"left": 10, "top": 12, "right": 60, "bottom": 55},
+            }],
+        )
+        detect_mock.assert_called_once()
+        self.assertEqual(detect_mock.call_args.kwargs, {"limit": MAX_TEXT_REGIONS})
+        recognize_mock.assert_called_once()
+
+    @patch(
+        "backend.app.recognize",
+        side_effect=[["first phrase from panel"], ["second line says hello"]],
+    )
+    def test_recognize_page_returns_multiple_focused_multiword_items(self, recognize_mock):
+        page = Image.new("RGB", (1000, 700), (235, 235, 235))
+        draw = ImageDraw.Draw(page)
+        for x in range(100, 880, 7):
+            draw.line((x, 100, x, 560), fill=(65, 65, 65), width=1)
+        for y in range(100, 560, 7):
+            draw.line((100, y, 880, y), fill=(65, 65, 65), width=1)
+        for left, top in ((170, 180), (650, 440)):
+            for row in range(2):
+                for column in range(6):
+                    x, y = left + column * 24, top + row * 32
+                    draw.rectangle((x, y, x + 13, y + 21), fill="black")
+        image = io.BytesIO()
+        page.save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        items = response.json()["items"]
+        self.assertEqual(
+            [item["text"] for item in items],
+            ["first phrase from panel", "second line says hello"],
+        )
+        self.assertEqual(len(items), 2)
+        self.assertTrue(all(
+            item["bbox"]["right"] - item["bbox"]["left"] < 250
+            and item["bbox"]["bottom"] - item["bbox"]["top"] < 120
+            for item in items
+        ))
+        self.assertEqual(recognize_mock.call_count, 2)
+
+    @patch(
+        "backend.app.detect_text_regions",
+        return_value=[(10, 10, 60, 30), (80, 10, 130, 30), (150, 10, 220, 60)],
+    )
+    @patch("backend.app.recognize", side_effect=[["．．．"], ["人間"], ["こんにちは、世界"]])
+    def test_page_ocr_discards_short_visual_noise_but_keeps_dialogue(
+        self, recognize_mock, _detect_mock
+    ):
+        image = io.BytesIO()
+        Image.new("RGB", (240, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["text"] for item in response.json()["items"]],
+            ["こんにちは、世界"],
+        )
+        self.assertEqual(recognize_mock.call_count, 3)
+
+    @patch(
+        "backend.app.detect_text_regions",
+        side_effect=lambda image, limit: [(0, 0, 20, 20)] * limit,
+    )
+    @patch("backend.app.recognize", return_value=["こんにちは"])
+    def test_recognize_page_ocr_calls_respect_region_limit(self, recognize_mock, _detect_mock):
+        image = io.BytesIO()
+        Image.new("RGB", (100, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["items"]), MAX_TEXT_REGIONS)
+        self.assertEqual(recognize_mock.call_count, MAX_TEXT_REGIONS)
 
 
 if __name__ == "__main__":

@@ -96,68 +96,72 @@ def _detect_text_direction(image):
     smallest_cell = max(4, shortest_side // 28)
     cell_step = max(2, shortest_side // 24)
     largest_cell = max(smallest_cell + 1, shortest_side // 2)
-    scale_votes = []
+    results = []
+    for ink_mask in (gray_pixels < threshold, gray_pixels > threshold):
+        scale_votes = []
+        for cell_size in range(smallest_cell, largest_cell, cell_step):
+            offset_scores = {"horizontal": [], "vertical": []}
+            for offset_y in (0, cell_size // 2):
+                for offset_x in (0, cell_size // 2):
+                    right = width - offset_x
+                    bottom = height - offset_y
+                    columns = right // cell_size
+                    rows = bottom // cell_size
+                    if columns < 2 or rows < 2:
+                        continue
 
-    for cell_size in range(smallest_cell, largest_cell, cell_step):
-        offset_scores = {"horizontal": [], "vertical": []}
-        for offset_y in (0, cell_size // 2):
-            for offset_x in (0, cell_size // 2):
-                right = width - offset_x
-                bottom = height - offset_y
-                columns = right // cell_size
-                rows = bottom // cell_size
-                if columns < 2 or rows < 2:
-                    continue
+                    sample = ink_mask[
+                        offset_y:offset_y + rows * cell_size,
+                        offset_x:offset_x + columns * cell_size,
+                    ]
+                    cell_density = sample.reshape(
+                        rows, cell_size, columns, cell_size
+                    ).mean(axis=(1, 3))
+                    occupied = cell_density >= 0.12
+                    occupied_count = int(occupied.sum())
+                    coverage = occupied_count / occupied.size
+                    if occupied_count < 4 or coverage < 0.01 or coverage > 0.6:
+                        continue
 
-                sample = gray_pixels[
-                    offset_y:offset_y + rows * cell_size,
-                    offset_x:offset_x + columns * cell_size,
-                ]
-                cell_density = sample.reshape(
-                    rows, cell_size, columns, cell_size
-                ).__lt__(threshold).mean(axis=(1, 3))
-                occupied = cell_density >= 0.12
-                occupied_count = int(occupied.sum())
-                coverage = occupied_count / occupied.size
-                if occupied_count < 4 or coverage < 0.01 or coverage > 0.6:
-                    continue
+                    horizontal_pairs = int(np.count_nonzero(occupied[:, :-1] & occupied[:, 1:]))
+                    vertical_pairs = int(np.count_nonzero(occupied[:-1, :] & occupied[1:, :]))
+                    pair_count = horizontal_pairs + vertical_pairs
+                    if pair_count < 2:
+                        continue
 
-                horizontal_pairs = int(np.count_nonzero(occupied[:, :-1] & occupied[:, 1:]))
-                vertical_pairs = int(np.count_nonzero(occupied[:-1, :] & occupied[1:, :]))
-                pair_count = horizontal_pairs + vertical_pairs
-                if pair_count < 2:
-                    continue
+                    difference = horizontal_pairs - vertical_pairs
+                    dominance = abs(difference) / pair_count
+                    support = min(1.0, pair_count / (occupied_count * 0.5))
+                    score = dominance * support
+                    direction = "horizontal" if difference > 0 else "vertical"
+                    offset_scores[direction].append(score)
 
-                difference = horizontal_pairs - vertical_pairs
-                dominance = abs(difference) / pair_count
-                support = min(1.0, pair_count / (occupied_count * 0.5))
-                score = dominance * support
-                direction = "horizontal" if difference > 0 else "vertical"
-                offset_scores[direction].append(score)
+            horizontal_score = sum(offset_scores["horizontal"])
+            vertical_score = sum(offset_scores["vertical"])
+            if max(horizontal_score, vertical_score) >= 0.2:
+                scale_votes.append((horizontal_score, vertical_score))
 
-        horizontal_score = sum(offset_scores["horizontal"])
-        vertical_score = sum(offset_scores["vertical"])
-        if max(horizontal_score, vertical_score) >= 0.2:
-            scale_votes.append((horizontal_score, vertical_score))
+        if len(scale_votes) < 2:
+            continue
 
-    if len(scale_votes) < 2:
-        return None
+        horizontal_votes = sum(horizontal > vertical for horizontal, vertical in scale_votes)
+        vertical_votes = sum(vertical > horizontal for horizontal, vertical in scale_votes)
+        winning_votes = max(horizontal_votes, vertical_votes)
+        if winning_votes / len(scale_votes) < 0.7:
+            continue
 
-    horizontal_votes = sum(horizontal > vertical for horizontal, vertical in scale_votes)
-    vertical_votes = sum(vertical > horizontal for horizontal, vertical in scale_votes)
-    winning_votes = max(horizontal_votes, vertical_votes)
-    if winning_votes / len(scale_votes) < 0.7:
-        return None
+        if horizontal_votes > vertical_votes:
+            direction_scores = [horizontal - vertical for horizontal, vertical in scale_votes]
+            direction = "horizontal"
+        else:
+            direction_scores = [vertical - horizontal for horizontal, vertical in scale_votes]
+            direction = "vertical"
 
-    if horizontal_votes > vertical_votes:
-        direction_scores = [horizontal - vertical for horizontal, vertical in scale_votes]
-        direction = "horizontal"
-    else:
-        direction_scores = [vertical - horizontal for horizontal, vertical in scale_votes]
-        direction = "vertical"
+        confidence = sum(score for score in direction_scores if score > 0) / winning_votes
+        if confidence >= 0.35:
+            results.append((direction, confidence))
 
-    confidence = sum(score for score in direction_scores if score > 0) / winning_votes
-    return direction if confidence >= 0.35 else None
+    return max(results, key=lambda result: result[1])[0] if results else None
 
 
 def _vertical_column_bounds(image):
@@ -175,55 +179,46 @@ def _vertical_column_bounds(image):
     else:
         scan = gray
 
-    scan_width, scan_height = scan.size
-    pixels = scan.load()
-    ink_threshold = max(2, int(scan_height * 0.01))
-    ink_by_column = [0] * scan_width
-    for y in range(scan_height):
-        for x in range(scan_width):
-            if pixels[x, y] < 160:
-                ink_by_column[x] += 1
-
-    active = [count >= ink_threshold for count in ink_by_column]
-    max_gap = max(3, int(scan_height * 0.025))
-    groups = []
-    group_start = None
-    last_active = None
-    for x, has_ink in enumerate(active):
-        if has_ink:
-            if group_start is None:
-                group_start = x
-            elif x - last_active - 1 > max_gap:
+    pixels = np.asarray(scan, dtype=np.uint8)
+    threshold = 160
+    columns_by_polarity = []
+    for ink_mask in (pixels < threshold, pixels > threshold):
+        ink_by_column = ink_mask.sum(axis=0)
+        ink_threshold = max(2, int(scan.height * 0.01))
+        active = ink_by_column >= ink_threshold
+        max_gap = max(3, int(scan.height * 0.025))
+        groups = []
+        active_columns = np.flatnonzero(active)
+        if active_columns.size == 0:
+            continue
+        group_start = last_active = int(active_columns[0])
+        for column in active_columns[1:]:
+            column = int(column)
+            if column - last_active - 1 > max_gap:
                 groups.append((group_start, last_active + 1))
-                group_start = x
-            last_active = x
-    if group_start is not None:
+                group_start = column
+            last_active = column
         groups.append((group_start, last_active + 1))
 
-    min_width = max(4, int(scan_height * 0.035))
-    max_width = int(scan_height * 0.4)
-    min_vertical_span = int(scan_height * 0.3)
-    columns = []
-    for left, right in groups:
-        if right - left < min_width or right - left > max_width:
-            continue
-        occupied_rows = [
-            y
-            for y in range(scan_height)
-            if any(pixels[x, y] < 160 for x in range(left, right))
-        ]
-        if occupied_rows and occupied_rows[-1] - occupied_rows[0] >= min_vertical_span:
-            columns.append((left, right))
+        min_width = max(4, int(scan.height * 0.035))
+        max_width = int(scan.height * 0.4)
+        min_vertical_span = int(scan.height * 0.3)
+        columns = []
+        for left, right in groups:
+            if right - left < min_width or right - left > max_width:
+                continue
+            occupied_rows = np.flatnonzero(ink_mask[:, left:right].any(axis=1))
+            if occupied_rows.size and occupied_rows[-1] - occupied_rows[0] >= min_vertical_span:
+                columns.append((left, right))
+        if len(columns) >= 2:
+            columns_by_polarity.append(columns)
 
-    if len(columns) < 2:
+    if not columns_by_polarity:
         return []
-
+    columns = max(columns_by_polarity, key=len)
     columns.sort(key=lambda bounds: bounds[0], reverse=True)
     return [
-        (
-            max(0, int(left / scale)),
-            min(width, int((right - 1) / scale) + 1),
-        )
+        (max(0, int(left / scale)), min(width, int((right - 1) / scale) + 1))
         for left, right in columns
     ]
 

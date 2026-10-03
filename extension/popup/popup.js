@@ -20,9 +20,9 @@ async function fetchBackend(path, options = {}) {
 async function refreshConfig() {
 }
 
-async function startSelection(tabId) {
+async function prepareContentScript(tabId) {
   try {
-    await chrome.tabs.sendMessage(tabId, {type:"START_SELECT"});
+    await chrome.tabs.sendMessage(tabId, {type:"PING"});
     return;
   } catch (error) {
     if (!error.message?.includes("Receiving end does not exist")) {
@@ -38,7 +38,11 @@ async function startSelection(tabId) {
     target:{tabId},
     files:["content/content.js"]
   });
-  await chrome.tabs.sendMessage(tabId, {type:"START_SELECT"});
+}
+
+async function startPageAction(tabId, type) {
+  await prepareContentScript(tabId);
+  await chrome.tabs.sendMessage(tabId, {type});
 }
 
 document.getElementById("settings").onclick =
@@ -60,13 +64,27 @@ document.getElementById("select").onclick = async () => {
   const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
   try {
     if (!tab?.id) throw new Error("无法获取当前页面");
-    await startSelection(tab.id);
+    await startPageAction(tab.id, "START_SELECT");
     window.close();
   } catch (e) {
     const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(e.message);
     status.textContent = restrictedPage
       ? "当前页面受 Chrome 限制，无法框选。请切换到普通网页后重试。"
       : "无法启动框选：" + e.message;
+  }
+};
+
+document.getElementById("auto").onclick = async () => {
+  const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+  try {
+    if (!tab?.id) throw new Error("无法获取当前页面");
+    await startPageAction(tab.id, "START_AUTO");
+    window.close();
+  } catch (e) {
+    const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(e.message);
+    status.textContent = restrictedPage
+      ? "当前页面受 Chrome 限制，无法自动识别。请切换到普通网页后重试。"
+      : "无法启动自动识别：" + e.message;
   }
 };
 
