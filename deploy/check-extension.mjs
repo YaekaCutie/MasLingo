@@ -177,6 +177,18 @@ for (const file of jsFiles) {
       note(`${relative(file)} imports ${relative(resolved)}`);
     }
   }
+
+  // The service worker is an ES module, so relative `import ... from "…"` needs
+  // the same treatment: a typo there stops the whole worker from loading.
+  const importPattern = /\bfrom\s*["'](\.[^"']+)["']/g;
+  for (const [, target] of source.matchAll(importPattern)) {
+    const resolved = resolve(dirname(file), target);
+    if (!existsSync(resolved)) {
+      fail(`${relative(file)} imports a missing file: ${target}`);
+    } else {
+      referenced.push(relative(resolved).replace(/^extension\//, ""));
+    }
+  }
 }
 
 if (modulesSkipped > 0) {
