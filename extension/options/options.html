@@ -9,7 +9,7 @@
 <body>
   <main>
     <h1>Manga Translator</h1>
-    <p class="sub">OCR 默认完全本地运行；翻译服务需显式启用。</p>
+    <p class="sub">OCR 默认由官方托管后端完成，无需在本机安装环境；翻译服务需显式启用。</p>
 
     <section class="panel">
       <label class="toggle-row" for="debugMode">
@@ -17,6 +17,13 @@
         <span>显示 OCR 识别结果</span>
       </label>
       <div class="hint">关闭后只保留识别流程，不影响结果内容。</div>
+
+      <hr>
+      <h2>后端服务</h2>
+      <label for="backendUrl">后端地址</label>
+      <input id="backendUrl" type="url" placeholder="留空则使用官方托管后端">
+      <div class="hint">留空：使用官方托管后端，开箱即用。自建后端可填 http://127.0.0.1:8001（需自己启动 backend/），或填你部署的服务地址。</div>
+      <div class="hint" id="backendHint">识别时，页面截图会发送到上面这个后端；它只用于 OCR，不做其它用途。</div>
 
       <hr>
       <h2>翻译模式</h2>
@@ -40,15 +47,16 @@
           <input id="clearApiKey" type="checkbox">
           <span>清除本机保存的 API Key</span>
         </label>
-        <div id="keyStatus" class="hint">API Key 仅保存在此浏览器的扩展本地存储中。</div>
+        <div id="keyStatus" class="hint">API Key 仅保存在此浏览器的扩展本地存储中，随翻译请求发送到该接口。</div>
       </div>
 
       <div class="actions">
         <button id="save" class="primary">保存</button>
       </div>
-      <div id="result" class="result">MangaOCR 本地识别模式</div>
+      <div id="result" class="result">MangaOCR 识别模式</div>
     </section>
   </main>
+  <script src="../config.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

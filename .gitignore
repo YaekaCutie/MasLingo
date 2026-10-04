@@ -2,3 +2,14 @@
 backend/.env
 __pycache__/
 *.pyc
+
+# Extension signing keys and built packages must never be committed.
+*.pem
+*.crx
+*.zip
+
+# Local deployment secrets (domain, tuning) — see deploy/.env.example
+deploy/.env
+
+# Local OCR model cache when running the backend outside Docker
+.hf/

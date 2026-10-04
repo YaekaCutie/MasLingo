@@ -1,19 +1,20 @@
-const BACKEND_URLS=["http://127.0.0.1:8001","http://localhost:8001"];
+importScripts("../config.js");
 
 async function fetchBackend(path,options={}){
+  const backends=await globalThis.OMT_backendCandidates();
   let lastError=null;
-  for(const base of BACKEND_URLS){
+  for(const base of backends){
     try{
       const resp=await fetch(`${base}${path}`,options);
       if(resp.ok || resp.status >= 400){
         return resp;
       }
-      lastError=new Error(`后端响应失败: ${resp.status}`);
+      lastError=new Error(`${base} 响应失败: ${resp.status}`);
     }catch(e){
       lastError=new Error(`${base}: ${e.message}`);
     }
   }
-  throw new Error(`本地后端连接失败（${lastError?.message||"后端未运行或无法访问"}）`);
+  throw new Error(`后端连接失败（${lastError?.message||"未配置后端且本机后端未运行"}）`);
 }
 
 chrome.runtime.onConnect.addListener(port=>{

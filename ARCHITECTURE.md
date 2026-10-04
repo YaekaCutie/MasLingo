@@ -12,7 +12,8 @@ Automatic: crop the largest visible image/canvas/video/background-image when it
 occupies at least 8% and less than 80% of the viewport; otherwise fail and ask
 the user to select the manga region manually rather than OCR page UI
   ↓
-POST multipart image to local FastAPI
+POST multipart image to the configured backend (hosted by default, local
+FastAPI when the user opts in)
   ↓
 Manual: MangaOCR recognizes the selected region
 Automatic: local Pillow/NumPy dark/light text-ink grouping → MangaOCR per region.
@@ -42,8 +43,19 @@ Translation modes:
 
 ## Security model and limitations
 
-- OCR and text-region grouping run locally; page screenshots go only to local
-  FastAPI.
+- Text-region grouping and OCR run in the backend. By default that backend is
+  the shared hosted instance, so **page screenshots leave the device**; users
+  who want everything local point the extension at `http://127.0.0.1:8001` in
+  the options page and run `backend/` themselves. The options page states the
+  configured destination, and `extension/config.js` holds the hosted default.
+- The hosted backend does not log request bodies, does not persist images, and
+  uses them only to produce OCR text for the request that carried them. The
+  container image ships with the model preloaded, so no user data is needed at
+  startup.
+- The public deployment is unauthenticated, so it is deliberately bounded: a
+  per-IP request limit, a cap on concurrent OCR jobs, a 15 MB upload limit, and
+  inference on a worker thread so `/health` stays responsive. See
+  `deploy/README.md` section 8.
 - Cloud translation is not part of the default OCR flow. Selecting a remote
   translator sends recognized text and, when provided, its key to that service.
 - Automatic detection covers only the currently visible viewport. It groups

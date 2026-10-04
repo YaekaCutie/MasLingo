@@ -11,14 +11,14 @@
     <div class="title-row">
       <div>
         <h1>Manga Translator</h1>
-        <p>OCR 本机运行 · 翻译需在设置中启用</p>
+        <p>OCR 由托管后端完成 · 无需本机环境</p>
       </div>
       <button id="settings" class="icon-btn" title="设置">⚙</button>
     </div>
 
     <section class="card">
       <div class="row"><span>OCR 引擎</span><strong>MangaOCR</strong></div>
-      <div class="row"><span>OCR 运行方式</span><span>本机离线</span></div>
+      <div class="row"><span>OCR 运行位置</span><span id="backendRole">检测中…</span></div>
     </section>
 
     <button id="auto" class="primary">自动识别当前页面气泡</button>
@@ -27,6 +27,7 @@
     <button id="settings2">识别设置</button>
     <pre id="status">准备就绪</pre>
   </main>
+  <script src="../config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

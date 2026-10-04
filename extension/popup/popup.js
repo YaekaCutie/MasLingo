@@ -1,23 +1,49 @@
 const status = document.getElementById("status");
-const BACKEND_URLS = ["http://127.0.0.1:8001", "http://localhost:8001"];
+const backendRole = document.getElementById("backendRole");
+
+function normalize(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+function isLocal(base) {
+  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(normalize(base));
+}
 
 async function fetchBackend(path, options = {}) {
+  const backends = await globalThis.OMT_backendCandidates();
   let lastError = null;
-  for (const base of BACKEND_URLS) {
+  for (const base of backends) {
     try {
       const resp = await fetch(`${base}${path}`, options);
       if (resp.ok || resp.status >= 400) {
-        return resp;
+        return { resp, base };
       }
-      lastError = new Error(`后端响应失败: ${resp.status}`);
+      lastError = new Error(`${base} 响应失败: ${resp.status}`);
     } catch (e) {
       lastError = e;
     }
   }
-  throw lastError || new Error("后端未运行或无法访问");
+  throw lastError || new Error("未配置后端且本机后端未运行");
 }
 
 async function refreshConfig() {
+  try {
+    const { resp, base } = await fetchBackend("/health");
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      if (base === normalize(globalThis.OMT_BACKEND_URL)) {
+        backendRole.textContent = "官方托管后端";
+      } else if (isLocal(base)) {
+        backendRole.textContent = "本机后端";
+      } else {
+        backendRole.textContent = "自定义后端";
+      }
+    } else {
+      backendRole.textContent = "后端异常";
+    }
+  } catch (error) {
+    backendRole.textContent = "未连接";
+  }
 }
 
 async function prepareContentScript(tabId) {
@@ -50,12 +76,13 @@ document.getElementById("settings2").onclick = () => chrome.runtime.openOptionsP
 
 document.getElementById("health").onclick = async () => {
   try {
-    const r = await fetchBackend("/health");
-    const j = await r.json();
-    status.textContent = JSON.stringify(j, null, 2);
+    const { resp, base } = await fetchBackend("/health");
+    const j = await resp.json();
+    status.textContent = `${base}\n${JSON.stringify(j, null, 2)}`;
     await refreshConfig();
   } catch (e) {
     status.textContent = "后端未运行：" + e.message;
+    backendRole.textContent = "未连接";
   }
 };
 

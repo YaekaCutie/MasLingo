@@ -1,0 +1,19 @@
+# Caddy terminates TLS for the shared backend.
+#
+# {$OMT_DOMAIN} is substituted from deploy/.env at container start. Caddy
+# obtains and renews a Let's Encrypt certificate automatically over HTTP-01,
+# which is why ports 80 and 443 both have to reach this VM.
+
+{$OMT_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy api:8001
+
+	# Keep a small access log next to the certificates volume.
+	log {
+		output file /data/access.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+}

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OpenMangaTranslator",
-  "version": "1.0.1",
-  "description": "Local Japanese manga OCR powered by MangaOCR.",
+  "version": "1.0.2",
+  "description": "日文漫画 OCR 翻译：识别画面文字并把译文嵌回原图。默认使用官方托管后端，无需本机环境。",
   "permissions": [
     "activeTab",
     "scripting",
@@ -11,7 +11,8 @@
   ],
   "host_permissions": [
     "http://127.0.0.1:8001/*",
-    "http://localhost:8001/*"
+    "http://localhost:8001/*",
+    "https://*.sslip.io/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js"

@@ -1,0 +1,47 @@
+# Bare-metal alternative to the Docker deployment.
+#
+# See deploy/README.md (appendix A) for the full walkthrough.
+#
+# Install:
+#   sudo cp deploy/omt-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now omt-backend
+#   journalctl -u omt-backend -f
+
+[Unit]
+Description=OpenMangaTranslator shared OCR backend
+Documentation=https://github.com/YaekaCutie/OpenMangaTranslator/blob/main/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/OpenMangaTranslator
+
+# Keep the OCR model on disk outside the checkout if you prefer.
+Environment=HF_HOME=/home/ubuntu/OpenMangaTranslator/.hf
+Environment=OMP_NUM_THREADS=2
+
+# Always Free ARM is 2 OCPUs: one torch thread per job, two jobs in flight.
+Environment=OMT_TORCH_THREADS=1
+Environment=OMT_OCR_CONCURRENCY=2
+Environment=OMT_RATE_LIMIT_REQUESTS=40
+Environment=OMT_RATE_LIMIT_WINDOW=60
+Environment=OMT_ALLOWED_ORIGINS=*
+Environment=OMT_ENABLE_FREE_TRANSLATE=1
+
+# Load the model at boot and keep it resident: it makes the first request fast
+# and keeps this instance above Oracle's 20% memory idle-reclamation threshold.
+Environment=OMT_PRELOAD_MODEL=1
+
+ExecStart=/home/ubuntu/OpenMangaTranslator/.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8001 --no-access-log
+Restart=always
+RestartSec=5
+
+# A few GB of RSS is intentional here; do not let the kernel reap it first.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
