@@ -74,6 +74,30 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 想要自动化重试可以看社区工具 <https://github.com/alexpua/oci-arm-catcher>。
 
+### 可选：让脚本替你重试
+
+如果不想手动反复点"Create"，仓库里带了一个脚本，在 **OCI Cloud Shell**（控制台右上角的 `>_` 图标）里跑——那里的 `oci` CLI 已经预认证，不需要装任何东西或配 API key：
+
+```bash
+# 先用控制台向导建好 VCN + 公网子网（上面第 2 步），把子网 OCID 复制过来
+git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git
+cd OpenMangaTranslator
+bash deploy/provision-oci.sh --subnet-id ocid1.subnet.oc1.<region>.<...>
+```
+
+它会自动：解析 tenancy 与可用域 → 找最新的 Ubuntu arm64 镜像 → **在所有可用域之间轮换重试**，直到拿到容量。拿到后会打印公网 IP 和后续步骤。
+
+几个注意点：
+
+- 它**只做启动实例**这一件事。VCN/子网仍用控制台向导建，80/443 的入站规则也仍然在控制台加——因为 `oci network security-list update` 会**整组替换**现有规则，这种"一不小心把 SSH 一起删掉"的操作不该交给没在你账号上验证过的脚本。
+- `--dry-run` 只打印命令，什么都不建。
+- Cloud Shell 会话最长 24 小时、闲置 60 分钟断开，所以它可能跑不到容量出现。**Ctrl-C 中断是安全的**，过一会儿重新跑即可（脚本只在真正创建成功后才算数）。
+- 加 `--rounds N` 可以让它跑 N 轮后自己退出。
+- 参数细节见 `bash deploy/provision-oci.sh --help`。
+
+> ⚠️ 这个脚本我**没法在真实租户上验证**（我没有你的账号）。它只用官方文档里有的参数，逻辑用 mock 的 `oci` 跑过五种场景（轮换重试成功、容量一直不足、dry-run、非容量错误立即中止、缺参数），但真机行为仍需你实测。跑挂了把输出贴给我。
+
+
 ---
 
 ## 3. 放行 80 / 443（**两层**，缺一层都不通）
