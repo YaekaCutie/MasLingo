@@ -26,11 +26,14 @@ from pathlib import Path
 
 # Pinned so the extension behaves the same every build.
 ONNXRUNTIME_WEB_VERSION = "1.30.0"
-# ort.wasm.min.js is the loader, the .mjs is the ES-module glue it imports at
-# runtime, and the .wasm is the runtime itself. Missing the .mjs makes ORT fail
-# with "Failed to fetch dynamically imported module ... ort-wasm-simd-threaded.mjs".
+# ort.wasm.min.js is the classic loader used by extension pages, ort.wasm.min.mjs
+# is the ES-module build the (module) service worker imports, the plain .mjs is
+# the glue that gets dynamically imported at runtime, and the .wasm is the
+# runtime itself. Missing any of them shows up as a bare "no available backend
+# found" at run time, so they are pinned together.
 ORT_FILES = [
     "ort.wasm.min.js",
+    "ort.wasm.min.mjs",
     "ort-wasm-simd-threaded.mjs",
     "ort-wasm-simd-threaded.wasm",
 ]

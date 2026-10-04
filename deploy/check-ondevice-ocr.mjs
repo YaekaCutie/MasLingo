@@ -120,6 +120,61 @@ try {
     }
   }
 
+  // The product path runs in the service worker, not in a page: it crops with
+  // an OffscreenCanvas and hands the pixels straight to the engine. That is a
+  // different JS context with no DOM, so it has to be verified separately —
+  // onnxruntime-web's module build does reference createElement/Image, and
+  // only actually running it proves those paths are not hit.
+  console.log("\n--- service worker context ---");
+  const workerTarget = await browser.waitForTarget(
+    (candidate) => candidate.type() === "service_worker" && candidate.url().includes("service-worker.js"),
+    { timeout: 30000 },
+  );
+  const worker = await workerTarget.worker();
+  const workerResult = await worker.evaluate(async (fixturePath) => {
+    try {
+      const response = await fetch(chrome.runtime.getURL(fixturePath));
+      const bitmap = await createImageBitmap(await response.blob());
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0);
+      const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
+      const started = Date.now();
+      const result = await globalThis.OMT_ocr.recognizeImageData(imageData);
+      return {
+        ok: true,
+        text: result.text,
+        ms: Date.now() - started,
+        tokens: result.ids.length,
+        status: globalThis.OMT_ocr.getOcrStatus(),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: String(error && error.message ? error.message : error),
+        stack: String(error && error.stack ? error.stack : ""),
+        status: globalThis.OMT_ocr?.getOcrStatus?.(),
+      };
+    }
+  }, crop);
+
+  if (!workerResult.ok) {
+    console.error(`FAIL  service worker could not run the engine: ${workerResult.error}`);
+    if (workerResult.status) console.error(`      status: ${JSON.stringify(workerResult.status)}`);
+    if (workerResult.stack) console.error(workerResult.stack.split("\n").slice(0, 6).join("\n"));
+    failures.push("service worker OCR");
+  } else {
+    console.log(`text         : ${workerResult.text}`);
+    console.log(`inference    : ${workerResult.ms} ms (${workerResult.tokens} tokens, wasm, worker)`);
+    console.log(`status       : ${JSON.stringify(workerResult.status)}`);
+    if (expected && workerResult.text.trim() !== expected.trim()) {
+      console.error(`FAIL  worker expected: ${expected}`);
+      failures.push("service worker text mismatch");
+    } else if (expected) {
+      console.log("match        : exact");
+    }
+  }
+
   if (pageErrors.length) {
     console.error(`\nFAIL  page errors: ${pageErrors.join(" | ")}`);
     failures.push("page errors");

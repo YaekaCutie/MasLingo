@@ -119,15 +119,52 @@ Node int8    : 2 |   912 852 912 852 28 28 28 885 888 854 856 861 2766 5224 28 2
 
 ---
 
+## 已经接进产品流程
+
+识别主路径现在是**端上**，后端只在端上不可用时兜底：
+
+```
+content.js ──port──> service-worker.js ──runtime.sendMessage──> offscreen document ──postMessage──> worker.js
+                          (裁剪截图)         (只能传 JSON)         (文档上下文)        (结构化克隆)      (ORT + engine.js)
+```
+
+### 为什么非要 offscreen document（两条都是规范层面禁止，实测确认）
+
+我先试了两种更简单的架构，**都被 Chrome 明确拒绝**：
+
+| 尝试 | 结果 |
+| --- | --- |
+| 引擎直接跑在 service worker 里 | `TypeError: import() is disallowed on ServiceWorkerGlobalScope by the HTML specification` —— onnxruntime-web 的 wasm 后端要动态 import 胶水模块，而 SW 禁止动态 import |
+| service worker 里 `new Worker(...)` | `Worker is not defined` —— ServiceWorkerGlobalScope 根本没有 Worker 构造器 |
+
+offscreen document 是**文档上下文**，两者都允许。所以它声明 `WORKERS` 理由，里面真的起了一个 worker 跑模型——理由和实现是吻合的。
+
+### 另一个坑：像素过不去 `runtime.sendMessage`
+
+`chrome.runtime.sendMessage` 用 **JSON** 序列化，`Uint8ClampedArray` 会变成 `{"0":255,"1":255,...}` 这种普通对象——**不报错**，但引擎拿到的是 NaN 像素，于是"识别"出完全不相干的文字（实测输出 `それは、`）。现在走 `ocr/pixels.js` 显式 base64 传输；worker 那一跳用的是 `postMessage`（结构化克隆），类型数组可以原样传递，不需要编码。
+
+### 降级行为
+
+模型文件缺失时，端上初始化**不再干等**：实测从 5.3 秒（无脑重试 20 次）降到 **32 ms**，并且给出可操作的报错——"无法读取模型文件 encoder.onnx…请先运行 python tools/fetch_ocr_assets.py"。service worker 捕获后自动回退到后端，用户不会看到卡死。
+
+### 验证结果
+
+`deploy/check-ondevice-ocr.mjs` 现在同时验证两个上下文，都要求逐字命中：
+
+| 上下文 | 结果 | 耗时 |
+| --- | --- | --- |
+| 扩展页面（canvas → ImageData） | ✅ 逐字命中 | 654–801 ms |
+| **service worker → offscreen → worker**（产品路径） | ✅ 逐字命中 | 1139 ms（其中模型 load 406 ms） |
+
+---
+
 ## 还没做的事（下一步）
 
-引擎和扩展页面都跑通了，**但还没接进产品的识别流程**。剩下的：
+1. **端到端跑一次真实框选**：目前验证的是"给 worker 一张图，它返回正确文字"；还没在真实页面上模拟"用户拖框 → 出中文"的完整链路（需要真实截图，测试环境难驱动）。这一环建议你手动装一次扩展实测；
+2. **包体积决策**：131 MB 资源（14 MB wasm + 117 MB 模型）目前由 `tools/fetch_ocr_assets.py` 取到扩展目录并 gitignore。**打包进 CRX 最省事**——商店上限 2 GB，装完即可离线用，代价是每次更新重下整包；另一条路是首次运行时下载 + 缓存 + 进度 UI；
+3. **整页自动识别**：检测逻辑还是 327 行 NumPy/Pillow，端上没实现。**第一版只做手动框选**；整页自动留到第二阶段；
+4. **竖排/横排判定**：`_detect_text_direction` 未移植——但竖排单区域识别本身已验证可用；
+5. **低端设备**：0.7–1.1 秒是这台开发机的数字，WebGPU 可用时应该更快，值得再测一档；
+6. **选项页开关**：已经支持 `ocrMode: "backend"` 走老路，但还没做进设置界面。
 
-1. **搬进 offscreen document**：现在跑在 `ocr/ocr.html` 里是为了可测。产品形态应该是 offscreen document——MV3 的 service worker 约 30 秒空闲就被回收，每次回收都要重新加载 116 MB 权重。需要加 `offscreen` 权限并让 service worker 转发识别请求；
-2. **接上框选流程**：`content/content.js` 现在把裁剪发去后端；要改成"优先端上识别，端上不可用时回退到后端"；
-3. **包体积决策**：131 MB 资源（14 MB wasm + 117 MB 模型）目前由 `tools/fetch_ocr_assets.py` 取到扩展目录并 gitignore。**打包进 CRX 最省事**——商店上限 2 GB，装完即可离线用，代价是每次更新重下整包；另一条路是首次运行时下载 + Cache Storage 缓存，需要进度 UI；
-4. **整页自动识别**：当前检测逻辑是 327 行 NumPy/Pillow（`backend/ocr/bubble_detector.py`）。**第一版只做手动框选**，这条不需要；整页自动留到第二阶段，用 Canvas/Worker 重写或退化为轻量启发式；
-5. **竖排/横排判定**：`_detect_text_direction` 同样要移植——不过竖排单区域识别本身已经验证可用；
-6. **低端设备**：0.7–0.9 秒是这台开发机的数字，WebGPU 可用时应该更快，值得再测一档。
-
-> 边界说明：**单区域识别（手动框选）已端到端验证**；整页自动识别在浏览器端尚未实现，是最大的剩余未知数。
+> 边界说明：**单区域识别（手动框选的数据通路）已端到端验证**；整页自动识别在浏览器端尚未实现。

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>OpenMangaTranslator OCR host</title>
+</head>
+<body>
+  <!--
+    Offscreen document: it exists purely to host the OCR worker.
+
+    This is not a workaround for convenience — Chrome forbids both shortcuts:
+      * running onnxruntime-web in the service worker fails because its wasm
+        backend dynamically imports its glue module, and "import() is
+        disallowed on ServiceWorkerGlobalScope by the HTML specification";
+      * spawning a dedicated Worker from the service worker fails because
+        `Worker` is not defined in ServiceWorkerGlobalScope.
+    An offscreen document is a document context, so both work here. The
+    declared reason is WORKERS, which is literally what this file does.
+  -->
+  <script type="module" src="./offscreen.js"></script>
+</body>
+</html>
