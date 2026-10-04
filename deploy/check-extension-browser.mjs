@@ -192,6 +192,23 @@ try {
       await worker.evaluate((url) => chrome.storage.local.set({ backendUrl: url }), backendUrl);
     }
 
+    // Is there actually a backend to talk to? Recognition now runs on-device by
+    // default, so an unreachable backend is a supported state rather than a
+    // failure — but when one IS running the popup must still reach it.
+    let backendLive = false;
+    if (backendUrl) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        const probe = await fetch(`${backendUrl.replace(/\/+$/, "")}/health`, { signal: controller.signal });
+        clearTimeout(timer);
+        backendLive = probe.ok;
+      } catch {
+        backendLive = false;
+      }
+      console.log(`      (backend ${backendUrl} is ${backendLive ? "live" : "not running"})`);
+    }
+
     const popupErrors = [];
     const popup = await browser.newPage();
     popup.on("pageerror", (error) => popupErrors.push(String(error)));
@@ -208,7 +225,7 @@ try {
       .catch(() => null);
 
     if (role) {
-      pass(`popup resolved its backend: "${role}"`);
+      pass(`popup resolved its OCR location: "${role}"`);
       if (expectedRole && role !== expectedRole) {
         fail(`popup reported "${role}", expected "${expectedRole}"`);
       }
@@ -225,17 +242,29 @@ try {
         )
         .then(() => popup.$eval("#status", (element) => element.textContent))
         .catch(() => null);
-      if (status && status.includes("mangaocr")) {
-        pass(`popup reached the live backend: ${status.split("\n")[0]}`);
+      if (backendLive) {
+        if (status && status.includes("mangaocr")) {
+          pass(`popup reached the live backend: ${status.split("\n")[0]}`);
+        } else {
+          fail(`popup could not reach the running backend; status was: ${JSON.stringify(status)}`);
+        }
+      } else if (status && status.includes("本机识别") && status.includes("仅作回退")) {
+        // The whole point of on-device OCR: no backend must still be a good state.
+        pass("popup reports on-device recognition with the backend as optional");
       } else {
-        fail(`popup could not reach the backend; status was: ${JSON.stringify(status)}`);
+        fail(`popup did not present the no-backend case as usable: ${JSON.stringify(status)}`);
       }
     }
 
-    if (popupErrors.length === 0) {
-      pass("popup page produced no console or page errors");
+    // Connection failures against a backend that is simply not running are
+    // expected here; treating them as errors would contradict the above.
+    const unexpectedErrors = popupErrors.filter(
+      (text) => backendLive || !/ERR_CONNECTION_REFUSED|Failed to fetch/.test(text),
+    );
+    if (unexpectedErrors.length === 0) {
+      pass("popup page produced no unexpected console or page errors");
     } else {
-      fail(`popup errors: ${popupErrors.join(" | ")}`);
+      fail(`popup errors: ${unexpectedErrors.join(" | ")}`);
     }
 
     const optionsErrors = [];

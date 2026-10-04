@@ -2,6 +2,8 @@ const debugMode = document.getElementById("debugMode");
 const result = document.getElementById("result");
 const backendUrl = document.getElementById("backendUrl");
 const backendHint = document.getElementById("backendHint");
+const ocrMode = document.getElementById("ocrMode");
+const ocrModeHint = document.getElementById("ocrModeHint");
 const translationMode = document.getElementById("translationMode");
 const translationEndpoint = document.getElementById("translationEndpoint");
 const translationModel = document.getElementById("translationModel");
@@ -13,26 +15,47 @@ let savedApiKeyExists = false;
 function describeBackend() {
   const value = backendUrl.value.trim();
   const hosted = globalThis.OMT_BACKEND_URL || "";
+  const onDevice = ocrMode.value !== "backend";
+
+  // Only claim screenshots are uploaded when they actually are. With on-device
+  // recognition the page never leaves the machine, and saying otherwise would
+  // be a false privacy statement.
+  if (onDevice) {
+    backendHint.textContent = value
+      ? `当前为本机识别，截图不会发送到任何服务器；只有在识别失败时才会回退到 ${value}。`
+      : hosted
+        ? `当前为本机识别，截图不会发送到任何服务器；只有在识别失败时才会回退到官方托管后端。`
+        : "当前为本机识别，截图不会发送到任何服务器。";
+    return;
+  }
   if (value) {
-    backendHint.textContent = `识别时会优先把页面截图发送到 ${value}。`;
+    backendHint.textContent = `识别时会把页面截图发送到 ${value}；它只用于 OCR，不做其它用途。`;
   } else if (hosted) {
     backendHint.textContent = `识别时会把页面截图发送到官方托管后端 ${hosted}；它只用于 OCR，不做其它用途。`;
   } else {
-    backendHint.textContent = "未配置托管后端，识别时会尝试本机 http://127.0.0.1:8001。";
+    backendHint.textContent = "未配置后端，将尝试本机 http://127.0.0.1:8001。";
   }
+}
+
+function describeOcrMode() {
+  ocrModeHint.textContent = ocrMode.value === "backend"
+    ? "后端识别：页面截图会发送到后端服务，由服务器完成识别。"
+    : "本机识别：模型在你的浏览器里运行，页面截图不会离开这台电脑。首次识别需要加载约 117 MB 的模型（已随扩展安装，无需联网下载）。";
 }
 
 async function load() {
   const cfg = await chrome.storage.local.get([
-    "debugMode", "backendUrl", "translationMode", "translationEndpoint",
+    "debugMode", "backendUrl", "ocrMode", "translationMode", "translationEndpoint",
     "translationModel", "translationApiKey"
   ]);
   debugMode.checked = cfg.debugMode !== false;
   backendUrl.value = cfg.backendUrl || "";
+  ocrMode.value = cfg.ocrMode === "backend" ? "backend" : "on-device";
   translationMode.value = cfg.translationMode || "none";
   translationEndpoint.value = cfg.translationEndpoint || "";
   translationModel.value = cfg.translationModel || "";
   savedApiKeyExists = Boolean(cfg.translationApiKey);
+  describeOcrMode();
   describeBackend();
   updateTranslationFields();
 }
@@ -51,6 +74,10 @@ debugMode.addEventListener("change", async () => {
 });
 
 backendUrl.addEventListener("input", describeBackend);
+ocrMode.addEventListener("change", () => {
+  describeOcrMode();
+  describeBackend();
+});
 translationMode.addEventListener("change", updateTranslationFields);
 clearApiKey.addEventListener("change", () => {
   if (clearApiKey.checked) translationApiKey.value = "";
@@ -60,6 +87,7 @@ document.getElementById("save").onclick = async () => {
   const cfg = {
     debugMode: debugMode.checked,
     backendUrl: backendUrl.value.trim().replace(/\/+$/, ""),
+    ocrMode: ocrMode.value === "backend" ? "backend" : "on-device",
     translationMode: translationMode.value,
     translationEndpoint: translationEndpoint.value.trim(),
     translationModel: translationModel.value.trim()
@@ -71,6 +99,7 @@ document.getElementById("save").onclick = async () => {
   savedApiKeyExists = Boolean(newKey) || (savedApiKeyExists && !clearApiKey.checked);
   translationApiKey.value = "";
   clearApiKey.checked = false;
+  describeOcrMode();
   describeBackend();
   updateTranslationFields();
   result.textContent = "已保存本机设置。";

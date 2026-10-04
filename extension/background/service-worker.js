@@ -36,6 +36,16 @@ async function readOcrMode(){
   return cfg.ocrMode==="backend"?"backend":"on-device";
 }
 
+// The popup asks for on-device engine state so it can report it without
+// implying that a missing backend is a problem.
+chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
+  if(message?.type==="OCR_STATUS"){
+    sendResponse({status:getOcrStatus()});
+    return true;
+  }
+  return undefined;
+});
+
 chrome.runtime.onConnect.addListener(port=>{
   if(port.name!=="manga-recognition")return;
   const tabId=port.sender?.tab?.id;
