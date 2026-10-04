@@ -77,22 +77,32 @@ try {
   // popup resolves against the focused tab, which is the popup's own tab here.
   await tab.bringToFront();
 
+  // A real extension popup panel cannot be opened headlessly, so the popup page
+  // is loaded in a tab. That makes it the *active* tab, and
+  // chrome.tabs.query({active:true,currentWindow:true}) would then resolve to
+  // the popup itself and the click would report "page is restricted" — a test
+  // artefact, not a bug. Bringing the manga tab back to the front first puts
+  // the query's answer back where it belongs, and clicking through evaluate()
+  // still runs the real handler.
   const popup = await browser.newPage();
   const popupErrors = [];
   const popupConsole = [];
   popup.on("pageerror", (error) => popupErrors.push(String(error)));
   popup.on("console", (message) => popupConsole.push(`${message.type()}: ${message.text()}`));
   await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
+  await tab.bringToFront();
+  await new Promise((done) => setTimeout(done, 500));
 
   const popupState = await popup.evaluate(() => ({
     ocr: document.getElementById("ocrStatus")?.textContent,
     translate: document.getElementById("translateStatus")?.textContent,
     hasSelect: Boolean(document.getElementById("select")),
+    hasAuto: Boolean(document.getElementById("auto")),
   }));
   console.log(`popup state  : ${JSON.stringify(popupState)}`);
 
   console.log("\n点击「框选区域并识别」…");
-  await popup.click("#select");
+  await popup.evaluate(() => document.getElementById("select").click());
   await new Promise((done) => setTimeout(done, 2500));
 
   const overlay = await tab.$(".mt-selection").then((handle) => Boolean(handle)).catch(() => false);
