@@ -70,9 +70,6 @@
 
 ## 相关文档
 
-- [docs/BROWSER_OCR_FEASIBILITY.md](docs/BROWSER_OCR_FEASIBILITY.md) —— **把 OCR 搬进浏览器**的可行性实测：权重 111 MB、识别结果与服务端逐字一致，走通后不需要任何服务器
 - [deploy/README.md](deploy/README.md) —— 把后端部署到 Oracle Cloud Always Free（含注册、开机、防火墙、一键脚本、运维与风险说明）
-- [deploy/alt-self-host-tunnel/README.md](deploy/alt-self-host-tunnel/README.md) —— 免信用卡方案：自己电脑 + Tailscale Funnel
-- [docs/FREE_HOSTING_2026.md](docs/FREE_HOSTING_2026.md) —— 「有没有免信用卡的永久免费服务器」的核实过程与出处（结论：没有）
 - [docs/CHROME_WEB_STORE_TODO.md](docs/CHROME_WEB_STORE_TODO.md) —— 上传 Chrome 应用商店的待办清单（政策要求、素材规格、必改项）
 - [ARCHITECTURE.md](ARCHITECTURE.md) —— 识别流程与设计取舍

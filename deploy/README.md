@@ -339,19 +339,16 @@ TLS 用系统 Caddy（`sudo apt install caddy`），Caddyfile 把 `reverse_proxy
 
 ---
 
-## 12. 四条路怎么选（含"没有信用卡"的情况）
+## 12. 三条路怎么选（含"没有信用卡"的情况）
 
-> **先看 [`docs/BROWSER_OCR_FEASIBILITY.md`](../docs/BROWSER_OCR_FEASIBILITY.md)**：已经实测确认，把 OCR 搬进浏览器（onnxruntime-web）**可以逐字复现服务端的识别结果**，权重仅 111 MB，且完全不需要服务器。如果那条路走通，下面这些托管方案就都不再是必需品。
+| | Oracle Always Free | 自己电脑 + Tailscale Funnel | 不上后端 |
+| --- | --- | --- | --- |
+| 指南 | 本文件 | [alt-self-host-tunnel/](alt-self-host-tunnel/README.md) | 维持现状 |
+| 信用卡 | **必须**（真实卡） | **不需要** | — |
+| 费用 | 0 | 0 | 0 |
+| 7×24 在线 | 是 | **取决于你电脑开不开** | — |
+| 上手 | 注册 + 建实例 + 放行端口（脚本可自动重试容量） | 装 Tailscale + 一条命令 | — |
+| 适合 | 长期运营、要上商店 | 先跑起来 / 没卡 / 小圈子自用 | 只给自己用 |
 
-| | 浏览器端 OCR（推荐方向） | Oracle Always Free | 自己电脑 + Tailscale Funnel | 不上后端 |
-| --- | --- | --- | --- | --- |
-| 指南 | [BROWSER_OCR_FEASIBILITY.md](../docs/BROWSER_OCR_FEASIBILITY.md) | 本文件 | [alt-self-host-tunnel/](alt-self-host-tunnel/README.md) | 维持现状 |
-| 信用卡 | **不需要** | **必须**（真实卡） | **不需要** | — |
-| 费用 | 0 | 0 | 0 | 0 |
-| 需要常开的机器 | **不需要** | 免费 VM | **你的电脑** | — |
-| 隐私 | 截图不出设备 | 截图上传服务器 | 截图上传你的电脑 | — |
-| 代价 | 首次下载 ~111 MB | 容量难拿、可能被回收 | 电脑关机即失效 | 用户要装 Python |
-| 现状 | 可行性已验证，**实现未开始** | 等你注册 | 脚本已就绪 | — |
-
-**没有信用卡**：要么走浏览器端 OCR（一劳永逸），要么用自己电脑 + Funnel 先顶着。别在"Hugging Face Spaces 免费 Docker"上浪费时间——那条路 2026 年已经改成付费订阅了。
+**没有信用卡就用中间那条**，别在"Hugging Face Spaces 免费 Docker"上浪费时间——那条路 2026 年已经改成付费订阅了。
 

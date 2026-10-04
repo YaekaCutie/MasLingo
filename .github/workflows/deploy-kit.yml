@@ -44,11 +44,9 @@ jobs:
         with:
           node-version: "20"
       # Resolves every path the way Chrome would (including the importScripts
-      # in the service worker), parses every script — classic and ES module —
-      # and prints the Chrome Web Store policy flags as warnings.
-      # --experimental-vm-modules is what lets vm.SourceTextModule parse the
-      # engine's ES modules without executing them.
-      - run: node --experimental-vm-modules deploy/check-extension.mjs
+      # in the service worker), parses every script, and prints the Chrome Web
+      # Store policy flags as warnings.
+      - run: node deploy/check-extension.mjs
 
   api-image:
     name: Build image (amd64) and smoke-test the API
@@ -319,50 +317,6 @@ jobs:
           OMT_DOMAIN=localhost docker compose -p omt \
             -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
             down -v || true
-
-  ondevice-ocr:
-    name: On-device OCR runs in Chrome (no server involved)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      # 131 MB: the wasm runtime plus the int8 model. They are gitignored, so
-      # every run fetches them from the pinned versions in the script.
-      - name: Fetch the wasm runtime and the int8 model
-        run: python3 tools/fetch_ocr_assets.py
-
-      - name: Install Puppeteer
-        run: npm install --no-save --no-package-lock puppeteer
-
-      # The development probes were crops of a commercial manga page and cannot
-      # be committed, so CI uses a rendered sample instead. It still asserts the
-      # recognised text, which is what would catch a broken preprocessing step.
-      - name: Recognise a Japanese sample entirely on-device
-        run: |
-          mkdir -p extension/models
-          cp tools/fixtures/jp-horizontal.png extension/models/fixture.png
-          xvfb-run -a node deploy/check-ondevice-ocr.mjs \
-            --crop models/fixture.png --expect "日本語のテストです"
-
-      # The full product loop: drag a box on a real page -> service worker
-      # captures and crops -> on-device OCR -> text rendered back into the page,
-      # with no backend running anywhere.
-      - name: Drag a region and read it back
-        run: |
-          xvfb-run -a node deploy/check-region-flow.mjs \
-            --fixture tools/fixtures/jp-horizontal.png --expect "日本語のテストです"
-
-      # Whole-page auto-detect: region detection (the JS port of
-      # backend/ocr/bubble_detector.py) plus per-region OCR, all on-device.
-      - name: Auto-detect a whole page and read every region
-        run: |
-          xvfb-run -a node deploy/check-page-flow.mjs \
-            --fixture tools/fixtures/jp-page.png
 
   arm64-image:
     name: Build and run image (linux/arm64, the Always Free target)

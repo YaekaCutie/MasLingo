@@ -40,21 +40,6 @@ const fail = (message) => {
 };
 const pass = (message) => console.log(`ok    ${message}`);
 
-/** Re-evaluate until the predicate holds, so slow starts are not failures. */
-async function pollEval(worker, fn, predicate, { timeoutMs = 20000, intervalMs = 150 } = {}) {
-  const deadline = Date.now() + timeoutMs;
-  let last;
-  for (;;) {
-    try {
-      last = await worker.evaluate(fn);
-    } catch (error) {
-      last = `error: ${error.message}`;
-    }
-    if (predicate(last) || Date.now() > deadline) return last;
-    await new Promise((done) => setTimeout(done, intervalMs));
-  }
-}
-
 // Chrome 137 disabled --load-extension on the command line; this restores it.
 // Without the flag the extension never appears and every check below fails.
 const LAUNCH_ARGS = [
@@ -120,18 +105,10 @@ try {
     const extensionId = new URL(target.url()).host;
     pass(`service worker registered (extension id ${extensionId})`);
 
-    // --- the shared config actually reached the service worker ------------
-    // The service worker target appears as soon as the worker is registered,
-    // which can be before its (now module-based) import graph has finished
-    // evaluating. Poll instead of racing it: on a fast laptop the first read
-    // wins, on a cold CI runner it did not.
-    const resolverType = await pollEval(
-      worker,
-      () => typeof self.OMT_backendCandidates,
-      (value) => value === "function",
-    );
+    // --- importScripts actually worked ------------------------------------
+    const resolverType = await worker.evaluate(() => typeof self.OMT_backendCandidates);
     if (resolverType === "function") {
-      pass("config.js globals are available in the module service worker");
+      pass("config.js was loaded into the service worker via importScripts()");
     } else {
       fail(`self.OMT_backendCandidates is ${resolverType}, expected function`);
     }
@@ -192,23 +169,6 @@ try {
       await worker.evaluate((url) => chrome.storage.local.set({ backendUrl: url }), backendUrl);
     }
 
-    // Is there actually a backend to talk to? Recognition now runs on-device by
-    // default, so an unreachable backend is a supported state rather than a
-    // failure — but when one IS running the popup must still reach it.
-    let backendLive = false;
-    if (backendUrl) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
-        const probe = await fetch(`${backendUrl.replace(/\/+$/, "")}/health`, { signal: controller.signal });
-        clearTimeout(timer);
-        backendLive = probe.ok;
-      } catch {
-        backendLive = false;
-      }
-      console.log(`      (backend ${backendUrl} is ${backendLive ? "live" : "not running"})`);
-    }
-
     const popupErrors = [];
     const popup = await browser.newPage();
     popup.on("pageerror", (error) => popupErrors.push(String(error)));
@@ -225,7 +185,7 @@ try {
       .catch(() => null);
 
     if (role) {
-      pass(`popup resolved its OCR location: "${role}"`);
+      pass(`popup resolved its backend: "${role}"`);
       if (expectedRole && role !== expectedRole) {
         fail(`popup reported "${role}", expected "${expectedRole}"`);
       }
@@ -242,29 +202,17 @@ try {
         )
         .then(() => popup.$eval("#status", (element) => element.textContent))
         .catch(() => null);
-      if (backendLive) {
-        if (status && status.includes("mangaocr")) {
-          pass(`popup reached the live backend: ${status.split("\n")[0]}`);
-        } else {
-          fail(`popup could not reach the running backend; status was: ${JSON.stringify(status)}`);
-        }
-      } else if (status && status.includes("本机识别") && status.includes("仅作回退")) {
-        // The whole point of on-device OCR: no backend must still be a good state.
-        pass("popup reports on-device recognition with the backend as optional");
+      if (status && status.includes("mangaocr")) {
+        pass(`popup reached the live backend: ${status.split("\n")[0]}`);
       } else {
-        fail(`popup did not present the no-backend case as usable: ${JSON.stringify(status)}`);
+        fail(`popup could not reach the backend; status was: ${JSON.stringify(status)}`);
       }
     }
 
-    // Connection failures against a backend that is simply not running are
-    // expected here; treating them as errors would contradict the above.
-    const unexpectedErrors = popupErrors.filter(
-      (text) => backendLive || !/ERR_CONNECTION_REFUSED|Failed to fetch/.test(text),
-    );
-    if (unexpectedErrors.length === 0) {
-      pass("popup page produced no unexpected console or page errors");
+    if (popupErrors.length === 0) {
+      pass("popup page produced no console or page errors");
     } else {
-      fail(`popup errors: ${unexpectedErrors.join(" | ")}`);
+      fail(`popup errors: ${popupErrors.join(" | ")}`);
     }
 
     const optionsErrors = [];

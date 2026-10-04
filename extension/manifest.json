@@ -7,8 +7,7 @@
     "activeTab",
     "scripting",
     "storage",
-    "tabs",
-    "offscreen"
+    "tabs"
   ],
   "host_permissions": [
     "http://127.0.0.1:8001/*",
@@ -16,11 +15,7 @@
     "https://*.sslip.io/*"
   ],
   "background": {
-    "service_worker": "background/service-worker.js",
-    "type": "module"
-  },
-  "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "service_worker": "background/service-worker.js"
   },
   "action": {
     "default_popup": "popup/popup.html"

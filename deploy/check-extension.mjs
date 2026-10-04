@@ -76,24 +76,11 @@ if (version.split(".").every((part) => Number(part) === 0)) fail("manifest.versi
 
 // --- every file the manifest points at must exist -------------------------
 
-// These directories are populated by tools/fetch_ocr_assets.py rather than
-// committed: the wasm runtime (~14 MB) and the int8 model (~117 MB) are build
-// inputs, not source. A missing file there is a setup problem, not a bug, so it
-// warns and points at the fetch script instead of failing the check.
-const GENERATED_DIRS = ["vendor/", "models/"];
-const missingGenerated = [];
-const isGenerated = (path) => GENERATED_DIRS.some((dir) => path.startsWith(dir));
-
 const referenced = [];
 const requireFile = (path, label) => {
   if (!path || typeof path !== "string") return;
   referenced.push(path);
-  if (existsSync(join(extensionDir, path))) return;
-  if (isGenerated(path)) {
-    missingGenerated.push(path);
-    return;
-  }
-  fail(`${label} points at a missing file: ${path}`);
+  if (!existsSync(join(extensionDir, path))) fail(`${label} points at a missing file: ${path}`);
 };
 
 requireFile(manifest.background?.service_worker, "background.service_worker");
@@ -117,52 +104,21 @@ for (const file of htmlFiles) {
   for (const [, target] of source.matchAll(pattern)) {
     if (/^(https?:|data:|#|\/\/)/i.test(target)) continue;
     const resolved = resolve(dirname(file), target);
-    if (existsSync(resolved)) {
-      referenced.push(relative(resolved).replace(/^extension\//, ""));
-      continue;
-    }
-    const asExtensionPath = relative(resolved).replace(/^extension\//, "");
-    if (isGenerated(asExtensionPath)) {
-      missingGenerated.push(asExtensionPath);
-    } else {
+    if (!existsSync(resolved)) {
       fail(`${relative(file)} references a missing file: ${target}`);
+    } else {
+      referenced.push(relative(resolved).replace(/^extension\//, ""));
     }
   }
 }
 
 // --- js files must parse, and importScripts() must resolve -----------------
 
-// The extension ships two kinds of script: classic ones (the MV3 service worker
-// and the content script, which use importScripts) and ES modules (the
-// on-device OCR engine, loaded by extension pages). vm.Script only parses the
-// former, so modules go through vm.SourceTextModule — which parses without
-// executing — and that needs node --experimental-vm-modules.
-const moduleRewriter = null;
-const canParseModules = typeof vm.SourceTextModule === "function";
-let modulesSkipped = 0;
-
-function looksLikeModule(source) {
-  return /^\s*(?:import|export)\s/m.test(source);
-}
-
-function parseCheck(file, source) {
-  const isModule = looksLikeModule(source);
-  if (!isModule) {
-    new vm.Script(source, { filename: file });
-    return;
-  }
-  if (!canParseModules) {
-    modulesSkipped += 1;
-    return;
-  }
-  new vm.SourceTextModule(source, { identifier: file, initializeImportMeta() {} });
-}
-
 const jsFiles = walk(extensionDir).filter((file) => file.endsWith(".js"));
 for (const file of jsFiles) {
   const source = readFileSync(file, "utf8");
   try {
-    parseCheck(file, source);
+    new vm.Script(source, { filename: file });
   } catch (error) {
     fail(`${relative(file)} does not parse: ${error.message}`);
     continue;
@@ -177,28 +133,6 @@ for (const file of jsFiles) {
       note(`${relative(file)} imports ${relative(resolved)}`);
     }
   }
-
-  // The service worker is an ES module, so relative `import ... from "…"` needs
-  // the same treatment: a typo there stops the whole worker from loading.
-  const importPattern = /\bfrom\s*["'](\.[^"']+)["']/g;
-  for (const [, target] of source.matchAll(importPattern)) {
-    const resolved = resolve(dirname(file), target);
-    const asExtensionPath = relative(resolved).replace(/^extension\//, "");
-    if (existsSync(resolved)) {
-      referenced.push(asExtensionPath);
-    } else if (isGenerated(asExtensionPath)) {
-      missingGenerated.push(asExtensionPath);
-    } else {
-      fail(`${relative(file)} imports a missing file: ${target}`);
-    }
-  }
-}
-
-if (modulesSkipped > 0) {
-  warn(
-    `${modulesSkipped} ES module(s) were not parse-checked — rerun with ` +
-      "`node --experimental-vm-modules` to include them",
-  );
 }
 
 // --- store-policy flags ----------------------------------------------------
@@ -250,14 +184,6 @@ if (keyIndex !== -1) {
 }
 
 // --- report ---------------------------------------------------------------
-
-if (missingGenerated.length > 0) {
-  const unique = [...new Set(missingGenerated)];
-  warn(
-    `${unique.length} build-time asset(s) not present (${unique.slice(0, 3).join(", ")}` +
-      `${unique.length > 3 ? ", …" : ""}) — run: python tools/fetch_ocr_assets.py`,
-  );
-}
 
 console.log(`checked ${jsFiles.length} scripts, ${htmlFiles.length} pages, ${referenced.length} references`);
 for (const message of notes) console.log(`  note    ${message}`);

@@ -37,22 +37,6 @@
 
 参考：<https://developer.chrome.com/docs/extensions/reference/api/tabs>、<https://developer.chrome.com/docs/webstore/review-process>
 
-> **实测补充（2026-10，本轮端到端测试意外证实）：** `content_scripts.matches` 里的
-> `<all_urls>` **并不能**满足 `captureVisibleTab` 的权限要求。把扩展装进 Chrome 并在
-> 页面上真实拖框时，服务端报的是：
->
-> ```
-> Either the '<all_urls>' or 'activeTab' permission is required.
-> ```
->
-> 也就是说：**静态 `<all_urls>` 内容脚本对截图权限毫无贡献**，真正起作用的是用户点扩展
-> 图标时授予的 `activeTab`。
->
-> 这反过来让 P0-2 变得**更安全**：删掉静态内容脚本（改为一律按需注入）**不会**影响截图，
-> 因为在真实使用流程里永远是"用户点了图标 → activeTab 已授权 → 截图可用"。唯一的差别
-> 是自动化测试无法伪造这个手势，所以 `deploy/check-region-flow.mjs` 会对扩展做一份临时
-> 副本、只补上 `<all_urls>` 再跑（该权限与所测逻辑无关）。
-
 ### P0-3 `tabs` 权限大概可以删掉
 
 现在声明了 `permissions: ["activeTab","scripting","storage","tabs"]`。官方说明：`tabs` 权限只用来读取 `url` / `pendingUrl` / `title` / `favIconUrl`；**有了宽泛 host 权限或 activeTab 时它根本不需要**。

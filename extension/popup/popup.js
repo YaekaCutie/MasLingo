@@ -1,23 +1,12 @@
 const status = document.getElementById("status");
 const backendRole = document.getElementById("backendRole");
 
-// Kick off the on-device model load immediately: it takes about half a second,
-// and the user is still reading the popup when it starts, so their first
-// recognition no longer pays for it. Failure is fine — the engine falls back
-// to the backend and OCR_STATUS reports why.
-chrome.runtime.sendMessage({ type: "OCR_WARMUP" }).catch(() => {});
-
 function normalize(url) {
   return String(url || "").trim().replace(/\/+$/, "");
 }
 
 function isLocal(base) {
   return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(normalize(base));
-}
-
-async function readOcrMode() {
-  const cfg = await chrome.storage.local.get(["ocrMode"]);
-  return cfg.ocrMode === "backend" ? "backend" : "on-device";
 }
 
 async function fetchBackend(path, options = {}) {
@@ -38,50 +27,23 @@ async function fetchBackend(path, options = {}) {
 }
 
 async function refreshConfig() {
-  const mode = await readOcrMode();
-  let backendLabel = "未连接";
   try {
     const { resp, base } = await fetchBackend("/health");
     const data = await resp.json();
     if (resp.ok && data.ok) {
       if (base === normalize(globalThis.OMT_BACKEND_URL)) {
-        backendLabel = "官方托管后端";
+        backendRole.textContent = "官方托管后端";
       } else if (isLocal(base)) {
-        backendLabel = "本机后端";
+        backendRole.textContent = "本机后端";
       } else {
-        backendLabel = "自定义后端";
+        backendRole.textContent = "自定义后端";
       }
     } else {
-      backendLabel = "后端异常";
+      backendRole.textContent = "后端异常";
     }
   } catch (error) {
-    // A missing backend is not a problem when recognition runs on-device — it
-    // is only a fallback — so this must not look like a failure.
-    backendLabel = "未运行（可选）";
+    backendRole.textContent = "未连接";
   }
-
-  if (mode === "backend") {
-    backendRole.textContent = backendLabel;
-  } else {
-    backendRole.textContent = "本机（端上）";
-  }
-}
-
-/** Ask the service worker how the on-device engine is doing. */
-async function ocrStatusText() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "OCR_STATUS" });
-    const state = response?.status;
-    if (!state) return "本机识别：未初始化（首次识别时加载）";
-    if (state.state === "ready") {
-      return `本机识别：就绪（模型加载 ${state.loadMs ?? "?"} ms，已识别 ${state.recognitions} 次）`;
-    }
-    if (state.state === "loading") return "本机识别：正在加载模型…";
-    if (state.state === "failed") return `本机识别：不可用（${state.error}）`;
-  } catch (error) {
-    // The worker may be asleep; that is normal and not worth surfacing.
-  }
-  return "本机识别：未初始化（首次识别时加载）";
 }
 
 async function prepareContentScript(tabId) {
@@ -113,16 +75,15 @@ document.getElementById("settings").onclick =
 document.getElementById("settings2").onclick = () => chrome.runtime.openOptionsPage();
 
 document.getElementById("health").onclick = async () => {
-  const lines = [await ocrStatusText()];
   try {
     const { resp, base } = await fetchBackend("/health");
     const j = await resp.json();
-    lines.push(`${base}\n${JSON.stringify(j, null, 2)}`);
+    status.textContent = `${base}\n${JSON.stringify(j, null, 2)}`;
+    await refreshConfig();
   } catch (e) {
-    lines.push(`后端（仅作回退，未运行不影响使用）：${e.message}`);
+    status.textContent = "后端未运行：" + e.message;
+    backendRole.textContent = "未连接";
   }
-  status.textContent = lines.join("\n\n");
-  await refreshConfig();
 };
 
 document.getElementById("select").onclick = async () => {

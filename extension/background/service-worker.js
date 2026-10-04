@@ -1,18 +1,4 @@
-// This worker is an ES module (manifest background.type), so shared code is
-// imported rather than importScripts()'d. config.js only assigns globals, so
-// the extension pages can keep loading it as a classic script.
-import "../config.js";
-import {
-  getOcrStatus,
-  recognizeImageData,
-  recognizePagePng,
-  warmUp,
-} from "../ocr/client.js";
-
-// Diagnostic entry point: the worker is an ES module, so imported bindings are
-// not reachable from the outside. This exposes them for the browser test in
-// deploy/check-ondevice-ocr.mjs and for manual debugging from devtools.
-globalThis.OMT_ocr = { getOcrStatus, recognizeImageData, warmUp };
+importScripts("../config.js");
 
 async function fetchBackend(path,options={}){
   const backends=await globalThis.OMT_backendCandidates();
@@ -31,42 +17,14 @@ async function fetchBackend(path,options={}){
   throw new Error(`后端连接失败（${lastError?.message||"未配置后端且本机后端未运行"}）`);
 }
 
-async function readOcrMode(){
-  const cfg=await chrome.storage.local.get(["ocrMode"]);
-  return cfg.ocrMode==="backend"?"backend":"on-device";
-}
-
-// The popup asks for on-device engine state so it can report it without
-// implying that a missing backend is a problem. It also asks for a warm-up as
-// soon as it opens: loading the model takes ~0.5s, and doing that while the
-// user is still choosing a region hides it entirely.
-chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
-  if(message?.type==="OCR_STATUS"){
-    sendResponse({status:getOcrStatus()});
-    return true;
-  }
-  if(message?.type==="OCR_WARMUP"){
-    warmUp().then(
-      ()=>sendResponse({ok:true,status:getOcrStatus()}),
-      error=>sendResponse({ok:false,error:error.message})
-    );
-    return true;
-  }
-  return undefined;
-});
-
 chrome.runtime.onConnect.addListener(port=>{
   if(port.name!=="manga-recognition")return;
   const tabId=port.sender?.tab?.id;
   if(!tabId){port.disconnect();return;}
-  // Starting the model load now means the user's first selection does not pay
-  // for it. Failure is fine: recognizeRegion falls back to the backend.
-  warmUp().catch(error=>console.warn("端上 OCR 预热失败，将回退到后端：",error.message));
   port.onMessage.addListener(msg=>{
     if(msg.type==="RECOGNIZE_REGION") recognizeRegion(msg,tabId,port);
     else if(msg.type==="RECOGNIZE_PAGE") recognizePage(msg,tabId,port);
     else if(msg.type==="TRANSLATE_TEXTS") translateTexts(msg,port);
-    else if(msg.type==="OCR_STATUS") postPortMessage(port,{type:"OCR_STATUS",requestId:msg.requestId,status:getOcrStatus()});
     else if(msg.type==="KEEPALIVE") postPortMessage(port,{type:"KEEPALIVE_ACK"});
   });
 });
@@ -88,39 +46,9 @@ function postResult(port,tabId,message){
   });
 }
 
-/**
- * Recognise one cropped region, preferring on-device inference.
- *
- * On-device is the default because it needs no server, no cloud account and no
- * locally installed Python — and the crop never leaves the machine. The
- * backend is kept as a fallback (and as an explicit choice in the options
- * page) for devices where the model cannot run.
- */
-async function recognizeCrop(imageData,canvas,mode){
-  if(mode!=="backend"){
-    try{
-      const result=await recognizeImageData(imageData);
-      return {source:"on-device",text:(result.text||"").trim(),milliseconds:result.milliseconds};
-    }catch(error){
-      console.warn("端上识别不可用，改用后端：",error.message);
-    }
-  }
-  const cropped=await canvas.convertToBlob({type:"image/png"});
-  const fd=new FormData();
-  fd.append("image",cropped,"manga.png");
-  const resp=await fetchBackend("/api/recognize-image",{method:"POST",body:fd});
-  const json=await resp.json();
-  if(!resp.ok) throw new Error(json.detail||"后端错误");
-  return {
-    source:"backend",
-    text:(json.items||[]).map(item=>item.text?.trim()).filter(Boolean).join("\n")
-  };
-}
-
 async function recognizeRegion(msg,tabId,port){
   try{
     const cfg=await chrome.storage.local.get(["debugMode"]);
-    const mode=await readOcrMode();
     const {tab,bmp}=await captureVisibleImage(tabId);
     postPortMessage(port,{type:"CAPTURE_READY",requestId:msg.requestId});
     const r=msg.rect;
@@ -135,22 +63,29 @@ async function recognizeRegion(msg,tabId,port){
     const cropWidth=ex-sx;
     const cropHeight=ey-sy;
     const canvas=new OffscreenCanvas(cropWidth,cropHeight);
-    const ctx=canvas.getContext("2d",{willReadFrequently:true});
+    const ctx=canvas.getContext("2d");
     ctx.drawImage(bmp,sx,sy,cropWidth,cropHeight,0,0,cropWidth,cropHeight);
+    const cropped=await canvas.convertToBlob({type:"image/png"});
+    const fd=new FormData();
+    fd.append("image",cropped,"manga.png");
 
-    const ocr=await recognizeCrop(ctx.getImageData(0,0,cropWidth,cropHeight),canvas,mode);
-    const patch=await createImagePatch(bmp,r,viewport);
+    const resp=await fetchBackend("/api/recognize-image",{
+      method:"POST",body:fd
+    });
+    const json=await resp.json();
+    if(!resp.ok) throw new Error(json.detail||"后端错误");
+    json.debug_mode=cfg.debugMode!==false;
+    const patch = await createImagePatch(bmp,r,viewport);
+    const recognizedText = (json.items||[])
+      .map(item=>item.text?.trim())
+      .filter(Boolean)
+      .join("\n");
+    json.items = recognizedText ? [{text:recognizedText,patch}] : [];
     postResult(port,tabId,{
       type:"RECOGNITION_RESULT",
       rect:r,
       requestId:msg.requestId,
-      result:{
-        ok:true,
-        debug_mode:cfg.debugMode!==false,
-        source:ocr.source,
-        milliseconds:ocr.milliseconds,
-        items:ocr.text?[{text:ocr.text,patch}]:[]
-      }
+      result:json
     });
   }catch(error){
     postResult(port,tabId,{
@@ -235,54 +170,20 @@ async function recognizePage(msg,tabId,port){
     };
     const cropWidth=Math.max(1,crop.right-crop.left);
     const cropHeight=Math.max(1,crop.bottom-crop.top);
-    // Sent as soon as the screenshot is taken: the content script uses it to
-    // show the busy indicator, which must appear after the capture (so it is
-    // not itself photographed) but before the slow part, so the user gets
-    // feedback while detection and OCR run.
-    postPortMessage(port,{type:"CAPTURE_READY",requestId:msg.requestId});
     const upscale=Math.max(1,Math.min(3,1600/Math.max(cropWidth,cropHeight)));
     const outputWidth=Math.max(1,Math.round(cropWidth*upscale));
     const outputHeight=Math.max(1,Math.round(cropHeight*upscale));
     const canvas=new OffscreenCanvas(outputWidth,outputHeight);
-    const context=canvas.getContext("2d",{willReadFrequently:true});
-    context.drawImage(
+    canvas.getContext("2d").drawImage(
       bmp,crop.left,crop.top,cropWidth,cropHeight,0,0,outputWidth,outputHeight
     );
-    // Encoded once and reused by whichever path runs, so the fallback costs
-    // nothing extra.
     const image=await canvas.convertToBlob({type:"image/png"});
-
-    // Region detection and OCR both run on-device by default, so auto-detect
-    // no longer needs a backend either.
-    let rawItems;
-    let source="on-device";
-    const mode=await readOcrMode();
-    if(mode!=="backend"){
-      try{
-        const onDevice=await recognizePagePng(new Uint8Array(await image.arrayBuffer()));
-        rawItems=(onDevice.items||[]).map(item=>({
-          text:item.text,
-          bbox:{
-            left:item.bbox.left,top:item.bbox.top,
-            right:item.bbox.right,bottom:item.bbox.bottom
-          }
-        }));
-      }catch(error){
-        console.warn("端上整页识别不可用，改用后端：",error.message);
-        source=null;
-      }
-    }
-    if(!source){
-      const fd=new FormData();
-      fd.append("image",image,"manga-image.png");
-      const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
-      const result=await resp.json();
-      if(!resp.ok)throw new Error(result.detail||"后端错误");
-      rawItems=result.items||[];
-      source="backend";
-    }
-    const result={ok:true,source};
-    result.items=rawItems.map(item=>({
+    const fd=new FormData();
+    fd.append("image",image,"manga-image.png");
+    const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
+    const result=await resp.json();
+    if(!resp.ok)throw new Error(result.detail||"后端错误");
+    result.items=(result.items||[]).map(item=>({
       ...item,
       rect:{
         left:(item.bbox.left/upscale+crop.left)*viewport.width/bmp.width,
