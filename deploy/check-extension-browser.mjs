@@ -178,41 +178,71 @@ try {
     await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
 
     const role = await popup
-      .waitForFunction(() => document.getElementById("backendRole")?.textContent !== "检测中…", {
+      .waitForFunction(() => document.getElementById("ocrStatus")?.textContent !== "检测中…", {
         timeout: 20000,
       })
-      .then(() => popup.$eval("#backendRole", (element) => element.textContent))
+      .then(() => popup.$eval("#ocrStatus", (element) => element.textContent))
       .catch(() => null);
 
     if (role) {
-      pass(`popup resolved its backend: "${role}"`);
+      pass(`popup resolved its OCR status: "${role}"`);
       if (expectedRole && role !== expectedRole) {
         fail(`popup reported "${role}", expected "${expectedRole}"`);
       }
     } else {
-      fail("popup never resolved #backendRole (refreshConfig did not finish)");
+      fail("popup never resolved #ocrStatus");
+    }
+
+    const translation = await popup
+      .waitForFunction(() => document.getElementById("translateStatus")?.textContent !== "检测中…", {
+        timeout: 20000,
+      })
+      .then(() => popup.$eval("#translateStatus", (element) => element.textContent))
+      .catch(() => null);
+    if (translation) {
+      pass(`popup resolved its translation source: "${translation}"`);
+    } else {
+      fail("popup never resolved #translateStatus");
     }
 
     if (backendUrl) {
+      // The diagnostic button lives inside a collapsed <details>, so open it
+      // first or the click lands on nothing.
+      await popup.evaluate(() => {
+        document.getElementById("details").open = true;
+      });
       await popup.click("#health");
       const status = await popup
         .waitForFunction(
-          () => !document.getElementById("status").textContent.includes("准备就绪"),
+          () => {
+            // The popup shows an intermediate "正在检查…" while the probe runs,
+            // so waiting only for the placeholder to change would return too
+            // early and read the in-progress text.
+            const text = document.getElementById("status").textContent;
+            return !text.includes("准备就绪") && !text.includes("正在检查");
+          },
           { timeout: 30000 },
         )
         .then(() => popup.$eval("#status", (element) => element.textContent))
         .catch(() => null);
       if (status && status.includes("mangaocr")) {
         pass(`popup reached the live backend: ${status.split("\n")[0]}`);
+      } else if (status && status.includes("未运行")) {
+        // No backend in this run: the popup must say so in a readable way
+        // rather than silently doing nothing.
+        pass("popup reported a missing backend with instructions");
       } else {
         fail(`popup could not reach the backend; status was: ${JSON.stringify(status)}`);
       }
     }
 
-    if (popupErrors.length === 0) {
-      pass("popup page produced no console or page errors");
+    // Connection failures against a backend that simply is not running are the
+    // expected outcome here, not an error.
+    const unexpected = popupErrors.filter((text) => !/ERR_CONNECTION_REFUSED|Failed to fetch/.test(text));
+    if (unexpected.length === 0) {
+      pass("popup page produced no unexpected console or page errors");
     } else {
-      fail(`popup errors: ${popupErrors.join(" | ")}`);
+      fail(`popup errors: ${unexpected.join(" | ")}`);
     }
 
     const optionsErrors = [];

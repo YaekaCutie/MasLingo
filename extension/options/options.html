@@ -8,55 +8,81 @@
 </head>
 <body>
   <main>
-    <h1>Manga Translator</h1>
-    <p class="sub">OCR 默认由官方托管后端完成，无需在本机安装环境；翻译服务需显式启用。</p>
+    <header>
+      <h1>Manga Translator</h1>
+      <p class="sub">识别画面上的日文，把译文直接画回原处。翻译默认关闭，开启后由你选择的服务完成。</p>
+    </header>
 
     <section class="panel">
+      <h2>识别</h2>
+
+      <label for="backendUrl">OCR 后端地址</label>
+      <input id="backendUrl" type="url" placeholder="http://127.0.0.1:8001">
+      <div class="hint" id="backendHint">识别时会把页面截图发送到上面这个后端；它只用于 OCR，不做其它用途。</div>
+
       <label class="toggle-row" for="debugMode">
         <input id="debugMode" type="checkbox" checked>
-        <span>显示 OCR 识别结果</span>
+        <span>显示识别到的日文原文</span>
       </label>
-      <div class="hint">关闭后只保留识别流程，不影响结果内容。</div>
+      <div class="hint">关闭后识别照常进行，只是不再把日文结果显示出来。</div>
+    </section>
 
-      <hr>
-      <h2>后端服务</h2>
-      <label for="backendUrl">后端地址</label>
-      <input id="backendUrl" type="url" placeholder="留空则使用官方托管后端">
-      <div class="hint">留空：使用官方托管后端，开箱即用。自建后端可填 http://127.0.0.1:8001（需自己启动 backend/），或填你部署的服务地址。</div>
-      <div class="hint" id="backendHint">识别时，页面截图会发送到上面这个后端；它只用于 OCR，不做其它用途。</div>
+    <section class="panel">
+      <h2>翻译</h2>
 
-      <hr>
-      <h2>翻译模式</h2>
-      <label for="translationMode">模式</label>
-      <select id="translationMode">
-        <option value="none">关闭翻译（默认，无云端请求）</option>
-        <option value="openai-compatible">OpenAI-compatible API（日文 → 简体中文）</option>
-        <option value="free-translate">Google 翻译（日文 → 简体中文，在线）</option>
-      </select>
-      <div class="hint">启用翻译时，OCR 文本会按日文翻译为简体中文；默认关闭翻译。</div>
-      <div class="hint">OpenAI-compatible 可配置云端服务或本地兼容服务（如 Ollama）。只有选择相应模式后才会发起翻译请求。</div>
+      <label for="translationProvider">翻译来源</label>
+      <select id="translationProvider"></select>
+      <div class="hint" id="providerNote"></div>
+      <div class="hint" id="providerKeyLink" hidden>
+        <a id="keyLink" href="#" target="_blank" rel="noreferrer noopener">获取密钥 →</a>
+      </div>
 
-      <div id="openaiSettings">
+      <div class="field" id="fieldEndpoint" hidden>
         <label for="translationEndpoint">接口地址</label>
-        <input id="translationEndpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions">
+        <input id="translationEndpoint" type="url" placeholder="https://example.com/v1/chat/completions">
+        <div class="hint" id="endpointHint"></div>
+      </div>
+
+      <div class="field" id="fieldModel" hidden>
         <label for="translationModel">模型</label>
-        <input id="translationModel" type="text" placeholder="例如：gpt-4o-mini">
-        <label for="translationApiKey">API Key（可选）</label>
-        <input id="translationApiKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存的 Key">
+        <input id="translationModel" type="text" placeholder="例如 gpt-4o-mini">
+      </div>
+
+      <div class="field" id="fieldAppId" hidden>
+        <label for="translationAppId" id="appIdLabel">APP ID</label>
+        <input id="translationAppId" type="text" autocomplete="off">
+      </div>
+
+      <div class="field" id="fieldKey" hidden>
+        <label for="translationApiKey" id="keyLabel">密钥</label>
+        <input id="translationApiKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存的密钥">
         <label class="toggle-row" for="clearApiKey">
           <input id="clearApiKey" type="checkbox">
-          <span>清除本机保存的 API Key</span>
+          <span>清除已保存的密钥</span>
         </label>
-        <div id="keyStatus" class="hint">API Key 仅保存在此浏览器的扩展本地存储中，随翻译请求发送到该接口。</div>
+        <div class="hint" id="keyStatus"></div>
       </div>
 
-      <div class="actions">
-        <button id="save" class="primary">保存</button>
+      <div class="field" id="fieldTarget" hidden>
+        <label for="targetLanguage">目标语言</label>
+        <input id="targetLanguage" type="text" placeholder="简体中文">
+        <div class="hint">用自然语言描述即可，会原样写进给模型的指令里。</div>
       </div>
-      <div id="result" class="result">MangaOCR 识别模式</div>
+
+      <div class="actions secondary">
+        <button id="test" type="button">测试翻译</button>
+      </div>
+      <div class="hint" id="testResult" hidden></div>
     </section>
+
+    <div class="actions">
+      <button id="save" class="primary">保存设置</button>
+    </div>
+    <div id="result" class="result" hidden></div>
   </main>
+
   <script src="../config.js"></script>
+  <script src="../translation/providers.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

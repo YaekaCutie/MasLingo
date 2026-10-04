@@ -224,7 +224,7 @@ function startRecognition(rect, detectPage = false, mediaRect = null) {
 
 function showBusy(rect, fullPage) {
   const panel = document.createElement("div");
-  panel.className = fullPage ? "mt-overlay mt-overlay-status" : "mt-overlay";
+  panel.className = fullPage ? "mt-overlay mt-overlay-page" : "mt-overlay";
   if (!fullPage) {
     Object.assign(panel.style, {
       left: `${rect.left}px`, top: `${rect.top}px`,
@@ -235,7 +235,11 @@ function showBusy(rect, fullPage) {
   content.className = "mt-overlay-loading";
   content.setAttribute("role", "status");
   content.setAttribute("aria-live", "polite");
-  content.textContent = "正在自动识别页面文字…";
+  const spinner = document.createElement("span");
+  spinner.className = "mt-loading-spinner";
+  const label = document.createElement("span");
+  label.textContent = fullPage ? "正在识别整页文字…" : "正在识别…";
+  content.append(spinner, label);
   panel.appendChild(content);
   document.body.appendChild(panel);
   busyPanel = panel;
@@ -266,8 +270,8 @@ function showRecognitionResult(message, pageMode) {
     if (texts.length && activePort) {
       requestTimeout = setTimeout(() => {
         console.warn("翻译超时，保留 OCR 原文");
-        discardSourcePatches();
-        showTranslationNotice("翻译超时，当前保留日文原文。请检查翻译服务后重试。");
+        clearOverlay();
+        showToast("翻译超时，已保留日文原文。请检查翻译服务后重试。", "error");
         closeRequestPort();
       }, 45000);
       activePort.postMessage({type: "TRANSLATE_TEXTS", texts, requestId: message.requestId});
@@ -282,25 +286,23 @@ function showRecognitionResult(message, pageMode) {
 function showTranslationResult(message) {
   if (message.requestId !== activeRequestId) return;
   if (message.mode === "none") {
-    discardSourcePatches();
-    showTranslationNotice(
-      "翻译未启用：当前显示的是日文原文。打开扩展设置，选择 Google 翻译或 OpenAI-compatible API。"
-    );
+    clearOverlay();
+    showToast("翻译未启用，已保留日文原文。在扩展设置里选择翻译来源即可。", "info");
   } else if (!message.result?.ok) {
     const error = message.result?.error || "未知错误";
     console.warn("翻译失败，保留 OCR 原文：", error);
-    discardSourcePatches();
-    showTranslationNotice(`翻译失败，当前保留日文原文：${error}`);
+    clearOverlay();
+    showToast(`翻译失败，已保留日文原文：${error}`, "error");
   } else {
     const items = message.result.items || [];
     const hasAllTranslations = items.length === resultContents.length &&
       items.every(item => typeof item.translated === "string" && item.translated.trim());
     if (!hasAllTranslations) {
-      discardSourcePatches();
-      showTranslationNotice("翻译服务未返回完整结果，当前保留日文原文。");
+      clearOverlay();
+      showToast("翻译服务未返回完整结果，已保留日文原文。", "error");
     } else if (resultContents.some(entry => !entry.patch?.dataUrl)) {
-      discardSourcePatches();
-      showTranslationNotice("缺少原图修复数据，请重载扩展并刷新漫画页面后重试。");
+      clearOverlay();
+      showToast("缺少原图修复数据，请重载扩展并刷新漫画页面后重试。", "error");
     } else {
       resultContents.forEach((entry, index) => {
         if (entry.canvas.isConnected && entry.patch) {
@@ -318,22 +320,225 @@ function showTranslationResult(message) {
   closeRequestPort();
 }
 
-function showTranslationNotice(text) {
-  const panel = document.createElement("div");
-  panel.className = "mt-overlay mt-overlay-status";
-  const content = document.createElement("div");
-  content.className = "mt-overlay-loading";
-  content.setAttribute("role", "status");
-  content.setAttribute("aria-live", "polite");
-  content.textContent = text;
-  panel.appendChild(content);
-  document.body.appendChild(panel);
-  resultPanels.push(panel);
+// Small, self-dismissing status line in the corner.
+//
+// Translation results are never shown in a panel — they are painted over the
+// original text. This exists only to explain *why nothing changed* (translation
+// off, provider unreachable), so it stays out of the way and never covers the
+// artwork.
+let toastTimer = null;
+
+function showToast(text, kind = "info") {
+  let toast = document.getElementById("mt-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "mt-toast";
+    toast.setAttribute("role", "status");
+    toast.setAttribute("aria-live", "polite");
+    document.body.appendChild(toast);
+  }
+  toast.className = `mt-toast mt-toast-${kind} mt-toast-visible`;
+  toast.textContent = text;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.remove("mt-toast-visible");
+    toastTimer = null;
+  }, kind === "error" ? 8000 : 4500);
 }
 
-function discardSourcePatches() {
+function hideToast() {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = null;
+  document.getElementById("mt-toast")?.remove();
+}
+
+/** Remove everything this extension painted, leaving the page untouched. */
+function clearOverlay() {
   for (const entry of resultContents) entry.canvas.remove();
   resultContents = [];
+  for (const panel of resultPanels) panel.remove();
+  resultPanels = [];
+  busyPanel = null;
+}
+
+/**
+ * Rebuild the artwork behind recognised text.
+ *
+ * The previous approach replaced each pixel with a bilinear blend of four
+ * single samples taken from the edges of the text box, keeping anything within
+ * 28 levels of that estimate. Two things went wrong with it: thick strokes left
+ * ghosts (their interior sits close to the blend), and a gradient or screentone
+ * cannot be reconstructed from four points, so patches of tone survived.
+ *
+ * Here the box is classified into "ink" and "background" against a per-row and
+ * per-column band average (which follows gradients in both axes), the ink mask
+ * is dilated so the antialiased fringe goes too, and the holes are then filled
+ * by inward diffusion from the surrounding pixels — layer by layer, so the fill
+ * follows the local tone instead of guessing at it.
+ *
+ * @returns {void} mutates `data` in place
+ */
+function reconstructBackground(data, width, height, box) {
+  const {left, top, right, bottom} = box;
+  const boxWidth = right - left;
+  const boxHeight = bottom - top;
+  if (boxWidth < 3 || boxHeight < 3) return;
+
+  const at = (x, y, channel) => data[(y * width + x) * 4 + channel];
+  const band = Math.max(1, Math.round(Math.min(boxWidth, boxHeight) * 0.12));
+
+  // Average a band just outside each edge: one sample per side (the old code)
+  // lets a single dark speck or a stray stroke skew the whole estimate.
+  const rowBand = (from, to) => {
+    const out = [];
+    for (let y = top; y < bottom; y++) {
+      const sum = [0, 0, 0];
+      let count = 0;
+      for (let x = Math.max(0, from); x < Math.min(width, to); x++) {
+        for (let c = 0; c < 3; c++) sum[c] += at(x, y, c);
+        count++;
+      }
+      out.push(count ? sum.map(value => value / count) : null);
+    }
+    return out;
+  };
+  const columnBand = (from, to) => {
+    const out = [];
+    for (let x = left; x < right; x++) {
+      const sum = [0, 0, 0];
+      let count = 0;
+      for (let y = Math.max(0, from); y < Math.min(height, to); y++) {
+        for (let c = 0; c < 3; c++) sum[c] += at(x, y, c);
+        count++;
+      }
+      out.push(count ? sum.map(value => value / count) : null);
+    }
+    return out;
+  };
+
+  const leftBand = rowBand(left - band, left);
+  const rightBand = rowBand(right, right + band);
+  const topBand = columnBand(top - band, top);
+  const bottomBand = columnBand(bottom, bottom + band);
+
+  const mix = (a, b, position) => {
+    if (!a) return b;
+    if (!b) return a;
+    return [
+      a[0] + (b[0] - a[0]) * position,
+      a[1] + (b[1] - a[1]) * position,
+      a[2] + (b[2] - a[2]) * position,
+    ];
+  };
+
+  const ink = new Uint8Array(boxWidth * boxHeight);
+  const estimate = new Float32Array(boxWidth * boxHeight * 3);
+  const threshold = 26;
+
+  for (let y = top; y < bottom; y++) {
+    const verticalPosition = (y - top + 0.5) / boxHeight;
+    for (let x = left; x < right; x++) {
+      const horizontalPosition = (x - left + 0.5) / boxWidth;
+      // Interpolate along both axes and average, so a vertical gradient and a
+      // horizontal one are each followed instead of one winning outright.
+      const horizontal = mix(leftBand[y - top], rightBand[y - top], horizontalPosition);
+      const vertical = mix(topBand[x - left], bottomBand[x - left], verticalPosition);
+      const index = (y - top) * boxWidth + (x - left);
+      let difference = 0;
+      for (let c = 0; c < 3; c++) {
+        const value = (horizontal[c] + vertical[c]) / 2;
+        estimate[index * 3 + c] = value;
+        difference = Math.max(difference, Math.abs(at(x, y, c) - value));
+      }
+      ink[index] = difference > threshold ? 1 : 0;
+    }
+  }
+
+  // Dilate by one pixel: antialiased stroke edges sit close to the estimate and
+  // would otherwise survive as a pale outline around the new text.
+  const mask = new Uint8Array(boxWidth * boxHeight);
+  for (let y = 0; y < boxHeight; y++) {
+    for (let x = 0; x < boxWidth; x++) {
+      let hit = 0;
+      for (let dy = -1; dy <= 1 && !hit; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= boxWidth || ny >= boxHeight) continue;
+          if (ink[ny * boxWidth + nx]) { hit = 1; break; }
+        }
+      }
+      mask[y * boxWidth + x] = hit;
+    }
+  }
+
+  // Colours to fill, seeded from the original pixels; `known` marks the ones we
+  // trust (background inside the box plus the dilated-away fringe).
+  const colors = new Float32Array(boxWidth * boxHeight * 3);
+  for (let index = 0; index < boxWidth * boxHeight; index++) {
+    const x = left + (index % boxWidth);
+    const y = top + Math.floor(index / boxWidth);
+    for (let c = 0; c < 3; c++) colors[index * 3 + c] = at(x, y, c);
+  }
+
+  let unknown = 0;
+  for (let index = 0; index < mask.length; index++) if (mask[index]) unknown++;
+
+  const filled = new Uint8Array(mask.length);
+  let remaining = unknown;
+  let guard = 0;
+  const maxPasses = Math.max(8, Math.ceil(Math.max(boxWidth, boxHeight) / 2) + 4);
+  while (remaining > 0 && guard++ < maxPasses) {
+    const candidates = [];
+    for (let y = 0; y < boxHeight; y++) {
+      for (let x = 0; x < boxWidth; x++) {
+        const index = y * boxWidth + x;
+        if (!mask[index] || filled[index]) continue;
+        const sum = [0, 0, 0];
+        let count = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= boxHeight) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= boxWidth) continue;
+            const neighbour = ny * boxWidth + nx;
+            if (mask[neighbour] && !filled[neighbour]) continue;
+            for (let c = 0; c < 3; c++) sum[c] += colors[neighbour * 3 + c];
+            count++;
+          }
+        }
+        if (count) candidates.push([index, sum[0] / count, sum[1] / count, sum[2] / count]);
+      }
+    }
+    if (!candidates.length) break;
+    // Applied after the scan so each pass advances exactly one layer inward,
+    // which keeps the diffusion symmetric instead of bleeding in scan order.
+    for (const [index, r, g, b] of candidates) {
+      colors[index * 3] = r;
+      colors[index * 3 + 1] = g;
+      colors[index * 3 + 2] = b;
+      filled[index] = 1;
+      remaining--;
+    }
+  }
+
+  // Anything the guard left behind (very large solid areas) falls back to the
+  // band estimate rather than to black.
+  for (let index = 0; index < mask.length; index++) {
+    if (!mask[index] || filled[index]) continue;
+    for (let c = 0; c < 3; c++) colors[index * 3 + c] = estimate[index * 3 + c];
+  }
+
+  for (let index = 0; index < mask.length; index++) {
+    if (!mask[index]) continue;
+    const x = left + (index % boxWidth);
+    const y = top + Math.floor(index / boxWidth);
+    const offset = (y * width + x) * 4;
+    data[offset] = colors[index * 3];
+    data[offset + 1] = colors[index * 3 + 1];
+    data[offset + 2] = colors[index * 3 + 2];
+  }
 }
 
 function drawTranslatedPatch(entry, text) {
@@ -347,35 +552,10 @@ function drawTranslatedPatch(entry, text) {
   const right = Math.min(canvas.width, Math.ceil((patch.core.left + patch.core.width) * canvas.width));
   const bottom = Math.min(canvas.height, Math.ceil((patch.core.top + patch.core.height) * canvas.height));
   const sample = (x, y, channel) => data[(y * canvas.width + x) * 4 + channel];
-  const horizontalMargin = Math.max(1, Math.round(canvas.width * 0.004));
-  const verticalMargin = Math.max(1, Math.round(canvas.height * 0.004));
+  reconstructBackground(data, canvas.width, canvas.height, {left, top, right, bottom});
 
-  for (let y = top; y < bottom; y++) {
-    const sampleTop = Math.max(0, top - verticalMargin);
-    const sampleBottom = Math.min(canvas.height - 1, bottom + verticalMargin);
-    const verticalPosition = (y - sampleTop) / Math.max(1, sampleBottom - sampleTop);
-    for (let x = left; x < right; x++) {
-      const sampleLeft = Math.max(0, left - horizontalMargin);
-      const sampleRight = Math.min(canvas.width - 1, right + horizontalMargin);
-      const horizontalPosition = (x - sampleLeft) / Math.max(1, sampleRight - sampleLeft);
-      let difference = 0;
-      const background = [];
-      for (let channel = 0; channel < 3; channel++) {
-        const horizontal = sample(sampleLeft, y, channel) * (1 - horizontalPosition) +
-          sample(sampleRight, y, channel) * horizontalPosition;
-        const vertical = sample(x, sampleTop, channel) * (1 - verticalPosition) +
-          sample(x, sampleBottom, channel) * verticalPosition;
-        background[channel] = (horizontal + vertical) / 2;
-        difference = Math.max(difference, Math.abs(sample(x, y, channel) - background[channel]));
-      }
-      if (difference > 28) {
-        const offset = (y * canvas.width + x) * 4;
-        data[offset] = background[0];
-        data[offset + 1] = background[1];
-        data[offset + 2] = background[2];
-      }
-    }
-  }
+  // Only the text box is painted; everything outside it is made transparent so
+  // the untouched artwork underneath shows through.
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
       if (x < left || x >= right || y < top || y >= bottom) {
@@ -473,7 +653,7 @@ function failRecognition(requestId, message) {
   removeBusy();
   activeRequestId = null;
   resultContents = [];
-  alert(`识别失败：${message}`);
+  showToast(`识别失败：${message}`, "error");
 }
 
 function renderResults(rect, result, pageMode) {
@@ -483,7 +663,7 @@ function renderResults(rect, result, pageMode) {
     ? items.filter(item => item.rect && item.text?.trim())
     : items.filter(item => item.text?.trim()).map(item => ({...item, rect}));
   if (visibleItems.length === 0) {
-    showTranslationNotice("未识别到文字");
+    showToast("未识别到文字，请框选得再紧一些或换一处试试。", "info");
     return;
   }
 
@@ -512,14 +692,14 @@ function renderResults(rect, result, pageMode) {
       };
       image.onerror = () => {
         canvas.remove();
-        showTranslationNotice("无法载入原图画布，未能融合翻译结果。");
+        showToast("无法载入原图画布，未能融合翻译结果。", "error");
       };
       image.src = patch.dataUrl;
     } else {
       canvas.width = Math.max(1, Math.round(bounds.width * window.devicePixelRatio));
       canvas.height = Math.max(1, Math.round(bounds.height * window.devicePixelRatio));
       canvas.setAttribute("aria-label", `${item.text || ""}（请重新加载扩展以启用画面融合）`);
-      showTranslationNotice("当前扩展未提供原图修复数据，请重载扩展并刷新漫画页面。");
+      showToast("当前扩展未提供原图修复数据，请重载扩展并刷新漫画页面。", "error");
     }
     document.body.appendChild(canvas);
     resultPanels.push(canvas);
@@ -533,10 +713,8 @@ function onResultKeyDown(event) {
 }
 
 function dismissResults() {
-  resultPanels.forEach(panel => panel.remove());
-  resultPanels = [];
-  resultContents = [];
-  busyPanel = null;
+  clearOverlay();
+  hideToast();
   document.removeEventListener("keydown", onResultKeyDown, true);
   if (activeRequestId) {
     closeRequestPort();

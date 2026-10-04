@@ -1,79 +1,231 @@
+const registry = globalThis.OMT_providers;
+
 const debugMode = document.getElementById("debugMode");
 const result = document.getElementById("result");
 const backendUrl = document.getElementById("backendUrl");
 const backendHint = document.getElementById("backendHint");
-const translationMode = document.getElementById("translationMode");
+
+const providerSelect = document.getElementById("translationProvider");
+const providerNote = document.getElementById("providerNote");
+const providerKeyLink = document.getElementById("providerKeyLink");
+const keyLink = document.getElementById("keyLink");
+const fieldEndpoint = document.getElementById("fieldEndpoint");
+const fieldModel = document.getElementById("fieldModel");
+const fieldAppId = document.getElementById("fieldAppId");
+const fieldKey = document.getElementById("fieldKey");
+const fieldTarget = document.getElementById("fieldTarget");
 const translationEndpoint = document.getElementById("translationEndpoint");
 const translationModel = document.getElementById("translationModel");
+const translationAppId = document.getElementById("translationAppId");
 const translationApiKey = document.getElementById("translationApiKey");
+const translationProvider = providerSelect;
+const targetLanguage = document.getElementById("targetLanguage");
 const clearApiKey = document.getElementById("clearApiKey");
 const keyStatus = document.getElementById("keyStatus");
-let savedApiKeyExists = false;
+const keyLabel = document.getElementById("keyLabel");
+const appIdLabel = document.getElementById("appIdLabel");
+const testResult = document.getElementById("testResult");
 
-function describeBackend() {
-  const value = backendUrl.value.trim();
-  const hosted = globalThis.OMT_BACKEND_URL || "";
-  if (value) {
-    backendHint.textContent = `识别时会优先把页面截图发送到 ${value}。`;
-  } else if (hosted) {
-    backendHint.textContent = `识别时会把页面截图发送到官方托管后端 ${hosted}；它只用于 OCR，不做其它用途。`;
-  } else {
-    backendHint.textContent = "未配置托管后端，识别时会尝试本机 http://127.0.0.1:8001。";
+let savedApiKeyExists = false;
+let savedAppIdExists = false;
+
+// --- 翻译来源选择 -----------------------------------------------------------
+
+function buildProviderOptions() {
+  const groups = new Map();
+  for (const provider of registry.list) {
+    if (!groups.has(provider.group)) groups.set(provider.group, []);
+    groups.get(provider.group).push(provider);
+  }
+  for (const [group, items] of groups) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group;
+    for (const provider of items) {
+      const option = document.createElement("option");
+      option.value = provider.id;
+      option.textContent = provider.label;
+      optgroup.appendChild(option);
+    }
+    providerSelect.appendChild(optgroup);
   }
 }
 
-async function load() {
-  const cfg = await chrome.storage.local.get([
-    "debugMode", "backendUrl", "translationMode", "translationEndpoint",
-    "translationModel", "translationApiKey"
-  ]);
-  debugMode.checked = cfg.debugMode !== false;
-  backendUrl.value = cfg.backendUrl || "";
-  translationMode.value = cfg.translationMode || "none";
-  translationEndpoint.value = cfg.translationEndpoint || "";
-  translationModel.value = cfg.translationModel || "";
-  savedApiKeyExists = Boolean(cfg.translationApiKey);
-  describeBackend();
-  updateTranslationFields();
+function selectedProvider() {
+  return registry.byId(providerSelect.value) || null;
 }
 
-function updateTranslationFields() {
-  document.getElementById("openaiSettings").hidden =
-    translationMode.value !== "openai-compatible";
-  keyStatus.textContent = savedApiKeyExists
-    ? "本机已有保存的 API Key；输入新值可替换。"
-    : "API Key 仅保存在此浏览器的扩展本地存储中。";
+function describeProvider() {
+  const provider = selectedProvider();
+  if (!provider) return;
+
+  providerNote.textContent = provider.note || "";
+
+  const hasKeyLink = Boolean(provider.keyUrl);
+  providerKeyLink.hidden = !hasKeyLink;
+  if (hasKeyLink) {
+    keyLink.href = provider.keyUrl;
+    keyLink.textContent = `获取 ${provider.label} 密钥 →`;
+  }
+
+  fieldEndpoint.hidden = !provider.endpointEditable;
+  fieldModel.hidden = !(provider.adapter === registry.list.find((p) => p.id === "openai").adapter);
+  fieldAppId.hidden = !provider.appIdRequired;
+  fieldKey.hidden = !provider.keyRequired;
+  fieldTarget.hidden = provider.targetKind !== "name";
+
+  if (provider.endpointEditable) {
+    translationEndpoint.placeholder = provider.endpoint || "https://example.com/v1/chat/completions";
+    document.getElementById("endpointHint").textContent =
+      "保存时会向浏览器申请该域名的访问权限；只申请你填写的这一个域名。";
+  }
+  if (!fieldModel.hidden) {
+    translationModel.placeholder = provider.model ? `默认 ${provider.model}` : "例如 gpt-4o-mini";
+  }
+  if (!fieldKey.hidden) {
+    keyLabel.textContent = provider.keyLabel || "API Key";
+    keyStatus.textContent = savedApiKeyExists
+      ? "本机已保存密钥；输入新值可替换。密钥只保存在此浏览器的扩展存储中。"
+      : "密钥只保存在此浏览器的扩展存储中，直接发往上面这个服务。";
+  }
+  if (!fieldAppId.hidden) {
+    appIdLabel.textContent = provider.appIdLabel || "APP ID";
+  }
+  if (!fieldTarget.hidden) {
+    targetLanguage.placeholder = provider.target || "简体中文";
+  }
+  testResult.hidden = true;
 }
 
-debugMode.addEventListener("change", async () => {
-  await chrome.storage.local.set({ debugMode: debugMode.checked });
-  result.textContent = debugMode.checked ? "调试模式已开启。" : "调试模式已关闭。";
-});
+// --- 保存 -------------------------------------------------------------------
 
-backendUrl.addEventListener("input", describeBackend);
-translationMode.addEventListener("change", updateTranslationFields);
-clearApiKey.addEventListener("change", () => {
-  if (clearApiKey.checked) translationApiKey.value = "";
-});
+/** Ask for the origin of a custom endpoint, at the moment the user saves it. */
+async function ensureEndpointPermission(provider, endpoint) {
+  if (!provider.endpointEditable || !endpoint) return true;
+  let origin;
+  try {
+    origin = new URL(endpoint).origin;
+  } catch {
+    throw new Error("接口地址不是有效的 URL");
+  }
+  if (origin.startsWith("http://127.0.0.1") || origin.startsWith("http://localhost")) return true;
+  const pattern = `${origin}/*`;
+  if (await chrome.permissions.contains({ origins: [pattern] })) return true;
+  const granted = await chrome.permissions.request({ origins: [pattern] });
+  if (!granted) {
+    throw new Error(`未授权访问 ${origin}，翻译请求会被浏览器拦截。`);
+  }
+  return true;
+}
+
+function showResult(text, kind = "ok") {
+  result.hidden = false;
+  result.textContent = text;
+  result.dataset.kind = kind;
+}
+
+providerSelect.addEventListener("change", describeProvider);
 
 document.getElementById("save").onclick = async () => {
+  const provider = selectedProvider();
+  if (!provider) return;
+  const endpoint = translationEndpoint.value.trim().replace(/\/+$/, "") ||
+    (provider.endpointEditable ? "" : provider.endpoint || "");
+  try {
+    await ensureEndpointPermission(provider, endpoint);
+  } catch (error) {
+    showResult(error.message, "error");
+    return;
+  }
+
   const cfg = {
     debugMode: debugMode.checked,
     backendUrl: backendUrl.value.trim().replace(/\/+$/, ""),
-    translationMode: translationMode.value,
-    translationEndpoint: translationEndpoint.value.trim(),
-    translationModel: translationModel.value.trim()
+    translationProvider: provider.id,
+    // Keep translationMode in step so older code paths and the backend
+    // provider still see a sensible value.
+    translationMode: provider.id === "google-free" ? "free-translate"
+      : provider.id === "backend" ? "openai-compatible"
+      : "openai-compatible",
+    translationEndpoint: endpoint,
+    translationModel: translationModel.value.trim(),
+    translationAppId: translationAppId.value.trim(),
+    targetLanguage: targetLanguage.value.trim()
   };
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
   else if (clearApiKey.checked) cfg.translationApiKey = "";
+
   await chrome.storage.local.set(cfg);
   savedApiKeyExists = Boolean(newKey) || (savedApiKeyExists && !clearApiKey.checked);
+  savedAppIdExists = Boolean(cfg.translationAppId) || savedAppIdExists;
   translationApiKey.value = "";
   clearApiKey.checked = false;
-  describeBackend();
-  updateTranslationFields();
-  result.textContent = "已保存本机设置。";
+  describeProvider();
+  showResult(`已保存。翻译由「${provider.label}」完成。`);
 };
 
+document.getElementById("test").onclick = async () => {
+  const provider = selectedProvider();
+  if (!provider) return;
+  testResult.hidden = false;
+  testResult.dataset.kind = "pending";
+  testResult.textContent = "正在测试…";
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "TEST_TRANSLATION" });
+    if (response?.ok) {
+      testResult.dataset.kind = "ok";
+      testResult.textContent = `测试成功：「おはよう」→「${response.translated}」`;
+    } else {
+      testResult.dataset.kind = "error";
+      testResult.textContent = `测试失败：${response?.error || "未知错误"}`;
+    }
+  } catch (error) {
+    testResult.dataset.kind = "error";
+    testResult.textContent = `测试失败：${error.message}`;
+  }
+};
+
+// --- 载入 -------------------------------------------------------------------
+
+function describeBackend() {
+  const value = backendUrl.value.trim();
+  backendHint.textContent = value
+    ? `识别时会把页面截图发送到 ${value}；它只用于 OCR，不做其它用途。`
+    : "留空则在识别时尝试本机 http://127.0.0.1:8001。自建后端请参考仓库里的 deploy/。";
+}
+
+async function load() {
+  const cfg = await chrome.storage.local.get([
+    "debugMode", "backendUrl", "translationProvider", "translationMode",
+    "translationEndpoint", "translationModel", "translationAppId",
+    "translationApiKey", "targetLanguage",
+  ]);
+  debugMode.checked = cfg.debugMode !== false;
+  backendUrl.value = cfg.backendUrl || "";
+
+  // Migrate the old two-value setting onto a provider id.
+  let providerId = cfg.translationProvider;
+  if (!providerId) {
+    providerId = cfg.translationMode === "none" || !cfg.translationMode ? "none" : null;
+    if (!providerId && cfg.translationMode === "free-translate") providerId = "google-free";
+    if (!providerId && cfg.translationMode === "openai-compatible") {
+      providerId = cfg.translationEndpoint ? "custom" : "openai";
+    }
+  }
+  providerSelect.value = registry.byId(providerId) ? providerId : "none";
+
+  translationEndpoint.value = cfg.translationEndpoint || "";
+  translationModel.value = cfg.translationModel || "";
+  translationAppId.value = cfg.translationAppId || "";
+  targetLanguage.value = cfg.targetLanguage || "";
+  savedApiKeyExists = Boolean(cfg.translationApiKey);
+  savedAppIdExists = Boolean(cfg.translationAppId);
+
+  describeBackend();
+  describeProvider();
+}
+
+backendUrl.addEventListener("input", describeBackend);
+
+buildProviderOptions();
 load();

@@ -1,1 +1,116 @@
-*{box-sizing:border-box}body{margin:0;background:#f5f5f5;color:#222;font-family:Arial,"Microsoft YaHei",sans-serif}main{max-width:680px;margin:40px auto;padding:0 20px}h1{font-size:25px;margin:0 0 5px}h2{font-size:18px;margin:18px 0 4px}.sub{color:#666;margin:0 0 20px}.panel{background:#fff;border:1px solid #ddd;border-radius:12px;padding:22px}label{display:block;font-size:14px;font-weight:700;margin:16px 0 7px}input[type="text"],input[type="url"],input[type="password"],select{width:100%;height:42px;border:1px solid #bbb;border-radius:8px;padding:0 12px;background:#fff;font-size:14px}.hint{font-size:12px;line-height:1.5;color:#777;margin-top:7px}hr{border:0;border-top:1px solid #e5e5e5;margin:20px 0}.toggle-row{display:flex;align-items:center;gap:9px;margin:20px 0 0;cursor:pointer}.toggle-row input{width:18px;height:18px;margin:0;accent-color:#155b91}.actions{display:flex;gap:8px;margin-top:20px}.actions button{flex:1;height:42px;border:0;border-radius:8px;background:#222;color:#fff;cursor:pointer}.actions .primary{background:#111}.result{margin-top:12px;padding:10px;border-radius:8px;background:#eee;font-size:13px;min-height:20px;white-space:pre-wrap}
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --line: #e2e4e9;
+  --text: #1d1f24;
+  --muted: #6b7280;
+  --accent: #1f6feb;
+  --accent-strong: #17539c;
+  --ok-bg: #eaf7ee;
+  --ok-text: #1a7f3c;
+  --err-bg: #fdecec;
+  --err-text: #b3261e;
+  --radius: 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --panel: #1e2126;
+    --line: #2e3238;
+    --text: #e8eaed;
+    --muted: #9aa1ab;
+    --accent: #4c8dff;
+    --accent-strong: #6ba1ff;
+    --ok-bg: #17301f;
+    --ok-text: #6ddc93;
+    --err-bg: #3a1d1d;
+    --err-text: #ff9a92;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+main { max-width: 640px; margin: 0 auto; padding: 40px 20px 64px; }
+
+header { margin-bottom: 22px; }
+h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0; font-size: 13px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  margin-bottom: 16px;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin: 0 0 14px;
+  font-weight: 600;
+}
+
+label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
+.field:first-of-type label, .panel > label:first-of-type { margin-top: 0; }
+
+input[type="text"], input[type="url"], input[type="password"], select {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+
+.hint { font-size: 12px; line-height: 1.55; color: var(--muted); margin-top: 6px; }
+.hint a { color: var(--accent); }
+
+.toggle-row { display: flex; align-items: center; gap: 9px; margin: 18px 0 0; cursor: pointer; font-weight: 600; }
+.toggle-row input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+
+.actions { display: flex; gap: 10px; margin-top: 18px; }
+.actions button {
+  flex: 1;
+  height: 42px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.actions button:hover { background: var(--accent-strong); }
+.actions.secondary { margin-top: 16px; }
+.actions.secondary button { background: transparent; border-color: var(--line); color: var(--text); }
+.actions.secondary button:hover { background: var(--bg); }
+
+.result, #testResult {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--bg);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.result[data-kind="ok"], #testResult[data-kind="ok"] { background: var(--ok-bg); color: var(--ok-text); }
+.result[data-kind="error"], #testResult[data-kind="error"] { background: var(--err-bg); color: var(--err-text); }
+#testResult[data-kind="pending"] { color: var(--muted); }

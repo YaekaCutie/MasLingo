@@ -12,7 +12,25 @@
   "host_permissions": [
     "http://127.0.0.1:8001/*",
     "http://localhost:8001/*",
-    "https://*.sslip.io/*"
+    "http://127.0.0.1:11434/*",
+    "https://translate.googleapis.com/*",
+    "https://api-free.deepl.com/*",
+    "https://api.deepl.com/*",
+    "https://fanyi-api.baidu.com/*",
+    "https://openapi.youdao.com/*",
+    "https://api.openai.com/*",
+    "https://api.deepseek.com/*",
+    "https://api.moonshot.cn/*",
+    "https://open.bigmodel.cn/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://api.siliconflow.cn/*",
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.anthropic.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background/service-worker.js"

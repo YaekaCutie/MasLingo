@@ -1,4 +1,4 @@
-importScripts("../config.js");
+importScripts("../config.js", "../translation/providers.js");
 
 async function fetchBackend(path,options={}){
   const backends=await globalThis.OMT_backendCandidates();
@@ -16,6 +16,24 @@ async function fetchBackend(path,options={}){
   }
   throw new Error(`后端连接失败（${lastError?.message||"未配置后端且本机后端未运行"}）`);
 }
+
+// The settings page uses this to check a key before the user relies on it.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "TEST_TRANSLATION") return undefined;
+  (async () => {
+    try {
+      const cfg = await chrome.storage.local.get([
+        "translationMode", "translationProvider", "translationEndpoint",
+        "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+      ]);
+      const translated = await runTranslation(["おはよう"], cfg);
+      sendResponse({ ok: true, translated: translated[0] });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+    }
+  })();
+  return true; // reply is asynchronous
+});
 
 chrome.runtime.onConnect.addListener(port=>{
   if(port.name!=="manga-recognition")return;
@@ -208,36 +226,129 @@ async function recognizePage(msg,tabId,port){
   }
 }
 
-async function translateTexts(msg,port){
-  try{
-    const cfg=await chrome.storage.local.get([
-      "translationMode","translationEndpoint","translationModel","translationApiKey"
-    ]);
-    const resp=await fetchBackend("/api/translate-text",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        texts:msg.texts||[],
-        mode:cfg.translationMode||"none",
-        endpoint:cfg.translationEndpoint||"",
-        model:cfg.translationModel||"",
-        api_key:cfg.translationMode==="openai-compatible"?(cfg.translationApiKey||""):""
-      })
+// Map the pre-provider settings onto the registry so an existing install keeps
+// working: `translationMode` used to be the only choice the user had.
+function resolveProvider(cfg) {
+  const registry = globalThis.OMT_providers;
+  const explicit = cfg.translationProvider;
+  // "none" is a real entry so the settings dropdown can offer it, but it has no
+  // adapter and must resolve to "translation is off".
+  const usable = (provider) => (provider && provider.adapter ? provider : null);
+  if (explicit) return usable(registry.byId(explicit));
+  const mode = cfg.translationMode || "none";
+  if (mode === "none") return null;
+  if (mode === "free-translate") return usable(registry.byId("google-free"));
+  return cfg.translationEndpoint ? usable(registry.byId("custom")) : usable(registry.byId("openai"));
+}
+
+/** Fetch a provider endpoint, turning HTTP errors into readable messages. */
+async function providerFetch(url, init, provider) {
+  let response;
+  if (provider?.id === "backend") {
+    const backends = await globalThis.OMT_backendCandidates();
+    let lastError = null;
+    response = null;
+    for (const base of backends) {
+      try {
+        const candidate = await fetch(`${base}${new URL(url).pathname}`, init);
+        if (candidate.ok || candidate.status >= 400) { response = candidate; break; }
+        lastError = new Error(`${base} 响应失败: ${candidate.status}`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!response) throw new Error(`后端连接失败（${lastError?.message || "未配置后端"}）`);
+  } else {
+    try {
+      response = await fetch(url, init);
+    } catch (error) {
+      // A bare "Failed to fetch" tells the user nothing about which service died.
+      throw new Error(`无法连接翻译服务（${error.message}）。请检查网络、接口地址，以及该域名是否已授权。`);
+    }
+  }
+
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // Some gateways answer with HTML on failure; keep a snippet for the message.
+  }
+  if (!response.ok) {
+    const detail = json?.error?.message || json?.message || json?.detail ||
+      text.slice(0, 160).replace(/\s+/g, " ").trim();
+    // 429 and the anti-bot interstitial are the two failures users will hit
+    // most with the keyless endpoint, and "429" alone tells them nothing.
+    if (response.status === 429) {
+      throw new Error("翻译服务限流了（429）。稍后再试，或在设置里换用其它翻译来源。");
+    }
+    if (response.status === 403 || /sorry\/index/.test(text)) {
+      throw new Error("翻译服务拒绝了这次请求（疑似反爬限制）。请换用其它翻译来源。");
+    }
+    throw new Error(`翻译服务返回 ${response.status}${detail ? `：${detail}` : ""}`);
+  }
+  if (json === null) throw new Error("翻译服务返回了非 JSON 内容，请检查接口地址是否正确");
+  return json;
+}
+
+async function runTranslation(texts, cfg) {
+  const provider = resolveProvider(cfg);
+  if (!provider) throw new Error("未启用翻译");
+  const registry = globalThis.OMT_providers;
+
+  const common = {
+    endpoint: (cfg.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),
+    apiKey: cfg.translationApiKey || "",
+    appId: cfg.translationAppId || "",
+    model: cfg.translationModel || provider.model || "",
+    mode: cfg.translationMode || "openai-compatible",
+    source: provider.source || "ja",
+    target: cfg.targetLanguage || provider.target || "zh-CN",
+    salt: Math.floor(Math.random() * 1e9),
+  };
+  if (!common.endpoint && provider.endpointEditable) {
+    throw new Error(`${provider.label} 需要填写接口地址`);
+  }
+
+  // Google's public endpoint takes one query per request, so it is called once
+  // per text rather than in a batch.
+  if (provider.perRequest) {
+    const out = [];
+    for (const text of texts) {
+      const request = provider.adapter({ ...common, text, texts: [text] });
+      const json = await providerFetch(request.url, request.init, provider);
+      out.push(...provider.parse(json, 1));
+    }
+    return out;
+  }
+
+  const request = await provider.adapter({ ...common, texts });
+  const json = await providerFetch(request.url, request.init, provider);
+  return provider.parse(json, texts.length);
+}
+
+async function translateTexts(msg, port) {
+  const cfg = await chrome.storage.local.get([
+    "translationMode", "translationProvider", "translationEndpoint",
+    "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+  ]);
+  try {
+    const translated = await runTranslation(msg.texts || [], cfg);
+    postPortMessage(port, {
+      type: "TRANSLATION_RESULT",
+      requestId: msg.requestId,
+      mode: cfg.translationMode || "none",
+      result: {
+        ok: true,
+        items: (msg.texts || []).map((text, index) => ({ text, translated: translated[index] })),
+      },
     });
-    const result=await resp.json();
-    if(!resp.ok) throw new Error(result.detail||"翻译服务错误");
-    postPortMessage(port,{
-      type:"TRANSLATION_RESULT",
-      requestId:msg.requestId,
-      mode:cfg.translationMode||"none",
-      result
-    });
-  }catch(error){
-    postPortMessage(port,{
-      type:"TRANSLATION_RESULT",
-      requestId:msg.requestId,
-      mode:"error",
-      result:{ok:false,error:error.message}
+  } catch (error) {
+    postPortMessage(port, {
+      type: "TRANSLATION_RESULT",
+      requestId: msg.requestId,
+      mode: "error",
+      result: { ok: false, error: error.message },
     });
   }
 }

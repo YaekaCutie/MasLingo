@@ -48,6 +48,28 @@ jobs:
       # Store policy flags as warnings.
       - run: node deploy/check-extension.mjs
 
+      # Provider adapters are pure request/response builders, so they are
+      # checked without any API key: known hashes for the two signed Chinese
+      # APIs, the exact request each provider sends, and a fixture for every
+      # response shape.
+      - run: node deploy/check-providers.mjs
+
+      - name: Install Puppeteer
+        run: npm install --no-save --no-package-lock puppeteer
+
+      # The translated overlay has to actually cover the original lettering, so
+      # both the old and the new background reconstruction are scored against a
+      # synthetic patch whose true background is known.
+      - name: Score the background reconstruction
+        run: xvfb-run -a node deploy/check-inpaint.mjs
+
+      # Settings and popup wiring, plus a real translation round trip against a
+      # local stand-in for an OpenAI-compatible service. Port 8001 is reused
+      # because it is already in host_permissions and nothing else runs in this
+      # job.
+      - name: Drive the settings page and translate for real
+        run: xvfb-run -a node deploy/check-ui.mjs
+
   api-image:
     name: Build image (amd64) and smoke-test the API
     runs-on: ubuntu-latest

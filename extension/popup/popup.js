@@ -1,5 +1,6 @@
 const status = document.getElementById("status");
-const backendRole = document.getElementById("backendRole");
+const ocrStatus = document.getElementById("ocrStatus");
+const translateStatus = document.getElementById("translateStatus");
 
 function normalize(url) {
   return String(url || "").trim().replace(/\/+$/, "");
@@ -7,6 +8,12 @@ function normalize(url) {
 
 function isLocal(base) {
   return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(normalize(base));
+}
+
+function setStatus(element, text, state = "") {
+  element.textContent = text;
+  if (state) element.dataset.state = state;
+  else delete element.dataset.state;
 }
 
 async function fetchBackend(path, options = {}) {
@@ -26,24 +33,37 @@ async function fetchBackend(path, options = {}) {
   throw lastError || new Error("未配置后端且本机后端未运行");
 }
 
-async function refreshConfig() {
+/** OCR still runs on the backend, so this is a real dependency. */
+async function refreshOcrStatus() {
   try {
     const { resp, base } = await fetchBackend("/health");
     const data = await resp.json();
     if (resp.ok && data.ok) {
-      if (base === normalize(globalThis.OMT_BACKEND_URL)) {
-        backendRole.textContent = "官方托管后端";
-      } else if (isLocal(base)) {
-        backendRole.textContent = "本机后端";
-      } else {
-        backendRole.textContent = "自定义后端";
-      }
+      const where = base === normalize(globalThis.OMT_BACKEND_URL) ? "托管后端"
+        : isLocal(base) ? "本机后端" : "自建后端";
+      setStatus(ocrStatus, `${where} · 已就绪`, "ok");
     } else {
-      backendRole.textContent = "后端异常";
+      setStatus(ocrStatus, "后端异常", "warn");
     }
   } catch (error) {
-    backendRole.textContent = "未连接";
+    setStatus(ocrStatus, "未连接", "warn");
   }
+}
+
+async function refreshTranslateStatus() {
+  const cfg = await chrome.storage.local.get(["translationProvider", "translationMode"]);
+  const registry = globalThis.OMT_providers;
+  let providerId = cfg.translationProvider;
+  if (!providerId) {
+    providerId = !cfg.translationMode || cfg.translationMode === "none" ? "none"
+      : cfg.translationMode === "free-translate" ? "google-free" : "openai";
+  }
+  const provider = registry.byId(providerId);
+  if (!provider || provider.id === "none") {
+    setStatus(translateStatus, "已关闭", "");
+    return;
+  }
+  setStatus(translateStatus, provider.label, "ok");
 }
 
 async function prepareContentScript(tabId) {
@@ -71,33 +91,39 @@ async function startPageAction(tabId, type) {
   await chrome.tabs.sendMessage(tabId, {type});
 }
 
+function reportStartFailure(action, error) {
+  const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(error.message);
+  document.getElementById("details").open = true;
+  status.textContent = restrictedPage
+    ? `当前页面受 Chrome 限制，无法${action}。请切换到普通网页后重试。`
+    : `无法${action}：${error.message}`;
+}
+
 document.getElementById("settings").onclick =
 document.getElementById("settings2").onclick = () => chrome.runtime.openOptionsPage();
 
 document.getElementById("health").onclick = async () => {
+  status.textContent = "正在检查…";
+  document.getElementById("details").open = true;
   try {
     const { resp, base } = await fetchBackend("/health");
-    const j = await resp.json();
-    status.textContent = `${base}\n${JSON.stringify(j, null, 2)}`;
-    await refreshConfig();
+    const payload = await resp.json();
+    status.textContent = `${base}\n${JSON.stringify(payload, null, 2)}`;
   } catch (e) {
-    status.textContent = "后端未运行：" + e.message;
-    backendRole.textContent = "未连接";
+    status.textContent = `OCR 后端未运行：${e.message}\n\n` +
+      "识别需要后端：请在设置里填写后端地址，并在那台机器上启动 backend/（见仓库 deploy/ 目录）。";
   }
+  await refreshOcrStatus();
 };
 
 document.getElementById("select").onclick = async () => {
-  await refreshConfig();
   const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
   try {
     if (!tab?.id) throw new Error("无法获取当前页面");
     await startPageAction(tab.id, "START_SELECT");
     window.close();
   } catch (e) {
-    const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(e.message);
-    status.textContent = restrictedPage
-      ? "当前页面受 Chrome 限制，无法框选。请切换到普通网页后重试。"
-      : "无法启动框选：" + e.message;
+    reportStartFailure("框选", e);
   }
 };
 
@@ -108,11 +134,9 @@ document.getElementById("auto").onclick = async () => {
     await startPageAction(tab.id, "START_AUTO");
     window.close();
   } catch (e) {
-    const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(e.message);
-    status.textContent = restrictedPage
-      ? "当前页面受 Chrome 限制，无法自动识别。请切换到普通网页后重试。"
-      : "无法启动自动识别：" + e.message;
+    reportStartFailure("自动识别", e);
   }
 };
 
-refreshConfig();
+refreshOcrStatus();
+refreshTranslateStatus();
