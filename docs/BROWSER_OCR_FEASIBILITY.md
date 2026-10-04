@@ -1,7 +1,8 @@
-# 浏览器端 OCR 可行性（消除服务器的方案）
+# 浏览器端 OCR：已实现并在 Chrome 里验证
 
-> **一句话结论：可行，而且不需要服务器、不需要云账号、不需要信用卡、不需要用户装 Python。**
-> 本文是一次实测的结论记录，不是推测。证据见下面「实测结果」，复现脚本在 [`tools/onnx_parity_test.py`](../tools/onnx_parity_test.py)。
+> **一句话结论：OCR 已经能在扩展里跑，不需要服务器、不需要云账号、不需要信用卡、不需要用户装 Python。**
+> 在真实 Chrome（wasm 后端）上对三个真实漫画气泡**逐字命中服务端结果**，单区域 0.7–0.9 秒。
+> 本文是实测记录，不是推测。复现：`python tools/fetch_ocr_assets.py` 然后 `node deploy/check-ondevice-ocr.mjs`。
 
 ---
 
@@ -81,51 +82,52 @@
 
 ---
 
-## 实现进展：引擎已经写出来了
+## 实现进展：引擎已经写出来了，并且在 Chrome 里跑通
 
-`extension/ocr/engine.js` + `extension/ocr/vocab.js` 是**可以直接跑的浏览器端引擎**（预处理 + ONNX 推理 + 解码 + 后处理），用 `tools/engine_parity_test.mjs` 在 Node 里对着同三个气泡验证（Node 只是代替浏览器，被测代码与扩展加载的是同一个文件）。
+`extension/ocr/engine.js` + `extension/ocr/vocab.js` 是**可直接在浏览器运行的完整引擎**（PIL 等价的灰度化 + 抗锯齿缩放 + 归一化、ONNX 推理、贪心解码、`post_process` 移植），`extension/ocr/ocr.html` + `ocr-page.js` 是跑它的扩展页面。
 
-最新一次结果：
+### 真实 Chrome + 真实 WASM 的结果
 
-| 气泡 | 端上引擎 | 服务端 PyTorch | 一致？ | 耗时 |
+`node deploy/check-ondevice-ocr.mjs --crop models/test-cropN.png --expect "..."`：
+
+| 气泡 | 端上（Chrome/WASM） | 服务端 PyTorch | 一致？ | 端上耗时 |
 | --- | --- | --- | --- | --- |
-| bubble1 | `アサちゃんはチェンソーマン好き？` | 同左 | ✅ | 0.44s |
-| bubble2 | `気ますっあ〜！！帰りたい` | 同左 | ✅ | 0.37s |
-| bubble3 | `まあまあ．．．っていうか普通．．` | `まあまあ．．．っていうか普通．．：` | ❌ 差一个尾部标点 | 0.41s |
+| bubble1 | `アサちゃんはチェンソーマン好き？` | 同左 | ✅ | 849 ms |
+| bubble2 | `気ますっあ〜！！帰りたい` | 同左 | ✅ | 778 ms |
+| bubble3 | `まあまあ．．．っていうか普通．．：` | 同左 | ✅ | 941 ms |
 
-### 那个差一个标点的原因，已经查清了（不是解码器的错）
+**3/3 逐字命中**，包含上一轮 Node 端 int8 跑丢的那个尾部冒号——浏览器用的 WASM 构建与 `onnxruntime-node` 在反量化上略有差异，结果反而与 fp32 服务端完全一致。
 
-把 token 序列打出来对比（bubble3）：
+启动开销（在扩展内读本地文件，不走网络）：**权重 116.7 MB 读取约 140 ms，建立两个 session 约 450 ms**。所以用户第一次点识别大约 1.3 秒出结果，之后每次 0.7–0.9 秒。
+
+竖排也验证过：渲染的竖排样本 `よこはま` 同样逐字命中（688 ms）。
+
+### 开发过程中查清的一件事：那个标点差异不是解码器的错
+
+Node 端早期版本在 bubble3 上少一个尾部冒号。把 token 序列打出来对比：
 
 ```
 PyTorch fp32 : 2 | 2 912 852 912 852 28 28 28 885 888 854 856 861 2766 5224 28 28 40 3
-端上（贪心） : 2 |   912 852 912 852 28 28 28 885 888 854 856 861 2766 5224 28 28   （EOS）
+Node int8    : 2 |   912 852 912 852 28 28 28 885 888 854 856 861 2766 5224 28 28   （EOS）
 ```
 
-**逐 token 完全一致，只差最后那个 `40`（`：`）。** 也就是说端上引擎忠实地复现了 ONNX 模型；差异来自 **int8 量化**——在 fp32 模型里那个位置是低置信度的 `：`，量化后 EOS 略胜一筹。末尾少一个冒号，属于可接受的量化代价；真在意的话可以换 fp16 权重（体积从 111 MB 涨到约 220 MB）。
+**逐 token 完全一致，只少最后那个 `40`（全角冒号）**——即差异来自 int8 反量化，不是移植错误。浏览器端连这个也命中了，所以现在没有遗留差异。
 
 ### 顺带否掉了我自己写的束搜索
 
-我按 `generation_config.json` 实现了 `num_beams=4` + `length_penalty=2.0` + `no_repeat_ngram_size=3`，结果**更差**：
-
-| 解码策略 | bubble3 token 序列 | 耗时 |
-| --- | --- | --- |
-| 贪心（现在默认） | `…2766 5224 28 28` → `普通．．` | **0.41s** |
-| 束搜索 4 束 | `…5224 1025 1025 1025 28` → `普通．．．．` | 0.81s |
-
-束搜索在更早的位置就偏离了参考实现，还慢一倍。所以默认改成贪心（`DEFAULT_NUM_BEAMS = 1`），束搜索保留为 `options.numBeams` 可选项。**这是测出来的结论，不是偏好。**
+按 `generation_config.json` 实现了 `num_beams=4` + `length_penalty=2.0` + `no_repeat_ngram_size=3`，结果**更差且更慢**（bubble3 在更早位置偏离参考实现，耗时 0.81s vs 0.41s）。所以默认用贪心，束搜索保留为 `options.numBeams` 可选项。**这是测出来的结论，不是偏好。**
 
 ---
 
 ## 还没做的事（下一步）
 
-引擎跑通了，但**还没接进浏览器**。剩下的：
+引擎和扩展页面都跑通了，**但还没接进产品的识别流程**。剩下的：
 
-1. **在浏览器里跑起来**：一个扩展页面（最终是 offscreen document）用 canvas 取 `ImageData` 喂给同一个 `engine.js`，并把 `ort.env.wasm.wasmPaths` 指向扩展内的 `vendor/ort/`；
-2. **manifest 调整**：加 `content_security_policy.extension_pages` 的 `'wasm-unsafe-eval'`（扩展用 WASM 的官方允许方式），以及 `offscreen` 权限；
-3. **首次下载体验**：130.9 MB 资源（14 MB wasm + 111 MB 模型）目前由 `tools/fetch_ocr_assets.py` 取到扩展目录并 gitignore。要在"打包进 CRX"和"首次运行时下载"之间做决定——**打包进 CRX 最省事**：商店上限 2 GB，装完即可离线用，代价是每次更新都要重下整包；
-4. **换个量化档位再测**：fp16 能否补回那个 `：`；
-5. **区域检测的移植**：当前整页自动识别依赖 327 行 NumPy/Pillow。浏览器端**第一版只做手动框选**，这条不需要；整页自动作为第二阶段；
-6. **竖排/横排判定**：`_detect_text_direction` 同样要移植或用简单启发式替代。
+1. **搬进 offscreen document**：现在跑在 `ocr/ocr.html` 里是为了可测。产品形态应该是 offscreen document——MV3 的 service worker 约 30 秒空闲就被回收，每次回收都要重新加载 116 MB 权重。需要加 `offscreen` 权限并让 service worker 转发识别请求；
+2. **接上框选流程**：`content/content.js` 现在把裁剪发去后端；要改成"优先端上识别，端上不可用时回退到后端"；
+3. **包体积决策**：131 MB 资源（14 MB wasm + 117 MB 模型）目前由 `tools/fetch_ocr_assets.py` 取到扩展目录并 gitignore。**打包进 CRX 最省事**——商店上限 2 GB，装完即可离线用，代价是每次更新重下整包；另一条路是首次运行时下载 + Cache Storage 缓存，需要进度 UI；
+4. **整页自动识别**：当前检测逻辑是 327 行 NumPy/Pillow（`backend/ocr/bubble_detector.py`）。**第一版只做手动框选**，这条不需要；整页自动留到第二阶段，用 Canvas/Worker 重写或退化为轻量启发式；
+5. **竖排/横排判定**：`_detect_text_direction` 同样要移植——不过竖排单区域识别本身已经验证可用；
+6. **低端设备**：0.7–0.9 秒是这台开发机的数字，WebGPU 可用时应该更快，值得再测一档。
 
-> 再次强调：**验证用的是手动裁剪出的单个气泡**。整页自动识别在浏览器端尚未验证，是最大的剩余未知数。
+> 边界说明：**单区域识别（手动框选）已端到端验证**；整页自动识别在浏览器端尚未实现，是最大的剩余未知数。

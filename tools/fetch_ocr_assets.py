@@ -26,7 +26,14 @@ from pathlib import Path
 
 # Pinned so the extension behaves the same every build.
 ONNXRUNTIME_WEB_VERSION = "1.30.0"
-ORT_FILES = ["ort.wasm.min.js", "ort-wasm-simd-threaded.wasm"]
+# ort.wasm.min.js is the loader, the .mjs is the ES-module glue it imports at
+# runtime, and the .wasm is the runtime itself. Missing the .mjs makes ORT fail
+# with "Failed to fetch dynamically imported module ... ort-wasm-simd-threaded.mjs".
+ORT_FILES = [
+    "ort.wasm.min.js",
+    "ort-wasm-simd-threaded.mjs",
+    "ort-wasm-simd-threaded.wasm",
+]
 NPM_TARBALL = (
     f"https://registry.npmjs.org/onnxruntime-web/-/onnxruntime-web-{ONNXRUNTIME_WEB_VERSION}.tgz"
 )

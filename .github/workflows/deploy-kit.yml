@@ -320,6 +320,35 @@ jobs:
             -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
             down -v || true
 
+  ondevice-ocr:
+    name: On-device OCR runs in Chrome (no server involved)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # 131 MB: the wasm runtime plus the int8 model. They are gitignored, so
+      # every run fetches them from the pinned versions in the script.
+      - name: Fetch the wasm runtime and the int8 model
+        run: python3 tools/fetch_ocr_assets.py
+
+      - name: Install Puppeteer
+        run: npm install --no-save --no-package-lock puppeteer
+
+      # The development probes were crops of a commercial manga page and cannot
+      # be committed, so CI uses a rendered sample instead. It still asserts the
+      # recognised text, which is what would catch a broken preprocessing step.
+      - name: Recognise a Japanese sample entirely on-device
+        run: |
+          mkdir -p extension/models
+          cp tools/fixtures/jp-horizontal.png extension/models/fixture.png
+          xvfb-run -a node deploy/check-ondevice-ocr.mjs \
+            --crop models/fixture.png --expect "日本語のテストです"
+
   arm64-image:
     name: Build and run image (linux/arm64, the Always Free target)
     runs-on: ubuntu-latest
