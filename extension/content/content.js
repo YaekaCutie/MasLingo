@@ -14,6 +14,10 @@ let requestTimeout = null;
 let recognizedResultReady = false;
 let activePageMode = false;
 let busyPanel = null;
+// Mirrors the "显示识别到的日文原文" setting. With translation off this is what
+// makes recognition visible at all — otherwise a successful run leaves the page
+// pixel-identical and looks like nothing happened.
+let showSourceText = true;
 
 chrome.runtime.onMessage.addListener(message => {
   if (message.type === "START_SELECT") startSelect();
@@ -141,11 +145,13 @@ function findPrimaryMediaRect() {
       height: Math.max(0, bottom - top),
       isMediaElement
     };
+    // No upper size limit on purpose: a manga page read at full size fills the
+    // whole viewport, which is the *normal* case, not a reason to refuse. There
+    // used to be an 80% cap here and it rejected exactly that.
     if (
       candidate.width < 180 ||
       candidate.height < 180 ||
-      candidate.width * candidate.height < minimumArea ||
-      candidate.width * candidate.height >= viewportArea * 0.8
+      candidate.width * candidate.height < minimumArea
     ) return;
     const key = `${candidate.left}:${candidate.top}:${candidate.width}:${candidate.height}`;
     const existing = candidates.get(key);
@@ -264,6 +270,7 @@ function showRecognitionResult(message, pageMode) {
     requestTimeout = null;
   }
   try {
+    showSourceText = message.result.debug_mode !== false;
     renderResults(message.rect, message.result, pageMode);
     recognizedResultReady = true;
     const texts = (message.result.items || []).map(item => item.text).filter(Boolean);
@@ -283,11 +290,40 @@ function showRecognitionResult(message, pageMode) {
   }
 }
 
+/**
+ * Draw the recognised Japanese back over itself.
+ *
+ * This is what the "显示识别到的日文原文" setting means in practice: with
+ * translation off, drawing the recognised text is the only evidence the user
+ * gets that recognition ran at all. Without it a successful page-wide run left
+ * the page byte-identical and read as "nothing happened".
+ *
+ * @returns {boolean} whether anything was painted
+ */
+function paintSourceText() {
+  let painted = false;
+  for (const entry of resultContents) {
+    if (!entry.canvas.isConnected || !entry.sourceText) continue;
+    entry.canvas.setAttribute("aria-label", entry.sourceText);
+    if (entry.image.complete && entry.image.naturalWidth) {
+      drawTranslatedPatch(entry, entry.sourceText);
+    } else {
+      entry.translatedText = entry.sourceText;
+    }
+    painted = true;
+  }
+  return painted;
+}
+
 function showTranslationResult(message) {
   if (message.requestId !== activeRequestId) return;
   if (message.mode === "none") {
-    clearOverlay();
-    showToast("翻译未启用，已保留日文原文。在扩展设置里选择翻译来源即可。", "info");
+    if (showSourceText && paintSourceText()) {
+      showToast("翻译未启用：画面上的日文是识别结果。在设置里选择翻译来源即可看到中文。", "info");
+    } else {
+      clearOverlay();
+      showToast("翻译未启用，已保留日文原文。在设置里选择翻译来源即可看到中文。", "info");
+    }
   } else if (!message.result?.ok) {
     const error = message.result?.error || "未知错误";
     console.warn("翻译失败，保留 OCR 原文：", error);
@@ -684,7 +720,7 @@ function renderResults(rect, result, pageMode) {
     canvas.height = patch ? Math.max(1, Math.round(patch.rect.height * window.devicePixelRatio)) : 1;
     const context = canvas.getContext("2d", {willReadFrequently: true});
     const image = new Image();
-    const entry = {canvas, context, image, patch, translatedText: null};
+    const entry = {canvas, context, image, patch, translatedText: null, sourceText: item.text?.trim() || ""};
     if (patch?.dataUrl) {
       image.onload = () => {
         context.drawImage(image, 0, 0, canvas.width, canvas.height);

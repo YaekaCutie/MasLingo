@@ -174,11 +174,12 @@ async function recognizePage(msg,tabId,port){
     const scaleX=bmp.width/viewport.width;
     const scaleY=bmp.height/viewport.height;
     const media=msg.mediaRect;
+    // Only a lower bound: an image filling the viewport is the normal case for
+    // a manga reader, and the old 80% cap rejected it outright.
     const useMedia=media &&
       media.width*media.height >= viewport.width*viewport.height*0.08 &&
-      media.width*media.height < viewport.width*viewport.height*0.8 &&
       media.width>=180 && media.height>=180;
-    if(!useMedia)throw new Error("未能定位主漫画图片，已取消整页识别以避免识别网页文字。请改用“选择漫画区域并识别”。");
+    if(!useMedia)throw new Error("未能定位主漫画图片。请改用“选择漫画区域并识别”，或在图片更大的页面上重试。");
     postPortMessage(port,{type:"CAPTURE_READY",requestId:msg.requestId});
     const crop={
       left:Math.max(0,Math.floor(media.left*scaleX)),
@@ -332,12 +333,26 @@ async function translateTexts(msg, port) {
     "translationMode", "translationProvider", "translationEndpoint",
     "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
   ]);
+  const configuredMode = cfg.translationMode || "none";
   try {
+    // "Switched off" is a normal state, not a failure. It used to reach
+    // runTranslation, throw, and be reported as an error — which made every
+    // recognition look like something had gone wrong, and meant the content
+    // script's translation-off branch never ran at all.
+    if (!resolveProvider(cfg)) {
+      postPortMessage(port, {
+        type: "TRANSLATION_RESULT",
+        requestId: msg.requestId,
+        mode: "none",
+        result: { ok: true, items: [] },
+      });
+      return;
+    }
     const translated = await runTranslation(msg.texts || [], cfg);
     postPortMessage(port, {
       type: "TRANSLATION_RESULT",
       requestId: msg.requestId,
-      mode: cfg.translationMode || "none",
+      mode: configuredMode,
       result: {
         ok: true,
         items: (msg.texts || []).map((text, index) => ({ text, translated: translated[index] })),
