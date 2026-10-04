@@ -13,3 +13,12 @@ deploy/.env
 
 # Local OCR model cache when running the backend outside Docker
 .hf/
+
+# On-device OCR assets: fetched by tools/fetch_ocr_assets.py, never committed
+# (the wasm runtime is ~14 MB and the int8 model is ~111 MB).
+extension/vendor/
+extension/models/
+
+# Node tooling
+node_modules/
+package-lock.json

@@ -1,0 +1,10 @@
+{
+  "name": "openmanga-translator-tools",
+  "private": true,
+  "type": "module",
+  "description": "Node-side tooling only. The extension itself has no build step and ships no package.json.",
+  "scripts": {
+    "check:extension": "node deploy/check-extension.mjs",
+    "test:ocr": "node tools/engine_parity_test.mjs"
+  }
+}
