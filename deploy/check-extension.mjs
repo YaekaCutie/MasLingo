@@ -148,9 +148,14 @@ if (matches.includes("<all_urls>")) {
 const hostedHosts = (manifest.host_permissions ?? []).filter(
   (host) => !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/)/.test(host),
 );
-if (hostedHosts.some((host) => host.includes("*"))) {
+// Only a wildcard in the HOST is a problem: "https://ocr.example.com/*" ends in
+// "/*" like every other entry and must not be reported as a wildcard host.
+const wildcardHosts = hostedHosts.filter((host) =>
+  host.replace(/^https?:\/\//, "").split("/")[0].includes("*"),
+);
+if (wildcardHosts.length) {
   warn(
-    `wildcard host permission still present: ${hostedHosts.join(", ")} — ` +
+    `wildcard host permission still present: ${wildcardHosts.join(", ")} — ` +
       "replace it with the real hosted domain before submitting (P0-7)",
   );
 }
