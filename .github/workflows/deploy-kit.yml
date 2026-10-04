@@ -14,18 +14,34 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "extension/**"
       - "deploy/**"
       - ".dockerignore"
       - ".github/workflows/deploy-kit.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "extension/**"
       - "deploy/**"
       - ".dockerignore"
       - ".github/workflows/deploy-kit.yml"
   workflow_dispatch:
 
 jobs:
+  extension-package:
+    name: Extension package loads and is store-consistent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # Resolves every path the way Chrome would (including the importScripts
+      # in the service worker), parses every script, and prints the Chrome Web
+      # Store policy flags as warnings.
+      - run: node deploy/check-extension.mjs
+
   api-image:
     name: Build image (amd64) and smoke-test the API
     runs-on: ubuntu-latest
