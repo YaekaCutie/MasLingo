@@ -32,7 +32,7 @@ RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(
 COPY backend /app/backend
 
 RUN useradd --create-home --uid 10001 omt \
- && chown -R omt:omt /app
+ && chown -R omt:omt /app /models
 USER omt
 
 EXPOSE 8001

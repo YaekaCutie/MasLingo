@@ -1,0 +1,28 @@
+# Keep the build context small and free of secrets.
+#
+# Without this, `docker build` would ship the whole checkout to the daemon on
+# every build — including .venv (1.7 GB) and extension.pem (the extension
+# signing key), neither of which belongs in a container image.
+
+.git
+.gitignore
+.gitattributes
+.github
+
+# Python leftovers
+.venv/
+__pycache__/
+*.pyc
+.hf/
+
+# Never bake signing keys or built packages into an image
+*.pem
+*.crx
+*.zip
+
+# Not needed by the backend image; the extension is delivered separately
+extension/
+docs/
+Image from URL*
+
+deploy/.env

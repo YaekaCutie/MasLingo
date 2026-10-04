@@ -37,6 +37,14 @@ from .translation.openai_compatible import translate_texts as translate_openai_c
 logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
+# uvicorn only configures its own loggers, so without this our own messages
+# (including the model preload line the deployment guide tells operators to
+# look for) would never reach the container logs.
+logging.basicConfig(
+    level=os.getenv("OMT_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 OCR_CONCURRENCY = max(1, int(os.getenv("OMT_OCR_CONCURRENCY", "2")))
 RATE_LIMIT_REQUESTS = int(os.getenv("OMT_RATE_LIMIT_REQUESTS", "0"))
 RATE_LIMIT_WINDOW = float(os.getenv("OMT_RATE_LIMIT_WINDOW", "60"))

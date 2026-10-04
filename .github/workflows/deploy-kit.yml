@@ -1,0 +1,188 @@
+name: deploy-kit
+
+# The deployment kit is the one part of this project a developer laptop cannot
+# verify: it needs Linux, Docker and (for the real target) an arm64 host.
+# So CI builds the actual image and drives the actual HTTP API instead of
+# trusting the Dockerfile by inspection.
+#
+# The amd64 job runs the full smoke test. The arm64 job only builds, because
+# Oracle's Always Free shape is Ampere — it proves every dependency resolves
+# and the model bakes in on aarch64, which is the part that differs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - ".dockerignore"
+      - ".github/workflows/deploy-kit.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "deploy/**"
+      - ".dockerignore"
+      - ".github/workflows/deploy-kit.yml"
+  workflow_dispatch:
+
+jobs:
+  api-image:
+    name: Build image (amd64) and smoke-test the API
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the backend image
+        run: docker build -f deploy/Dockerfile -t omt-backend:test .
+
+      - name: Start the container with production-like settings
+        run: |
+          docker run -d --name omt -p 127.0.0.1:8001:8001 \
+            -e OMT_TORCH_THREADS=2 \
+            -e OMT_OCR_CONCURRENCY=1 \
+            -e OMT_RATE_LIMIT_REQUESTS=4 \
+            -e OMT_RATE_LIMIT_WINDOW=60 \
+            -e OMT_PRELOAD_MODEL=1 \
+            omt-backend:test
+
+      - name: Wait for /health
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8001/health > health.json; then
+              echo "healthy after ${attempt} attempt(s)"
+              cat health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::backend never became healthy"
+          docker logs omt || true
+          exit 1
+
+      - name: The model was preloaded at startup, not on first request
+        run: |
+          set -euo pipefail
+          # Operators are told to look for this line in `docker compose logs`;
+          # if logging regresses, the guide silently stops working.
+          docker logs omt 2>&1 | tee startup.log
+          grep -q "模型已预加载" startup.log \
+            || { echo "::error::model preload log line missing"; exit 1; }
+          # A cold interpreter is ~15 MB; the resident model is ~800 MB.
+          rss_kb=$(docker exec omt python -c "import resource;print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+          echo "python max RSS: ${rss_kb} kB"
+          [ "$rss_kb" -gt 200000 ] \
+            || { echo "::error::model does not look resident (${rss_kb} kB)"; exit 1; }
+
+      - name: Health payload carries the fields the extension relies on
+        run: |
+          python3 - <<'PY'
+          import json
+          health = json.load(open("health.json"))
+          assert health["ok"] is True, health
+          assert health["ocr"] == "mangaocr", health
+          assert health["concurrency"] >= 1, health
+          assert health["busy"] == 0, health
+          print("health OK:", health)
+          PY
+
+      - name: Real OCR round-trip over HTTP
+        run: |
+          set -euo pipefail
+          # Build the probe inside the container: it already has Pillow, so CI
+          # needs no extra dependencies and nothing binary is committed.
+          docker exec omt python - <<'PY'
+          from PIL import Image, ImageDraw
+
+          img = Image.new("RGB", (640, 480), "white")
+          draw = ImageDraw.Draw(img)
+
+          # White balloons with dark glyph-like strokes: the common case.
+          for bx, by, bw, bh in [(40, 40, 200, 160), (300, 40, 200, 160), (40, 300, 200, 140)]:
+              draw.rectangle([bx, by, bx + bw, by + bh], outline="black", width=3)
+              for row in range(20, bh - 20, 28):
+                  for col in range(20, bw - 30, 26):
+                      draw.rectangle([bx + col, by + row, bx + col + 18, by + row + 18], fill="black")
+
+          # One dark panel with light lettering: exercises the other polarity.
+          draw.rectangle([300, 300, 500, 440], fill="#141414")
+          for row in range(20, 110, 28):
+              for col in range(20, 150, 26):
+                  draw.rectangle([300 + col, 300 + row, 300 + col + 18, 300 + row + 18], fill="white")
+
+          img.save("/tmp/probe.png")
+          print("probe image written")
+          PY
+          docker cp omt:/tmp/probe.png /tmp/probe.png
+
+          echo "--- POST /api/recognize-image ---"
+          curl -fsS --max-time 300 -X POST -F "image=@/tmp/probe.png;type=image/png" \
+            http://127.0.0.1:8001/api/recognize-image -o recognize-image.json
+          python3 -c "import json;d=json.load(open('recognize-image.json'));assert d['ok'] is True,d;print('ok, items:',d['items'])"
+
+          echo "--- POST /api/recognize-page ---"
+          curl -fsS --max-time 600 -X POST -F "image=@/tmp/probe.png;type=image/png" \
+            http://127.0.0.1:8001/api/recognize-page -o recognize-page.json
+          python3 -c "import json;d=json.load(open('recognize-page.json'));assert d['ok'] is True,d;print('ok, regions:',len(d['items']))"
+
+          echo "--- POST /api/translate-text (mode=none must echo) ---"
+          curl -fsS --max-time 60 -X POST -H 'Content-Type: application/json' \
+            -d '{"texts":["こんにちは"],"mode":"none"}' \
+            http://127.0.0.1:8001/api/translate-text -o translate.json
+          python3 -c "import json;d=json.load(open('translate.json'));assert d['items'][0]['translated']=='こんにちは',d;print('ok')"
+
+      - name: Uploads are bounded (413 for an oversized image)
+        run: |
+          set -euo pipefail
+          head -c 16000000 /dev/zero > /tmp/too-big.png
+          code=$(curl -s -o body.txt -w '%{http_code}' --max-time 120 \
+            -X POST -F "image=@/tmp/too-big.png;type=image/png" \
+            http://127.0.0.1:8001/api/recognize-image)
+          echo "oversized upload -> HTTP ${code}: $(cat body.txt)"
+          [ "$code" = "413" ] || { echo "::error::expected 413"; exit 1; }
+
+      - name: Rate limit engages, /health stays reachable
+        run: |
+          set -euo pipefail
+          codes=""
+          for _ in $(seq 1 8); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 \
+              -X POST -H 'Content-Type: application/json' \
+              -d '{"texts":["テスト"],"mode":"none"}' \
+              http://127.0.0.1:8001/api/translate-text)
+            codes="$codes $code"
+          done
+          echo "codes:${codes}"
+          echo "${codes}" | grep -q 429 || { echo "::error::rate limiter never engaged"; exit 1; }
+          # /health is deliberately exempt so monitoring and the extension's
+          # reachability probe keep working while a client is throttled.
+          curl -fsS --max-time 10 http://127.0.0.1:8001/health > /dev/null
+          echo "health reachable while throttled"
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs omt | tail -n 120
+
+  arm64-image:
+    name: Build image (linux/arm64, the Always Free target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build for linux/arm64
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            -f deploy/Dockerfile \
+            -t omt-backend:arm64 \
+            .
+          echo "arm64 image built"
