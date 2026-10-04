@@ -140,9 +140,11 @@ for (const file of jsFiles) {
 const matches = (manifest.content_scripts ?? []).flatMap((script) => script.matches ?? []);
 if (matches.includes("<all_urls>")) {
   warn(
-    "content_scripts matches <all_urls>: captureVisibleTab() only needs activeTab, " +
-      "and broad host access is the main reason Chrome Web Store reviews drag " +
-      "(see docs/CHROME_WEB_STORE_TODO.md P0-2)",
+    "content_scripts matches <all_urls>: the extension already holds a broad host permission, " +
+      "which it needs because captureVisibleTab requires <all_urls> or activeTab and relying on " +
+      "the activeTab gesture alone left the user unable to capture anything. With the host " +
+      "permission granting screenshots, this static content script is now redundant and could be " +
+      "dropped in favour of injecting on demand (see docs/CHROME_WEB_STORE_TODO.md P0-2)",
   );
 }
 const hostedHosts = (manifest.host_permissions ?? []).filter(

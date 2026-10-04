@@ -67,6 +67,25 @@ h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
 .status-value[data-state="warn"] { color: var(--warn); }
 .status-value[data-state="err"] { color: var(--err); }
 
+.notice {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.notice button {
+  width: auto;
+  margin: 6px 0 0;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.notice[hidden] { display: none; }
+
 button:not(.icon-btn) {
   width: 100%;
   margin: 0 0 8px;

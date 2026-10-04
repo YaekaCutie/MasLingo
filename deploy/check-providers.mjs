@@ -189,10 +189,16 @@ const manifest = JSON.parse(readFileSync(join(repoRoot, "extension", "manifest.j
 const declared = new Set(manifest.host_permissions || []);
 const missing = hosts.filter((host) => !declared.has(host));
 check("host_permissions 覆盖全部 provider", missing.length === 0, `缺少 ${missing.join(", ")}`);
+// <all_urls> is expected alongside the provider hosts: captureVisibleTab needs
+// it (or activeTab, which turned out not to be enough in practice), and
+// localhost is a loopback fallback. What should NOT be here is a wildcard
+// *domain*, which is what store reviewers push back on.
 const extra = [...declared].filter((host) => !hosts.includes(host));
+const allowed = new Set(["<all_urls>", "http://localhost:8001/*", "http://localhost:11434/*"]);
+const unwanted = extra.filter((host) => !allowed.has(host));
 check("没有多余的 host 权限（通配域名会拖慢商店审核）",
-  extra.every((host) => host.startsWith("http://localhost")),
-  `多余 ${extra.join(", ")}`);
+  unwanted.length === 0, `多余 ${unwanted.join(", ")}`);
+check("为了截图能力声明了 <all_urls>", declared.has("<all_urls>"));
 check("自定义接口走可选权限，而不是写死在 manifest 里",
   (manifest.optional_host_permissions || []).includes("https://*/*"));
 

@@ -30,14 +30,21 @@ console.log(`测试图: ${imagePath.split(/[\\/]/).pop()} (${Math.round(image.le
 
 // See deploy/check-region-flow.mjs: captureVisibleTab needs <all_urls> in
 // host_permissions or a granted activeTab, and a headless driver cannot click
-// the extension action. The permission is unrelated to what is under test.
+// the extension action. Pass --real-manifest to skip that crutch and see what
+// the shipped permission set actually does.
+const realManifest = process.argv.includes("--real-manifest");
 const workDir = mkdtempSync(join(tmpdir(), "omt-auto-flow-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
-const manifestPath = join(extensionDir, "manifest.json");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-manifest.host_permissions = [...(manifest.host_permissions || []), "<all_urls>"];
-writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+if (!realManifest) {
+  const manifestPath = join(extensionDir, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.host_permissions = [...(manifest.host_permissions || []), "<all_urls>"];
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  console.log("(使用测试副本：额外加了 <all_urls>，否则无头模式拿不到截图权限)");
+} else {
+  console.log("(使用真实 manifest，没有额外权限)");
+}
 
 const server = http.createServer((request, response) => {
   if (request.url === "/manga.png") {

@@ -61,9 +61,14 @@ async function refreshTranslateStatus() {
   const provider = registry.byId(providerId);
   if (!provider || provider.id === "none") {
     setStatus(translateStatus, "已关闭", "");
+    // The default is off (nothing is sent anywhere until the user asks), but a
+    // recognition run then produces no Chinese at all, which reads as "it did
+    // nothing". Say so up front instead of after the fact.
+    document.getElementById("translateHint").hidden = false;
     return;
   }
   setStatus(translateStatus, provider.label, "ok");
+  document.getElementById("translateHint").hidden = true;
 }
 
 async function prepareContentScript(tabId) {
@@ -100,7 +105,8 @@ function reportStartFailure(action, error) {
 }
 
 document.getElementById("settings").onclick =
-document.getElementById("settings2").onclick = () => chrome.runtime.openOptionsPage();
+document.getElementById("settings2").onclick =
+document.getElementById("openSettings").onclick = () => chrome.runtime.openOptionsPage();
 
 document.getElementById("health").onclick = async () => {
   status.textContent = "正在检查…";
