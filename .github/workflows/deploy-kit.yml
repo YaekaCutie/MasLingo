@@ -122,7 +122,9 @@ jobs:
           set -euo pipefail
           # Build the probe inside the container: it already has Pillow, so CI
           # needs no extra dependencies and nothing binary is committed.
-          docker exec omt python - <<'PY'
+          # `-i` matters: without it docker exec does not attach stdin and the
+          # heredoc is silently discarded.
+          docker exec -i omt python - <<'PY'
           from PIL import Image, ImageDraw
 
           img = Image.new("RGB", (640, 480), "white")
