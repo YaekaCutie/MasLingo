@@ -9,12 +9,13 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 整个部署只跑一台机器、两个容器，没有数据库、没有对象存储、没有负载均衡。
 
-> **这套东西已经被 CI 真实跑过。** 因为"能不能在 Linux/ARM 上构建并跑起来"是本机验证不了的，`.github/workflows/deploy-kit.yml` 会在每次改动 `backend/` 或 `deploy/` 时：
-> - 在 amd64 上构建镜像、起容器，断言模型在启动时预加载并常驻内存，然后真的发一张图跑通 `/api/recognize-image` 和 `/api/recognize-page`；
-> - 验证 15 MB 上限返回 413、限流会触发而 `/health` 保持可用；
-> - 在 **linux/arm64**（QEMU 模拟）上完整构建一次镜像——也就是 Always Free 的目标架构。
+> **这套东西已经被 CI 真实跑过。** 因为"能不能在 Linux/ARM 上构建并跑起来"是本机验证不了的，`.github/workflows/deploy-kit.yml` 会在每次改动 `backend/`、`extension/` 或 `deploy/` 时跑四件事：
+> - **扩展包静态校验**：路径解析、脚本语法、商店元数据限制；
+> - **amd64 镜像 + 接口冒烟**：构建镜像、起容器，断言模型在启动时预加载并常驻内存，然后真的发图跑通 `/api/recognize-image` 和 `/api/recognize-page`，再验证 15 MB 上限返回 413、限流会触发而 `/health` 保持可用；
+> - **Caddy 全栈**：按 VM 上的方式 `docker compose up`，断言 HTTPS 能拿到 API 的 JSON、HTTP 会 308 跳转、一张真实图片经反向代理做 multipart POST 仍能完成 OCR（只有 Let's Encrypt 证书签发本身换成内部 CA，因为 CI 无法完成 HTTP-01 挑战）；
+> - **linux/arm64 完整构建**（QEMU 模拟）——也就是 Always Free 的目标架构。
 >
-> 所以下面步骤里"构建失败"的可能性已经被提前排掉了。
+> 所以下面步骤里"构建失败""代理不通"这类可能性已经被提前排掉了。
 
 ---
 
