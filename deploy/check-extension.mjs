@@ -76,11 +76,24 @@ if (version.split(".").every((part) => Number(part) === 0)) fail("manifest.versi
 
 // --- every file the manifest points at must exist -------------------------
 
+// These directories are populated by tools/fetch_ocr_assets.py rather than
+// committed: the wasm runtime (~14 MB) and the int8 model (~117 MB) are build
+// inputs, not source. A missing file there is a setup problem, not a bug, so it
+// warns and points at the fetch script instead of failing the check.
+const GENERATED_DIRS = ["vendor/", "models/"];
+const missingGenerated = [];
+const isGenerated = (path) => GENERATED_DIRS.some((dir) => path.startsWith(dir));
+
 const referenced = [];
 const requireFile = (path, label) => {
   if (!path || typeof path !== "string") return;
   referenced.push(path);
-  if (!existsSync(join(extensionDir, path))) fail(`${label} points at a missing file: ${path}`);
+  if (existsSync(join(extensionDir, path))) return;
+  if (isGenerated(path)) {
+    missingGenerated.push(path);
+    return;
+  }
+  fail(`${label} points at a missing file: ${path}`);
 };
 
 requireFile(manifest.background?.service_worker, "background.service_worker");
@@ -104,10 +117,15 @@ for (const file of htmlFiles) {
   for (const [, target] of source.matchAll(pattern)) {
     if (/^(https?:|data:|#|\/\/)/i.test(target)) continue;
     const resolved = resolve(dirname(file), target);
-    if (!existsSync(resolved)) {
-      fail(`${relative(file)} references a missing file: ${target}`);
-    } else {
+    if (existsSync(resolved)) {
       referenced.push(relative(resolved).replace(/^extension\//, ""));
+      continue;
+    }
+    const asExtensionPath = relative(resolved).replace(/^extension\//, "");
+    if (isGenerated(asExtensionPath)) {
+      missingGenerated.push(asExtensionPath);
+    } else {
+      fail(`${relative(file)} references a missing file: ${target}`);
     }
   }
 }
@@ -217,6 +235,14 @@ if (keyIndex !== -1) {
 }
 
 // --- report ---------------------------------------------------------------
+
+if (missingGenerated.length > 0) {
+  const unique = [...new Set(missingGenerated)];
+  warn(
+    `${unique.length} build-time asset(s) not present (${unique.slice(0, 3).join(", ")}` +
+      `${unique.length > 3 ? ", …" : ""}) — run: python tools/fetch_ocr_assets.py`,
+  );
+}
 
 console.log(`checked ${jsFiles.length} scripts, ${htmlFiles.length} pages, ${referenced.length} references`);
 for (const message of notes) console.log(`  note    ${message}`);
