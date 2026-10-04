@@ -183,10 +183,13 @@ for (const file of jsFiles) {
   const importPattern = /\bfrom\s*["'](\.[^"']+)["']/g;
   for (const [, target] of source.matchAll(importPattern)) {
     const resolved = resolve(dirname(file), target);
-    if (!existsSync(resolved)) {
-      fail(`${relative(file)} imports a missing file: ${target}`);
+    const asExtensionPath = relative(resolved).replace(/^extension\//, "");
+    if (existsSync(resolved)) {
+      referenced.push(asExtensionPath);
+    } else if (isGenerated(asExtensionPath)) {
+      missingGenerated.push(asExtensionPath);
     } else {
-      referenced.push(relative(resolved).replace(/^extension\//, ""));
+      fail(`${relative(file)} imports a missing file: ${target}`);
     }
   }
 }

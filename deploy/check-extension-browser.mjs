@@ -40,6 +40,21 @@ const fail = (message) => {
 };
 const pass = (message) => console.log(`ok    ${message}`);
 
+/** Re-evaluate until the predicate holds, so slow starts are not failures. */
+async function pollEval(worker, fn, predicate, { timeoutMs = 20000, intervalMs = 150 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  for (;;) {
+    try {
+      last = await worker.evaluate(fn);
+    } catch (error) {
+      last = `error: ${error.message}`;
+    }
+    if (predicate(last) || Date.now() > deadline) return last;
+    await new Promise((done) => setTimeout(done, intervalMs));
+  }
+}
+
 // Chrome 137 disabled --load-extension on the command line; this restores it.
 // Without the flag the extension never appears and every check below fails.
 const LAUNCH_ARGS = [
@@ -105,10 +120,18 @@ try {
     const extensionId = new URL(target.url()).host;
     pass(`service worker registered (extension id ${extensionId})`);
 
-    // --- importScripts actually worked ------------------------------------
-    const resolverType = await worker.evaluate(() => typeof self.OMT_backendCandidates);
+    // --- the shared config actually reached the service worker ------------
+    // The service worker target appears as soon as the worker is registered,
+    // which can be before its (now module-based) import graph has finished
+    // evaluating. Poll instead of racing it: on a fast laptop the first read
+    // wins, on a cold CI runner it did not.
+    const resolverType = await pollEval(
+      worker,
+      () => typeof self.OMT_backendCandidates,
+      (value) => value === "function",
+    );
     if (resolverType === "function") {
-      pass("config.js was loaded into the service worker via importScripts()");
+      pass("config.js globals are available in the module service worker");
     } else {
       fail(`self.OMT_backendCandidates is ${resolverType}, expected function`);
     }
