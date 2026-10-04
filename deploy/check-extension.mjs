@@ -183,6 +183,78 @@ if (keyIndex !== -1) {
   }
 }
 
+// --- calls to functions that do not exist ---------------------------------
+//
+// These files load as classic scripts, so a call to a function that was renamed
+// or deleted fails only at run time, and only on the branch that reaches it.
+// That is exactly how a stale showTranslationNotice() call survived a rename and
+// broke the port-disconnect path with nothing noticing: parsing a file says
+// nothing about whether the names inside it resolve.
+const BROWSER_GLOBALS = new Set([
+  "chrome", "window", "document", "console", "fetch", "setTimeout", "clearTimeout",
+  "setInterval", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame",
+  "alert", "confirm", "prompt", "Image", "Blob", "FileReader", "FormData", "URL",
+  "URLSearchParams", "TextEncoder", "TextDecoder", "atob", "btoa", "crypto",
+  "structuredClone", "OffscreenCanvas", "createImageBitmap", "queueMicrotask",
+  "getComputedStyle", "matchMedia", "performance", "navigator", "location",
+  "history", "self", "globalThis", "Object", "Array", "String", "Number",
+  "Boolean", "BigInt", "Math", "JSON", "Date", "RegExp", "Error", "TypeError",
+  "RangeError", "Promise", "Map", "Set", "WeakMap", "WeakSet", "Uint8Array",
+  "Uint8ClampedArray", "Uint16Array", "Uint32Array", "Int8Array", "Int16Array",
+  "Int32Array", "Float32Array", "Float64Array", "ArrayBuffer", "DataView",
+  "isNaN", "isFinite", "parseInt", "parseFloat", "encodeURIComponent",
+  "decodeURIComponent", "encodeURI", "decodeURI", "importScripts", "Worker",
+  "MutationObserver", "IntersectionObserver", "ResizeObserver", "AbortController",
+]);
+const KEYWORDS = new Set([
+  "if", "for", "while", "switch", "catch", "return", "typeof", "function", "new",
+  "await", "else", "do", "delete", "void", "in", "of", "case", "yield", "throw",
+  "instanceof", "super", "this", "async", "get", "set",
+]);
+
+/** Strip comments and string bodies so prose is not read as code. */
+function stripLiterals(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:\\])\/\/[^\n]*/g, "$1 ")
+    .replace(/`(?:\\[\s\S]|[^`\\])*`/g, '""')
+    .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""')
+    .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, "''");
+}
+
+const addNames = (set, list) => {
+  for (const part of list.split(",")) {
+    const name = part.trim().replace(/^[.\s]*/, "").replace(/[{}[\].\s]/g, "").split(/[=:]/)[0];
+    if (/^[A-Za-z_$][\w$]*$/.test(name)) set.add(name);
+  }
+};
+
+for (const file of jsFiles) {
+  const stripped = stripLiterals(readFileSync(file, "utf8"));
+  const declared = new Set();
+  for (const match of stripped.matchAll(/\bfunction\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
+  for (const match of stripped.matchAll(/\b(?:let|const|var)\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
+  for (const match of stripped.matchAll(/\bclass\s+([A-Za-z_$][\w$]*)/g)) declared.add(match[1]);
+  for (const match of stripped.matchAll(/\bfunction\s*[A-Za-z_$\w]*\s*\(([^)]*)\)/g)) addNames(declared, match[1]);
+  for (const match of stripped.matchAll(/\(([^()]*)\)\s*=>/g)) addNames(declared, match[1]);
+  for (const match of stripped.matchAll(/(?:^|[\s(,[])([A-Za-z_$][\w$]*)\s*=>/g)) declared.add(match[1]);
+  // Object-literal method shorthand (`hosts() { … }`) looks like a call to a
+  // regex, so those names are treated as definitions.
+  for (const match of stripped.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\([^()]*\)\s*\{/g)) {
+    declared.add(match[2]);
+  }
+
+  const unknown = new Set();
+  for (const match of stripped.matchAll(/(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g)) {
+    const name = match[2];
+    if (declared.has(name) || BROWSER_GLOBALS.has(name) || KEYWORDS.has(name)) continue;
+    unknown.add(name);
+  }
+  if (unknown.size > 0) {
+    fail(`${relative(file)} calls ${[...unknown].sort().join(", ")} — not defined in the file`);
+  }
+}
+
 // --- report ---------------------------------------------------------------
 
 console.log(`checked ${jsFiles.length} scripts, ${htmlFiles.length} pages, ${referenced.length} references`);

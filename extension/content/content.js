@@ -198,8 +198,8 @@ function startRecognition(rect, detectPage = false, mediaRect = null) {
       const reason = chrome.runtime.lastError?.message || "后台识别连接已断开";
       if (recognizedResultReady) {
         console.warn("翻译连接已断开，保留 OCR 原文：", reason);
-        discardSourcePatches();
-        showTranslationNotice(`翻译连接已断开，当前保留日文原文：${reason}`);
+        clearOverlay();
+        showToast(`翻译连接已断开，已保留日文原文：${reason}`, "error");
         closeRequestPort();
       } else {
         console.warn("OCR 通道已断开，等待后台结果通过消息通道返回：", reason);
