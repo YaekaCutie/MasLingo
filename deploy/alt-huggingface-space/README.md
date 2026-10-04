@@ -1,35 +1,55 @@
-# 备选方案：Hugging Face Spaces（不需要信用卡）
+# 备选方案：Hugging Face Spaces
+
+> ## ⚠️ 2026 起这条路已经不免费用了
+>
+> Hugging Face 官方文档现在写得很明确：
+>
+> > "Static Spaces are free for everyone. **Gradio and Docker Spaces run on compute and require a paid plan to create: PRO for personal accounts**, Team or Enterprise for organizations."
+> >
+> > "The default CPU Basic hardware has no hourly cost, but **creating a Space that runs on compute (Gradio or Docker) requires a paid plan**, while Static Spaces are free for everyone."
+>
+> 也就是：**本项目这种 Docker Space 现在需要付费订阅（PRO）才能创建**，而 PRO 的付款方式只接受信用卡。免费个人账号只剩「2 个跑在 ZeroGPU 上的 Gradio Space」这一条路，**跑不了我们这种自带 Dockerfile 的 PyTorch 后端**。
+>
+> 来源：<https://huggingface.co/docs/hub/spaces-overview>（2026-10 核对）
+>
+> **所以：如果你没有信用卡，请用 [`deploy/alt-self-host-tunnel/`](../alt-self-host-tunnel/README.md)（自己电脑 + Tailscale Funnel）。** 如果你有信用卡，在 HF 和 Oracle 之间选的话，本项目的推荐仍然是 Oracle——HF 免费档闲置 48 小时会休眠，冷启动 1–2 分钟，商店明确把"审核时功能不可用"列为驳回原因。
+>
+> 下面保留的内容对**已经付费**、或者愿意用 PRO 的人仍然有效；它从未在真实 Space 上端到端验证过（我没有 HF 账号）。
+
+---
+
+# （以下为需付费订阅时仍可参考的内容）
 
 > **这是备用路线，不是替代 Oracle 的推荐路线。** 我用不了它自己的账号，所以这份指南**没有被我端到端跑通过**——里面的步骤来自 Hugging Face 的 Docker SDK 约定，标了 ⚠️ 的地方是我无法验证的细节。
 
 ## 为什么需要它
 
-主方案 Oracle Cloud Always Free 有两个你控制不了的失败点：
+Oracle Cloud Always Free 有两个你控制不了的失败点：
 
 1. **注册被拒**：必须用真实信用卡（不接受虚拟卡/预付卡/带 PIN 的借记卡），且一人一号。
 2. **"Out of host capacity"**：这是 Oracle 官方承认的**预期现象**——免费 ARM 容量经常没有，得换 Availability Domain 反复重试，可能持续几天。
 
-而 HF Spaces 只要一个邮箱就能注册，**不需要任何支付方式**，免费 CPU 档给 **2 vCPU / 16 GB 内存**，跑这个后端绰绰有余。它可以让你**今天就把托管后端跑起来**，不用等 Oracle 的容量。
+如果你已经有卡、只是不想跟 Oracle 的容量较劲，Spaces 可以让你**今天就把托管后端跑起来**。
 
 ## 代价（先看清楚再决定）
 
-| 项 | HF Spaces 免费档 |
+| 项 | HF Spaces |
 | --- | --- |
-| 冷启动 | **闲置约 48 小时后休眠**，下次请求要等容器重新启动 + 模型加载，约 1–2 分钟 ⚠️（休眠时长以 HF 当前政策为准） |
+| 费用 | **Docker Space 需要付费订阅（PRO）** |
+| 冷启动 | 闲置约 48 小时后休眠，下次请求要等容器重新启动 + 模型加载，约 1–2 分钟 ⚠️（休眠时长以 HF 当前政策为准） |
 | 资源 | 2 vCPU / 16 GB，比 Oracle 的 12 GB 还宽裕 |
-| 费用 | 0，无信用卡 |
 | 域名 | 自带 HTTPS 域名 `https://<user>-<space>.hf.space`，**不用自己搞证书** |
 | 源代码 | **公开可见**（本仓库本来就是公开的，无额外影响） |
 
-冷启动这一条是实打实的体验退步：用户偶尔会遇到"第一次识别等两分钟"。对"即装即用"来说不理想，但比"用户要自己装 Python"好得多，也比后端根本没上线好。
+冷启动这一条是实打实的体验退步：用户偶尔会遇到"第一次识别等两分钟"。对"即装即用"来说不理想，但比"用户要自己装 Python"好得多。
 
 ## 部署步骤
 
 ### 1. 建 Space
 
 - 打开 <https://huggingface.co/new-space>
-- **SDK 选 `Docker`** → **Blank**
-- 硬件选 **CPU basic（free）**
+- **SDK 选 `Docker`** → **Blank**（需要已订阅 PRO）
+- 硬件选 **CPU basic**
 - Visibility 选 **Public**
 
 ### 2. 把后端塞进去
@@ -88,12 +108,5 @@ python deploy/configure_hosted_backend.py https://<user>-<space>.hf.space --pack
 
 1. **容器用户 ID**：HF Spaces 对运行用户有额外约束（常见说法是强制 UID 1000）。所以 Space 版 Dockerfile **没有**沿用主 Dockerfile 的 `USER omt`，而是在构建时把目录授权给 UID 1000。如果构建或启动时报权限错误，看 Logs 里的 uid 提示再调。
 2. **`app_port`**：Space 版 README 的 front-matter 里写了 `app_port: 8001`，与容器监听端口一致。若 HF 改了默认行为，以官方文档为准。
-3. **休眠时长与唤醒延迟**：文中写的 48 小时来自 HF 的历史政策，2026 年的实际值请以 Space 设置页面为准。
-4. **构建时长限制**：免费档的构建时长/磁盘配额可能有限制，本镜像约 2–3 GB。
-
-## 两条路线怎么选
-
-- **只是想让功能先跑起来 / Oracle 一直没容量** → 用 Spaces，十分钟能上线。
-- **长期、稳定、要被 Chrome 应用商店审核** → 仍然推荐 Oracle：不会休眠、完全可控。HF Spaces 的冷启动会让审核员遇到"点了没反应"，商店明确把"审核时功能不可用"列为驳回原因。
-
-两者并不冲突：可以先用 Spaces 顶着，Oracle 容量到手后再切过去——扩展换后端只需要重跑一次 `configure_hosted_backend.py`。
+3. **休眠时长与唤醒延迟**：文中写的 48 小时来自 HF 的文档，实际值请以 Space 设置页面为准。
+4. **构建时长限制**：构建时长/磁盘配额可能有限制，本镜像约 2–3 GB。这个 Dockerfile 也没有进 CI（因为它现在是付费路径），所以**没有在真实构建里验证过**。

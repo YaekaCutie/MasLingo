@@ -51,6 +51,10 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 > 注册过程中如果被拒绝，常见原因就是卡类型不符合要求，换一张真实的信用卡再试。
 
+> **没有信用卡？** 2026-10 逐个核对官方页面后的结论是：**不存在"免信用卡 + 永久免费 + 能跑 PyTorch + 一直在线"的云服务器**（Hugging Face Spaces 的免费 Docker 档在 2026 年已经改成需要付费订阅 PRO，详见 [alt-huggingface-space/](alt-huggingface-space/README.md) 顶部说明）。
+>
+> 唯一的免卡路线是**不用云服务器**：把后端跑在自己电脑上，用免费的 Tailscale Funnel 暴露到公网 —— 见 **[alt-self-host-tunnel/](alt-self-host-tunnel/README.md)**，一条命令搞定，公网地址稳定不变。代价是你电脑得开着。
+
 ---
 
 ## 2. 创建实例
@@ -332,3 +336,19 @@ TLS 用系统 Caddy（`sudo apt install caddy`），Caddyfile 把 `reverse_proxy
 - WebGPU 在老设备和部分浏览器上不可用，需要 CPU 回退。
 
 **建议路线**：先用托管后端把"即装即用"跑起来（本文件），把浏览器端 OCR 作为 v2 目标——到那时服务器就只剩翻译中转了，甚至可以完全去掉。
+
+---
+
+## 12. 三条路怎么选（含"没有信用卡"的情况）
+
+| | Oracle Always Free | 自己电脑 + Tailscale Funnel | 不上后端 |
+| --- | --- | --- | --- |
+| 指南 | 本文件 | [alt-self-host-tunnel/](alt-self-host-tunnel/README.md) | 维持现状 |
+| 信用卡 | **必须**（真实卡） | **不需要** | — |
+| 费用 | 0 | 0 | 0 |
+| 7×24 在线 | 是 | **取决于你电脑开不开** | — |
+| 上手 | 注册 + 建实例 + 放行端口（脚本可自动重试容量） | 装 Tailscale + 一条命令 | — |
+| 适合 | 长期运营、要上商店 | 先跑起来 / 没卡 / 小圈子自用 | 只给自己用 |
+
+**没有信用卡就用中间那条**，别在"Hugging Face Spaces 免费 Docker"上浪费时间——那条路 2026 年已经改成付费订阅了。
+
