@@ -5,7 +5,7 @@ import "../config.js";
 import {
   getOcrStatus,
   recognizeImageData,
-  recognizePageImageData,
+  recognizePagePng,
   warmUp,
 } from "../ocr/client.js";
 
@@ -37,10 +37,19 @@ async function readOcrMode(){
 }
 
 // The popup asks for on-device engine state so it can report it without
-// implying that a missing backend is a problem.
+// implying that a missing backend is a problem. It also asks for a warm-up as
+// soon as it opens: loading the model takes ~0.5s, and doing that while the
+// user is still choosing a region hides it entirely.
 chrome.runtime.onMessage.addListener((message,_sender,sendResponse)=>{
   if(message?.type==="OCR_STATUS"){
     sendResponse({status:getOcrStatus()});
+    return true;
+  }
+  if(message?.type==="OCR_WARMUP"){
+    warmUp().then(
+      ()=>sendResponse({ok:true,status:getOcrStatus()}),
+      error=>sendResponse({ok:false,error:error.message})
+    );
     return true;
   }
   return undefined;
@@ -239,6 +248,9 @@ async function recognizePage(msg,tabId,port){
     context.drawImage(
       bmp,crop.left,crop.top,cropWidth,cropHeight,0,0,outputWidth,outputHeight
     );
+    // Encoded once and reused by whichever path runs, so the fallback costs
+    // nothing extra.
+    const image=await canvas.convertToBlob({type:"image/png"});
 
     // Region detection and OCR both run on-device by default, so auto-detect
     // no longer needs a backend either.
@@ -247,9 +259,7 @@ async function recognizePage(msg,tabId,port){
     const mode=await readOcrMode();
     if(mode!=="backend"){
       try{
-        const onDevice=await recognizePageImageData(
-          context.getImageData(0,0,outputWidth,outputHeight)
-        );
+        const onDevice=await recognizePagePng(new Uint8Array(await image.arrayBuffer()));
         rawItems=(onDevice.items||[]).map(item=>({
           text:item.text,
           bbox:{
@@ -263,7 +273,6 @@ async function recognizePage(msg,tabId,port){
       }
     }
     if(!source){
-      const image=await canvas.convertToBlob({type:"image/png"});
       const fd=new FormData();
       fd.append("image",image,"manga-image.png");
       const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});

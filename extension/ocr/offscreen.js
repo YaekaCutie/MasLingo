@@ -7,7 +7,7 @@
 //   { target: "offscreen", type: "OCR_RECOGNIZE", imageData }  -> { ok, text, ... }
 // Every reply carries the request id so the caller can match it up.
 
-import { decodeImageData } from "./pixels.js";
+import { decodeBytes, decodeImageData } from "./pixels.js";
 
 const worker = new Worker(chrome.runtime.getURL("ocr/worker.js"), { type: "module" });
 
@@ -36,6 +36,18 @@ function askWorker(type, payload = {}) {
   });
 }
 
+/** PNG bytes -> RGBA pixels. This document context has the decoding APIs. */
+async function decodePng(base64) {
+  const blob = new Blob([decodeBytes(base64)], { type: "image/png" });
+  const bitmap = await createImageBitmap(blob);
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.drawImage(bitmap, 0, 0);
+  const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
+  bitmap.close?.();
+  return imageData;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.target !== "offscreen") return undefined;
 
@@ -51,8 +63,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message.type === "OCR_RECOGNIZE_PAGE") {
-    const imageData = decodeImageData(message.imageData);
-    askWorker("RECOGNIZE_PAGE", { imageData }).then(sendResponse);
+    // Whole-page payloads arrive as PNG rather than raw RGBA: a manga page is
+    // ~6 MB of pixels but a few hundred KB compressed, and this hop goes
+    // through JSON serialisation, where that difference is seconds.
+    decodePng(message.png).then((imageData) => askWorker("RECOGNIZE_PAGE", { imageData })).then(sendResponse);
     return true;
   }
   return undefined;

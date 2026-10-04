@@ -139,13 +139,27 @@ try {
       const context = canvas.getContext("2d", { willReadFrequently: true });
       context.drawImage(bitmap, 0, 0);
       const imageData = context.getImageData(0, 0, bitmap.width, bitmap.height);
-      const started = Date.now();
-      const result = await globalThis.OMT_ocr.recognizeImageData(imageData);
+      // Two calls: the first also loads the model, so comparing them separates
+      // one-time startup from the steady-state cost of the message hops.
+      const runs = [];
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const started = Date.now();
+        const result = await globalThis.OMT_ocr.recognizeImageData(imageData);
+        runs.push({
+          ms: Date.now() - started,
+          engineMs: result.milliseconds,
+          tokens: result.ids.length,
+          text: result.text,
+        });
+      }
       return {
         ok: true,
-        text: result.text,
-        ms: Date.now() - started,
-        tokens: result.ids.length,
+        text: runs[0].text,
+        ms: runs[1].ms,
+        engineMs: runs[1].engineMs,
+        tokens: runs[1].tokens,
+        firstMs: runs[0].ms,
+        firstEngineMs: runs[0].engineMs,
         status: globalThis.OMT_ocr.getOcrStatus(),
       };
     } catch (error) {
@@ -165,7 +179,9 @@ try {
     failures.push("service worker OCR");
   } else {
     console.log(`text         : ${workerResult.text}`);
-    console.log(`inference    : ${workerResult.ms} ms (${workerResult.tokens} tokens, wasm, worker)`);
+    console.log(`first call   : ${workerResult.firstMs} ms (engine ${workerResult.firstEngineMs} ms, includes model load)`);
+    console.log(`second call  : ${workerResult.ms} ms (engine ${workerResult.engineMs} ms, ${workerResult.tokens} tokens)`);
+    console.log(`hop overhead : ${workerResult.ms - workerResult.engineMs} ms steady state`);
     console.log(`status       : ${JSON.stringify(workerResult.status)}`);
     if (expected && workerResult.text.trim() !== expected.trim()) {
       console.error(`FAIL  worker expected: ${expected}`);

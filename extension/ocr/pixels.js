@@ -32,6 +32,25 @@ export function decodeImageData({ width, height, base64 }) {
   return { data, width, height };
 }
 
+/** Base64 for raw bytes (used for compressed payloads such as PNG). */
+export function encodeBytes(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk));
+  }
+  return btoa(binary);
+}
+
+export function decodeBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
 /** Copy a half-open [left, top, right, bottom) box out of an RGBA image. */
 export function cropImageData(image, left, top, right, bottom) {
   const boxWidth = Math.max(1, Math.min(image.width, right) - Math.max(0, left));

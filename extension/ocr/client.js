@@ -4,7 +4,7 @@
 // so this module creates the offscreen document on demand and forwards work to
 // it. Every failure path rejects, and the caller falls back to the backend.
 
-import { encodeImageData } from "./pixels.js";
+import { encodeBytes, encodeImageData } from "./pixels.js";
 
 const OFFSCREEN_PATH = "ocr/offscreen.html";
 
@@ -111,13 +111,16 @@ export async function recognizeImageData(imageData) {
 /**
  * Whole-page recognition on-device: detect text regions, then OCR each.
  *
- * @param {{data: Uint8ClampedArray, width: number, height: number}} imageData
+ * Takes PNG bytes rather than an ImageData: the caller already has a blob from
+ * the capture canvas, and shipping compressed pixels through a JSON-serialised
+ * message is dramatically cheaper than shipping raw ones.
+ *
+ * @param {Uint8Array} pngBytes
  * @returns {Promise<{items: Array<{text: string, bbox: object}>, regionCount: number, detectMs: number, milliseconds: number}>}
  */
-export async function recognizePageImageData(imageData) {
+export async function recognizePagePng(pngBytes) {
   await warmUp();
-  const encoded = encodeImageData(imageData);
-  const response = await send("OCR_RECOGNIZE_PAGE", { imageData: encoded });
+  const response = await send("OCR_RECOGNIZE_PAGE", { png: encodeBytes(pngBytes) });
   if (!response.ok) {
     state = { ...state, state: "failed", error: response.error };
     throw new Error(response.error || "端上整页识别失败");
@@ -126,6 +129,7 @@ export async function recognizePageImageData(imageData) {
     ...state,
     state: "ready",
     lastMs: response.milliseconds ?? null,
+    detectMs: response.detectMs ?? state.detectMs,
     loadMs: response.loadMs ?? state.loadMs,
     recognitions: state.recognitions + (response.items?.length || 0),
   };

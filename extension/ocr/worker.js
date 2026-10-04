@@ -92,8 +92,8 @@ self.addEventListener("message", async (event) => {
       for (const region of regions) {
         const crop = cropImageData(request.imageData, region.left, region.top, region.right, region.bottom);
         const result = await recognize(engine, crop);
-        const text = (result.text || "").trim();
         recognitions.push(result.milliseconds);
+        const text = (result.text || "").trim();
         if (!hasReadableText(text)) continue; // drop visual noise, as the backend does
         items.push({ text, bbox: region });
       }

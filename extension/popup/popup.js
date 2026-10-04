@@ -1,6 +1,12 @@
 const status = document.getElementById("status");
 const backendRole = document.getElementById("backendRole");
 
+// Kick off the on-device model load immediately: it takes about half a second,
+// and the user is still reading the popup when it starts, so their first
+// recognition no longer pays for it. Failure is fine — the engine falls back
+// to the backend and OCR_STATUS reports why.
+chrome.runtime.sendMessage({ type: "OCR_WARMUP" }).catch(() => {});
+
 function normalize(url) {
   return String(url || "").trim().replace(/\/+$/, "");
 }
