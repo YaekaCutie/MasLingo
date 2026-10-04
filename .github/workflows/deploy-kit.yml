@@ -349,6 +349,14 @@ jobs:
           xvfb-run -a node deploy/check-ondevice-ocr.mjs \
             --crop models/fixture.png --expect "日本語のテストです"
 
+      # The full product loop: drag a box on a real page -> service worker
+      # captures and crops -> on-device OCR -> text rendered back into the page,
+      # with no backend running anywhere.
+      - name: Drag a region and read it back
+        run: |
+          xvfb-run -a node deploy/check-region-flow.mjs \
+            --fixture tools/fixtures/jp-horizontal.png --expect "日本語のテストです"
+
   arm64-image:
     name: Build and run image (linux/arm64, the Always Free target)
     runs-on: ubuntu-latest
