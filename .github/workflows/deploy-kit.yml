@@ -33,6 +33,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: The compose file renders with a real domain
+        run: |
+          set -euo pipefail
+          # Catches compose syntax errors and unresolved variables, which would
+          # otherwise only surface on the VM after bootstrap-vm.sh has run.
+          OMT_DOMAIN=ocr.example.com docker compose -f deploy/docker-compose.yml config > compose-rendered.yml
+          grep -q "ocr.example.com" compose-rendered.yml
+          grep -q "8001" compose-rendered.yml
+          grep -q "caddy" compose-rendered.yml
+          echo "compose file renders OK"
+
       - name: Build the backend image
         run: docker build -f deploy/Dockerfile -t omt-backend:test .
 

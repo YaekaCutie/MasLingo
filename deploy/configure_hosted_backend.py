@@ -60,21 +60,35 @@ def update_manifest(url: str) -> list[str]:
     return hosts
 
 
+def set_version(version: str) -> str:
+    if not re.fullmatch(r"\d+(\.\d+){0,3}", version):
+        sys.exit(f"version must be 1-4 dot-separated integers (got {version!r})")
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest["version"] = version
+    MANIFEST.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return version
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("url", help="hosted backend base URL, e.g. https://ocr.example.com")
     parser.add_argument("--pack", metavar="KEY_PEM", help="also rebuild the CRX/ZIP with this signing key")
     parser.add_argument("--outdir", default=str(REPO_ROOT), help="where to write the packages (default: repo root)")
+    parser.add_argument("--version", help="also set the manifest version (must increase for every store upload)")
     args = parser.parse_args()
 
     url = normalize(args.url)
     update_config(url)
     hosts = update_manifest(url)
+    if args.version:
+        set_version(args.version)
 
     version = json.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
     print(f"config.js   : OMT_BACKEND_URL = {url}")
     print(f"manifest    : host_permissions = {hosts}")
-    print(f"version     : {version}  (bump this before publishing a new release)")
+    print(f"version     : {version}")
 
     if args.pack:
         sys.path.insert(0, str(Path(__file__).resolve().parent))

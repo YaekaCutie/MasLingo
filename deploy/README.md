@@ -9,6 +9,13 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 整个部署只跑一台机器、两个容器，没有数据库、没有对象存储、没有负载均衡。
 
+> **这套东西已经被 CI 真实跑过。** 因为"能不能在 Linux/ARM 上构建并跑起来"是本机验证不了的，`.github/workflows/deploy-kit.yml` 会在每次改动 `backend/` 或 `deploy/` 时：
+> - 在 amd64 上构建镜像、起容器，断言模型在启动时预加载并常驻内存，然后真的发一张图跑通 `/api/recognize-image` 和 `/api/recognize-page`；
+> - 验证 15 MB 上限返回 413、限流会触发而 `/health` 保持可用；
+> - 在 **linux/arm64**（QEMU 模拟）上完整构建一次镜像——也就是 Always Free 的目标架构。
+>
+> 所以下面步骤里"构建失败"的可能性已经被提前排掉了。
+
 ---
 
 ## 0. 先看清楚免费额度的真实情况（2026）
@@ -137,25 +144,22 @@ curl -s https://<你的域名>/health
 
 ## 6. 让扩展指向这台服务器
 
-改两个文件（改完重新打包，用户装上就是开箱即用）：
+服务器一起起来，这一步就只有一条命令（它会改 `extension/config.js` 的托管地址、把真实域名写进 `manifest.json` 的 `host_permissions`，然后重新打包）：
 
-1. `extension/config.js`
-
-```js
-globalThis.OMT_BACKEND_URL = "https://<你的域名>";
+```bash
+python deploy/configure_hosted_backend.py https://<你的域名> --pack extension.pem
 ```
 
-2. `extension/manifest.json` → `host_permissions`：把 `https://*.sslip.io/*` 换成你的真实域名（上架前必须收窄，见 `docs/CHROME_WEB_STORE_TODO.md`）。
+- 想先看效果就去掉 `--pack`，只改配置不打包。
+- 再跑一次换域名是安全的：它会**替换**而不是追加，并保留 `127.0.0.1` / `localhost` 回退。
+- 打包器不依赖 Chrome，且是确定性的：同样的源码 + 同一个 `extension.pem` 会得到逐字节相同的 CRX（已对照线上 1.0.2 产物验证）。
+- **发布前记得先把 `extension/manifest.json` 的 `version` 加一**（商店要求每次上传的版本号必须更大）。
 
-```json
-"host_permissions": [
-  "http://127.0.0.1:8001/*",
-  "http://localhost:8001/*",
-  "https://ocr.example.com/*"
-]
-```
+用户装完直接可用；想自己跑后端的用户可以在扩展设置里把"后端地址"填成 `http://127.0.0.1:8001`，扩展会优先用它。
 
-然后重新打包发布。用户装完直接可用；想自己跑后端的用户可以在扩展设置里把"后端地址"填成 `http://127.0.0.1:8001`，扩展会优先用它。
+## 6.1 上架前必须收窄权限
+
+`host_permissions` 里的 `https://*.sslip.io/*` 只是为了在域名定下来之前能跑通。上架前务必换成真实域名（上面的命令会自动做这件事），详见 `docs/CHROME_WEB_STORE_TODO.md` 的 P0-7。
 
 ---
 
