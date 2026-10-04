@@ -32,7 +32,7 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 来源：[Always Free Resources（官方）](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)。
 
-**够不够用？** 够。后端常驻内存实测约 **800 MB**（模型预加载后 Python 进程 RSS，本机实测 798 MB），加 Docker、Caddy 和系统开销整机大约 1.5–2 GB。2 OCPU 跑 OCR 是"一个人等几秒、几个人排队"的水平，个人/小圈子分享完全没问题。
+**够不够用？** 够。后端常驻内存 **1.23 GB**（CI 里在容器内实测 pid 1 的 VmRSS = 1262116 kB），加 Docker、Caddy 和系统开销整机大约 1.8–2.5 GB。2 OCPU 跑 OCR 是"一个人等几秒、几个人排队"的水平，个人/小圈子分享完全没问题。
 
 ---
 
@@ -199,7 +199,7 @@ Oracle 的规则（官方原文）：**7 天内** 95 分位 CPU **低于 20%** �
 
 实测数据与判断：
 
-- 本项目常驻内存约 **1.5–2 GB**（Python 800 MB + Docker/Caddy/系统），而 12 GB 的 20% = **2.4 GB**——**单靠内存不一定压得住这条线**，别把 2025 年那些"模型占好几 G 所以很安全"的说法当结论。
+- 后端常驻内存 **1.23 GB**（CI 在容器内实测 pid 1 的 VmRSS = 1262116 kB），加 Docker/Caddy/系统约 1.8–2.5 GB，而 12 GB 的 20% = **2.4 GB**——**正好卡在这条线附近**，别把"模型占好几 G 所以很安全"的说法当结论。
 - 但**三个条件必须同时满足**才回收，而且看的是 **95 分位**：只要 **5% 的时间**CPU 或网络超过 20%（一天里累计约 1.2 小时）就达标。**有真实用户在用就不会被回收**；完全没人用一个星期，才有风险。
 
 建议：

@@ -27,6 +27,12 @@ on:
       - ".github/workflows/deploy-kit.yml"
   workflow_dispatch:
 
+# The arm64 job builds the whole torch image under QEMU, so superseded pushes
+# should not keep stacking up expensive builds.
+concurrency:
+  group: deploy-kit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   extension-package:
     name: Extension package loads and is store-consistent
