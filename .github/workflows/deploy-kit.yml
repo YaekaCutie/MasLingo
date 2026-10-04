@@ -202,6 +202,108 @@ jobs:
         if: failure()
         run: docker logs omt | tail -n 120
 
+  caddy-stack:
+    name: Full stack behind Caddy (TLS + reverse proxy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up deploy/docker-compose.yml the way the VM would
+        run: |
+          set -euo pipefail
+          # The real Caddyfile is swapped for one that uses Caddy's internal CA,
+          # because CI cannot answer a Let's Encrypt HTTP-01 challenge. Every
+          # other part — TLS termination, resolving the `api` service name,
+          # proxying, the published ports — runs exactly as on the VM.
+          mkdir -p /tmp/omt-tls
+          cat > /tmp/omt-tls/Caddyfile <<'CADDY'
+          {
+          	local_certs
+          	skip_install_trust
+          }
+
+          localhost {
+          	encode zstd gzip
+          	reverse_proxy api:8001
+          }
+          CADDY
+          cat > /tmp/omt-tls/compose.override.yml <<'YAML'
+          services:
+            caddy:
+              volumes:
+                - /tmp/omt-tls/Caddyfile:/etc/caddy/Caddyfile:ro
+                - caddy_data:/data
+                - caddy_config:/config
+          YAML
+          OMT_DOMAIN=localhost docker compose \
+            -p omt \
+            -f deploy/docker-compose.yml \
+            -f /tmp/omt-tls/compose.override.yml \
+            up -d --build
+          docker compose -p omt ps
+
+      - name: HTTPS through Caddy reaches the API
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if curl -kfsS --max-time 5 https://localhost/health > caddy-health.json 2>/dev/null; then
+              echo "TLS endpoint healthy after ${attempt} attempt(s)"
+              cat caddy-health.json
+              break
+            fi
+            sleep 2
+          done
+          python3 - <<'PY'
+          import json
+          health = json.load(open("caddy-health.json"))
+          assert health["ok"] is True, health
+          assert health["ocr"] == "mangaocr", health
+          print("proxied health OK:", health)
+          PY
+
+      - name: Plain HTTP is redirected to HTTPS
+        run: |
+          set -euo pipefail
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://localhost/health)
+          echo "http://localhost/health -> ${code}"
+          [ "$code" = "308" ] || { echo "::error::expected a redirect to HTTPS"; exit 1; }
+
+      - name: A screenshot survives the proxy (multipart POST through Caddy)
+        run: |
+          set -euo pipefail
+          # `-T` for the same reason as `docker exec -i`: without it the heredoc
+          # is not attached to stdin and the generator silently does nothing.
+          docker compose -p omt exec -T api python - <<'PY'
+          from PIL import Image, ImageDraw
+
+          img = Image.new("RGB", (480, 320), "white")
+          draw = ImageDraw.Draw(img)
+          for row in range(20, 260, 34):
+              for col in range(20, 380, 30):
+                  draw.rectangle([col, row, col + 20, row + 20], fill="black")
+          img.save("/tmp/probe.png")
+          PY
+          docker compose -p omt cp api:/tmp/probe.png /tmp/probe-caddy.png
+          curl -kfsS --max-time 300 -X POST \
+            -F "image=@/tmp/probe-caddy.png;type=image/png" \
+            https://localhost/api/recognize-image -o caddy-recognize.json
+          python3 -c "import json;d=json.load(open('caddy-recognize.json'));assert d['ok'] is True,d;print('proxied OCR ok, items:',d['items'])"
+
+      - name: Compose logs on failure
+        if: failure()
+        run: |
+          OMT_DOMAIN=localhost docker compose -p omt \
+            -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
+            logs --tail 120 || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          OMT_DOMAIN=localhost docker compose -p omt \
+            -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
+            down -v || true
+
   arm64-image:
     name: Build image (linux/arm64, the Always Free target)
     runs-on: ubuntu-latest
