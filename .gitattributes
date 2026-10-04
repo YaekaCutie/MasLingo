@@ -1,0 +1,14 @@
+# Line endings are edited on Windows but deploy/ runs on Linux.
+# Keep everything LF in the repository so a clone on the server behaves the
+# same as the working copy here; CRLF in a shell script or Dockerfile breaks
+# the build in confusing ways.
+* text=auto eol=lf
+
+# Windows-only scripts are the exception.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary-ish assets that must never be normalised.
+*.png binary
+*.jpg binary
+*.ico binary
