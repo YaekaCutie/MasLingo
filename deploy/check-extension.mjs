@@ -114,11 +114,37 @@ for (const file of htmlFiles) {
 
 // --- js files must parse, and importScripts() must resolve -----------------
 
+// The extension ships two kinds of script: classic ones (the MV3 service worker
+// and the content script, which use importScripts) and ES modules (the
+// on-device OCR engine, loaded by extension pages). vm.Script only parses the
+// former, so modules go through vm.SourceTextModule — which parses without
+// executing — and that needs node --experimental-vm-modules.
+const moduleRewriter = null;
+const canParseModules = typeof vm.SourceTextModule === "function";
+let modulesSkipped = 0;
+
+function looksLikeModule(source) {
+  return /^\s*(?:import|export)\s/m.test(source);
+}
+
+function parseCheck(file, source) {
+  const isModule = looksLikeModule(source);
+  if (!isModule) {
+    new vm.Script(source, { filename: file });
+    return;
+  }
+  if (!canParseModules) {
+    modulesSkipped += 1;
+    return;
+  }
+  new vm.SourceTextModule(source, { identifier: file, initializeImportMeta() {} });
+}
+
 const jsFiles = walk(extensionDir).filter((file) => file.endsWith(".js"));
 for (const file of jsFiles) {
   const source = readFileSync(file, "utf8");
   try {
-    new vm.Script(source, { filename: file });
+    parseCheck(file, source);
   } catch (error) {
     fail(`${relative(file)} does not parse: ${error.message}`);
     continue;
@@ -133,6 +159,13 @@ for (const file of jsFiles) {
       note(`${relative(file)} imports ${relative(resolved)}`);
     }
   }
+}
+
+if (modulesSkipped > 0) {
+  warn(
+    `${modulesSkipped} ES module(s) were not parse-checked — rerun with ` +
+      "`node --experimental-vm-modules` to include them",
+  );
 }
 
 // --- store-policy flags ----------------------------------------------------
