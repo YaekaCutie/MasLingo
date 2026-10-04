@@ -198,6 +198,20 @@ jobs:
           curl -fsS --max-time 10 http://127.0.0.1:8001/health > /dev/null
           echo "health reachable while throttled"
 
+      # The package being internally consistent is not the same as Chrome
+      # accepting it: this loads the real extension into a real browser, which
+      # is the only way to prove importScripts() works in an MV3 service worker
+      # and that the popup can actually talk to the running API.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Puppeteer
+        run: npm install --no-save --no-package-lock puppeteer
+
+      - name: Load the extension into Chrome and drive it
+        run: xvfb-run -a node deploy/check-extension-browser.mjs --backend http://127.0.0.1:8001
+
       - name: Container logs on failure
         if: failure()
         run: docker logs omt | tail -n 120

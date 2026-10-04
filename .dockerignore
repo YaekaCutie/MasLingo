@@ -15,6 +15,10 @@ __pycache__/
 *.pyc
 .hf/
 
+# Node leftovers from the browser-side extension checks
+node_modules/
+package-lock.json
+
 # Never bake signing keys or built packages into an image
 *.pem
 *.crx
