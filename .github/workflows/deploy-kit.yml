@@ -81,8 +81,11 @@ jobs:
           grep -q "模型已预加载" startup.log \
             || { echo "::error::model preload log line missing"; exit 1; }
           # A cold interpreter is ~15 MB; the resident model is ~800 MB.
-          rss_kb=$(docker exec omt python -c "import resource;print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
-          echo "python max RSS: ${rss_kb} kB"
+          # Read PID 1 (the uvicorn process) — `docker exec python` would spawn
+          # a fresh interpreter and measure that instead.
+          rss_kb=$(docker exec omt python -c \
+            "import re; print(re.search(r'VmRSS:\s+(\d+)', open('/proc/1/status').read()).group(1))")
+          echo "pid 1 VmRSS: ${rss_kb} kB"
           [ "$rss_kb" -gt 200000 ] \
             || { echo "::error::model does not look resident (${rss_kb} kB)"; exit 1; }
 
