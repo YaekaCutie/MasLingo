@@ -107,3 +107,27 @@ export async function recognizeImageData(imageData) {
   };
   return { text: response.text, ids: response.ids || [], milliseconds: response.milliseconds };
 }
+
+/**
+ * Whole-page recognition on-device: detect text regions, then OCR each.
+ *
+ * @param {{data: Uint8ClampedArray, width: number, height: number}} imageData
+ * @returns {Promise<{items: Array<{text: string, bbox: object}>, regionCount: number, detectMs: number, milliseconds: number}>}
+ */
+export async function recognizePageImageData(imageData) {
+  await warmUp();
+  const encoded = encodeImageData(imageData);
+  const response = await send("OCR_RECOGNIZE_PAGE", { imageData: encoded });
+  if (!response.ok) {
+    state = { ...state, state: "failed", error: response.error };
+    throw new Error(response.error || "端上整页识别失败");
+  }
+  state = {
+    ...state,
+    state: "ready",
+    lastMs: response.milliseconds ?? null,
+    loadMs: response.loadMs ?? state.loadMs,
+    recognitions: state.recognitions + (response.items?.length || 0),
+  };
+  return response;
+}

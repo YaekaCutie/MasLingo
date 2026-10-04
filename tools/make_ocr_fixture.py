@@ -28,6 +28,15 @@ FONT_CANDIDATES = [
 
 HORIZONTAL = "日本語のテストです"
 VERTICAL = "よこはま"
+# Several well-separated lines, so the region detector has something to find.
+PAGE_LINES = [
+    "日本語のテストです",
+    "こんにちは世界",
+    "漫画の翻訳",
+    "テストページ",
+    "おはようございます",
+    "ありがとう",
+]
 
 
 def find_font() -> str:
@@ -35,6 +44,47 @@ def find_font() -> str:
         if Path(path).is_file():
             return path
     raise SystemExit("no Japanese font found; install fonts-noto-cjk or edit FONT_CANDIDATES")
+
+
+def render_page(path: Path, size: int) -> None:
+    """A manga-like page: phrases inside closed white balloons.
+
+    Deliberately balloon-shaped rather than bare lines. The detector treats a
+    closed light balloon as one region and crops the whole thing, which is far
+    more robust than grouping bare glyphs — a page of loose lines gets split
+    into fragments that are too short for the backend's readable-text filter.
+    """
+    font = ImageFont.truetype(find_font(), int(size * 0.75))
+    width, height = size * 10, size * 16
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+
+    balloons = [
+        (40, 60, 300, 260, "こんにちは"),
+        (360, 120, 600, 320, "漫画の翻訳"),
+        (80, 420, 340, 620, "ありがとう"),
+    ]
+    for left, top, right, bottom, text in balloons:
+        draw.ellipse([left, top, right, bottom], fill="white", outline="black", width=3)
+        box = draw.textbbox((0, 0), text, font=font)
+        draw.text(
+            (
+                left + (right - left - (box[2] - box[0])) / 2,
+                top + (bottom - top - (box[3] - box[1])) / 2 - box[1],
+            ),
+            text,
+            fill="black",
+            font=font,
+        )
+
+    # A dark panel with hatching: the kind of artwork that used to be mistaken
+    # for text, kept here so the fixture exercises that rejection too.
+    draw.rectangle([360, 420, 600, 640], fill="#1a1a1a")
+    for x in range(370, 596, 7):
+        draw.line([x, 425, x + 5, 636], fill="#6a6a6a")
+
+    image.save(path)
+    print(f"{path}: {image.width}x{image.height}  {len(balloons)} balloons + 1 dark panel")
 
 
 def render(path: Path, text: str, size: int, vertical: bool) -> None:
@@ -65,6 +115,7 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     render(out / "jp-horizontal.png", HORIZONTAL, args.size, vertical=False)
     render(out / "jp-vertical.png", VERTICAL, args.size, vertical=True)
+    render_page(out / "jp-page.png", args.size)
     return 0
 
 

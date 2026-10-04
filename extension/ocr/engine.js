@@ -108,8 +108,19 @@ function resizeBilinear(gray, width, height, size) {
   if (width === size && height === size) {
     return Float32Array.from(gray);
   }
-  const horizontal = resampleAxis(gray, height, width, true, size); // height x size
-  return resampleAxis(horizontal, height, size, false, size); // size x size
+  return resampleGray(gray, width, height, size, size);
+}
+
+/**
+ * Resample a single-channel image to an arbitrary size (exported so the region
+ * detector can share the same code path instead of carrying its own resize).
+ */
+export function resampleGray(gray, width, height, targetWidth, targetHeight) {
+  if (width === targetWidth && height === targetHeight) {
+    return Float32Array.from(gray);
+  }
+  const horizontal = resampleAxis(gray, height, width, true, targetWidth); // height x targetWidth
+  return resampleAxis(horizontal, height, targetWidth, false, targetHeight); // targetHeight x targetWidth
 }
 
 /**

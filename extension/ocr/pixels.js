@@ -31,3 +31,24 @@ export function decodeImageData({ width, height, base64 }) {
   }
   return { data, width, height };
 }
+
+/** Copy a half-open [left, top, right, bottom) box out of an RGBA image. */
+export function cropImageData(image, left, top, right, bottom) {
+  const boxWidth = Math.max(1, Math.min(image.width, right) - Math.max(0, left));
+  const boxHeight = Math.max(1, Math.min(image.height, bottom) - Math.max(0, top));
+  const fromX = Math.max(0, left);
+  const fromY = Math.max(0, top);
+  const data = new Uint8ClampedArray(boxWidth * boxHeight * 4);
+
+  for (let y = 0; y < boxHeight; y += 1) {
+    const sourceStart = ((fromY + y) * image.width + fromX) * 4;
+    data.set(image.data.subarray(sourceStart, sourceStart + boxWidth * 4), y * boxWidth * 4);
+  }
+  return { data, width: boxWidth, height: boxHeight };
+}
+
+/** Same rule as the backend's _has_readable_text: at least 4 letters/digits. */
+export function hasReadableText(text) {
+  const matches = String(text).match(/[\p{L}\p{N}]/gu);
+  return (matches ? matches.length : 0) >= 4;
+}

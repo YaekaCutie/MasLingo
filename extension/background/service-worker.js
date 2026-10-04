@@ -2,7 +2,12 @@
 // imported rather than importScripts()'d. config.js only assigns globals, so
 // the extension pages can keep loading it as a classic script.
 import "../config.js";
-import { getOcrStatus, recognizeImageData, warmUp } from "../ocr/client.js";
+import {
+  getOcrStatus,
+  recognizeImageData,
+  recognizePageImageData,
+  warmUp,
+} from "../ocr/client.js";
 
 // Diagnostic entry point: the worker is an ES module, so imported bindings are
 // not reachable from the outside. This exposes them for the browser test in
@@ -211,20 +216,54 @@ async function recognizePage(msg,tabId,port){
     };
     const cropWidth=Math.max(1,crop.right-crop.left);
     const cropHeight=Math.max(1,crop.bottom-crop.top);
+    // Sent as soon as the screenshot is taken: the content script uses it to
+    // show the busy indicator, which must appear after the capture (so it is
+    // not itself photographed) but before the slow part, so the user gets
+    // feedback while detection and OCR run.
+    postPortMessage(port,{type:"CAPTURE_READY",requestId:msg.requestId});
     const upscale=Math.max(1,Math.min(3,1600/Math.max(cropWidth,cropHeight)));
     const outputWidth=Math.max(1,Math.round(cropWidth*upscale));
     const outputHeight=Math.max(1,Math.round(cropHeight*upscale));
     const canvas=new OffscreenCanvas(outputWidth,outputHeight);
-    canvas.getContext("2d").drawImage(
+    const context=canvas.getContext("2d",{willReadFrequently:true});
+    context.drawImage(
       bmp,crop.left,crop.top,cropWidth,cropHeight,0,0,outputWidth,outputHeight
     );
-    const image=await canvas.convertToBlob({type:"image/png"});
-    const fd=new FormData();
-    fd.append("image",image,"manga-image.png");
-    const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
-    const result=await resp.json();
-    if(!resp.ok)throw new Error(result.detail||"后端错误");
-    result.items=(result.items||[]).map(item=>({
+
+    // Region detection and OCR both run on-device by default, so auto-detect
+    // no longer needs a backend either.
+    let rawItems;
+    let source="on-device";
+    const mode=await readOcrMode();
+    if(mode!=="backend"){
+      try{
+        const onDevice=await recognizePageImageData(
+          context.getImageData(0,0,outputWidth,outputHeight)
+        );
+        rawItems=(onDevice.items||[]).map(item=>({
+          text:item.text,
+          bbox:{
+            left:item.bbox.left,top:item.bbox.top,
+            right:item.bbox.right,bottom:item.bbox.bottom
+          }
+        }));
+      }catch(error){
+        console.warn("端上整页识别不可用，改用后端：",error.message);
+        source=null;
+      }
+    }
+    if(!source){
+      const image=await canvas.convertToBlob({type:"image/png"});
+      const fd=new FormData();
+      fd.append("image",image,"manga-image.png");
+      const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
+      const result=await resp.json();
+      if(!resp.ok)throw new Error(result.detail||"后端错误");
+      rawItems=result.items||[];
+      source="backend";
+    }
+    const result={ok:true,source};
+    result.items=rawItems.map(item=>({
       ...item,
       rect:{
         left:(item.bbox.left/upscale+crop.left)*viewport.width/bmp.width,

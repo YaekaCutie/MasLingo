@@ -357,6 +357,13 @@ jobs:
           xvfb-run -a node deploy/check-region-flow.mjs \
             --fixture tools/fixtures/jp-horizontal.png --expect "日本語のテストです"
 
+      # Whole-page auto-detect: region detection (the JS port of
+      # backend/ocr/bubble_detector.py) plus per-region OCR, all on-device.
+      - name: Auto-detect a whole page and read every region
+        run: |
+          xvfb-run -a node deploy/check-page-flow.mjs \
+            --fixture tools/fixtures/jp-page.png
+
   arm64-image:
     name: Build and run image (linux/arm64, the Always Free target)
     runs-on: ubuntu-latest

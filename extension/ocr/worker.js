@@ -16,6 +16,8 @@
 
 import * as ort from "../vendor/ort/ort.wasm.min.mjs";
 import { createOcrEngine, recognize } from "./engine.js";
+import { cropImageData, hasReadableText } from "./pixels.js";
+import { MAX_TEXT_REGIONS, detectTextRegions } from "./regions.js";
 
 const MODEL_BASE = new URL("../models/", import.meta.url);
 const ORT_BASE = new URL("../vendor/ort/", import.meta.url);
@@ -74,6 +76,35 @@ self.addEventListener("message", async (event) => {
       const { engine, loadMs } = await warmUp();
       const result = await recognize(engine, request.imageData);
       reply({ ok: true, text: result.text, ids: result.ids, milliseconds: result.milliseconds, loadMs });
+      return;
+    }
+    if (request.type === "RECOGNIZE_PAGE") {
+      // Whole-page mode: detect text regions, then OCR each one. The detector
+      // is the JavaScript port of backend/ocr/bubble_detector.py, verified to
+      // return identical boxes (tools/regions_parity_test.mjs).
+      const detected = Date.now();
+      const regions = detectTextRegions(request.imageData, MAX_TEXT_REGIONS);
+      const detectMs = Date.now() - detected;
+
+      const { engine, loadMs } = await warmUp();
+      const items = [];
+      const recognitions = [];
+      for (const region of regions) {
+        const crop = cropImageData(request.imageData, region.left, region.top, region.right, region.bottom);
+        const result = await recognize(engine, crop);
+        const text = (result.text || "").trim();
+        recognitions.push(result.milliseconds);
+        if (!hasReadableText(text)) continue; // drop visual noise, as the backend does
+        items.push({ text, bbox: region });
+      }
+      reply({
+        ok: true,
+        items,
+        regionCount: regions.length,
+        detectMs,
+        loadMs,
+        milliseconds: recognitions.reduce((total, value) => total + value, 0),
+      });
       return;
     }
     reply({ ok: false, error: `unknown request: ${request.type}` });

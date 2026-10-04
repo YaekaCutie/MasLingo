@@ -50,6 +50,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     askWorker("RECOGNIZE", { imageData }).then(sendResponse);
     return true;
   }
+  if (message.type === "OCR_RECOGNIZE_PAGE") {
+    const imageData = decodeImageData(message.imageData);
+    askWorker("RECOGNIZE_PAGE", { imageData }).then(sendResponse);
+    return true;
+  }
   return undefined;
 });
 
