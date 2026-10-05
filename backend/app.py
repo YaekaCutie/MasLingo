@@ -30,7 +30,12 @@ from starlette.concurrency import run_in_threadpool
 
 from .image.decode import decode_image
 from .ocr.bubble_detector import MAX_TEXT_REGIONS, detect_text_regions
-from .ocr.manga_ocr_engine import get_engine, recognize, recognize_detailed
+from .ocr.manga_ocr_engine import (
+    get_engine,
+    is_confident_reading,
+    recognize,
+    recognize_detailed,
+)
 from .translation.local_translator import translate_texts
 from .translation.openai_compatible import translate_texts as translate_openai_compatible
 
@@ -248,6 +253,50 @@ async def recognize_image(
         raise HTTPException(500, "本地 OCR 服务处理失败，请查看后端日志。") from e
 
 
+def _overlap_over_min(first: dict, second: dict) -> float:
+    """Intersection as a fraction of the smaller box."""
+    left = max(first["left"], second["left"])
+    top = max(first["top"], second["top"])
+    right = min(first["right"], second["right"])
+    bottom = min(first["bottom"], second["bottom"])
+    intersection = max(0, right - left) * max(0, bottom - top)
+    smaller = min(
+        (first["right"] - first["left"]) * (first["bottom"] - first["top"]),
+        (second["right"] - second["left"]) * (second["bottom"] - second["top"]),
+    )
+    return intersection / smaller if smaller else 0.0
+
+
+# Above this overlap, two regions are the same piece of text found twice.
+SAME_TEXT_OVERLAP = 0.3
+
+
+def _drop_duplicate_regions(items: list[dict]) -> list[dict]:
+    """Keep one reading per piece of text — the one the model was surest of.
+
+    Tightening the detector's own overlap threshold was measured and rejected: it
+    cost a whole real balloon, because the detector has no way to tell which of
+    two overlapping proposals is the better reading. After recognition we do:
+    on a real page the same balloon came back twice, once as the correct line at
+    0.92 confidence and once as a wrong reading at 0.34. Discarding the weaker
+    reading fixes that without touching the threshold that protects real text.
+    """
+    kept: list[dict] = []
+    for item in sorted(items, key=lambda entry: entry["confidence"], reverse=True):
+        if any(
+            _overlap_over_min(item["bbox"], other["bbox"]) > SAME_TEXT_OVERLAP
+            for other in kept
+        ):
+            logger.info(
+                "丢弃重复区域（置信度 %.3f，已被 %.3f 覆盖）：%r",
+                item["confidence"], max(o["confidence"] for o in kept), item["text"],
+            )
+            continue
+        kept.append(item)
+    kept.sort(key=lambda entry: (entry["bbox"]["top"], -entry["bbox"]["left"]))
+    return kept
+
+
 def _recognize_page_sync(img) -> list[dict]:
     """Detect text groups in a full screenshot and OCR each group."""
     regions = detect_text_regions(img, limit=MAX_TEXT_REGIONS)
@@ -258,15 +307,25 @@ def _recognize_page_sync(img) -> list[dict]:
         region = img.crop((left, top, right, bottom))
         detailed = recognize_detailed(region)
         text = "\n".join(detailed["texts"]).strip()
-        if _has_readable_text(text):
-            items.append({
-                "text": text,
-                "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
-                # Reported per region so the extension typesets each one the way
-                # it was actually read.
-                "direction": detailed["direction"],
-            })
-    return items
+        if not _has_readable_text(text):
+            continue
+        # The detector guessed at this region, so a low-confidence short reading
+        # is far more likely to be artwork than text.
+        if not is_confident_reading(text, detailed["confidence"]):
+            logger.info(
+                "丢弃低置信区域 %s（置信度 %.3f）：%r",
+                f"{left},{top},{right},{bottom}", detailed["confidence"], text,
+            )
+            continue
+        items.append({
+            "text": text,
+            "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
+            # Reported per region so the extension typesets each one the way
+            # it was actually read.
+            "direction": detailed["direction"],
+            "confidence": round(detailed["confidence"], 3),
+        })
+    return _drop_duplicate_regions(items)
 
 
 @app.post("/api/recognize-page")

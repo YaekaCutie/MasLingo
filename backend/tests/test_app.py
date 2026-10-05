@@ -12,14 +12,15 @@ from backend.ocr.manga_ocr_engine import (
     _detect_text_direction,
     _vertical_column_bounds,
     get_engine,
+    is_confident_reading,
     recognize,
     recognize_detailed,
 )
 
 
-def detailed(*texts, direction="horizontal"):
+def detailed(*texts, direction="horizontal", confidence=0.9):
     """The shape recognize_detailed returns, so the mocks stay readable."""
-    return {"texts": list(texts), "direction": direction}
+    return {"texts": list(texts), "direction": direction, "confidence": confidence}
 
 
 class AppTests(unittest.TestCase):
@@ -283,6 +284,7 @@ class AppTests(unittest.TestCase):
                 "text": "こんにちは",
                 "bbox": {"left": 10, "top": 12, "right": 60, "bottom": 55},
                 "direction": "horizontal",
+                "confidence": 0.9,
             }],
         )
         detect_mock.assert_called_once()
@@ -353,9 +355,54 @@ class AppTests(unittest.TestCase):
         )
         self.assertEqual(recognize_mock.call_count, 3)
 
+    @patch("backend.app.detect_text_regions", return_value=[(10, 10, 60, 30), (80, 10, 130, 30)])
+    @patch(
+        "backend.app.recognize_detailed",
+        side_effect=[
+            # Invented from hair: short and unsure. The detector guessed at this
+            # region, so it should go.
+            detailed("そういえば、", confidence=0.33),
+            detailed("アサちゃんはチェンソーマン好き？", confidence=1.0),
+        ],
+    )
+    def test_page_ocr_drops_low_confidence_short_readings(self, _recognize, _detect):
+        image = io.BytesIO()
+        Image.new("RGB", (240, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["text"] for item in response.json()["items"]],
+            ["アサちゃんはチェンソーマン好き？"],
+        )
+
+    @patch("backend.app.recognize_detailed", return_value=detailed("そういえば、", confidence=0.33))
+    def test_single_region_ocr_trusts_the_users_selection(self, _recognize):
+        # When the user drew the box, the reading is theirs to judge — the
+        # confidence filter must not touch this path.
+        image = io.BytesIO()
+        Image.new("RGB", (8, 8), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-image",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual([item["text"] for item in response.json()["items"]], ["そういえば、"])
+
+
     @patch(
         "backend.app.detect_text_regions",
-        side_effect=lambda image, limit: [(0, 0, 20, 20)] * limit,
+        # Distinct, non-overlapping boxes: identical ones would now be merged by
+        # the duplicate pass, which is a different behaviour from the limit this
+        # test is about.
+        side_effect=lambda image, limit: [
+            (index * 20, 0, index * 20 + 18, 18) for index in range(limit)
+        ],
     )
     @patch("backend.app.recognize_detailed", return_value=detailed("こんにちは"))
     def test_recognize_page_ocr_calls_respect_region_limit(self, recognize_mock, _detect_mock):
@@ -370,6 +417,66 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()["items"]), MAX_TEXT_REGIONS)
         self.assertEqual(recognize_mock.call_count, MAX_TEXT_REGIONS)
+
+
+    @patch(
+        "backend.app.detect_text_regions",
+        return_value=[(10, 10, 100, 60), (20, 20, 110, 70)],
+    )
+    @patch(
+        "backend.app.recognize_detailed",
+        side_effect=[
+            # The same balloon read twice: once right, once not.
+            detailed("早く時間過ぎて～！", confidence=0.919),
+            detailed("早く時間だったんじゃ", confidence=0.343),
+        ],
+    )
+    def test_page_ocr_keeps_only_the_surer_reading_of_a_region(self, _recognize, _detect):
+        image = io.BytesIO()
+        Image.new("RGB", (240, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(
+            [item["text"] for item in response.json()["items"]],
+            ["早く時間過ぎて～！"],
+        )
+
+
+class ConfidenceFilterTests(unittest.TestCase):
+    """Thresholds checked against what was actually measured on real pages.
+
+    Values come from tools/probe_confidence.py run over two real manga pages, so
+    this fails if the rule drifts away from the data it was chosen from.
+    """
+
+    KEEP = [
+        ("アサちゃんはチェンソーマン好き？", 1.000),
+        ("そう言ってたった二日でそれを実現させちまうんだから、やっぱりイドラは凄いぜ．．．！！", 0.962),
+        ("そっちの世界の魔法を解析して絆エネルギーの原理を応用すれば", 0.976),
+        ("気まずっあ〜！！帰りたい", 0.910),
+        ("告白したの私じゃないのに～！", 0.897),
+        ("早く時間過ぎて～！", 0.857),
+        ("まあまあ．．．っていうか普通．．：", 0.514),
+        ("くっ、", 0.667),
+        # Real, but read from inside a decorative box surrounded by hatching —
+        # the model is unsure and still right, so length has to save it.
+        ("そんなことで、ミラＣＯＯＬ・ペコＴＵＲＮ！", 0.381),
+    ]
+
+    def test_keeps_every_genuine_reading_measured(self):
+        for text, confidence in self.KEEP:
+            with self.subTest(text=text):
+                self.assertTrue(is_confident_reading(text, confidence))
+
+    def test_drops_readings_invented_from_artwork(self):
+        # Both were hair texture; the model answered with fluent Japanese.
+        for confidence in (0.329, 0.341):
+            with self.subTest(confidence=confidence):
+                self.assertFalse(is_confident_reading("そういえば、", confidence))
 
 
 if __name__ == "__main__":

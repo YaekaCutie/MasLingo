@@ -82,6 +82,17 @@ MAX_TEXT_REGIONS = 24
 MAX_REGION_AREA_RATIO = 0.05
 MAX_DARK_TEXT_CONTEXT_AREA_RATIO = 0.08
 
+# Overlap, as a fraction of the smaller box, above which two proposals count as
+# the same piece of text. A balloon proposal and the glyphs inside it overlap
+# heavily, so they merge at a lower bar than two ordinary proposals.
+#
+# Lowering these was measured and rejected: sweeping the text-vs-text bar from
+# 0.65 down to 0.35 with tools/tune_duplicates.py cost a whole real balloon
+# (4/5 -> 3/5 of the page's genuine text blocks) while removing nothing, because
+# no pair of surviving regions overlapped at all. Keep them where they are.
+BUBBLE_DUPLICATE_OVERLAP = 0.45
+TEXT_DUPLICATE_OVERLAP = 0.65
+
 
 def _share_text_line(
     first: tuple[int, int, int, int, int],
@@ -339,7 +350,10 @@ def detect_text_regions(
             existing_area = (
                 (existing[2] - existing[0]) * (existing[3] - existing[1])
             )
-            threshold = 0.45 if is_bubble or existing_is_bubble else 0.65
+            threshold = (
+                BUBBLE_DUPLICATE_OVERLAP if is_bubble or existing_is_bubble
+                else TEXT_DUPLICATE_OVERLAP
+            )
             if overlap / min(area, existing_area) > threshold:
                 duplicate = True
                 break

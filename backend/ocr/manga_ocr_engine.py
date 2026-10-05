@@ -1,14 +1,27 @@
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+import torch
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, ImageEnhance, ImageOps
 from manga_ocr import MangaOcr
 
 MODEL_ID = "kha-white/manga-ocr-base"
+
+# Below this, the reading is treated as the model answering noise rather than
+# text — but only when the reading is also short. See is_confident_reading.
+MIN_CONFIDENCE = 0.45
+# Measured on two real pages: invented readings came back short (5 and 7
+# characters), while every genuine low-confidence reading was longer (10 for a
+# line the model prefixed with stray characters, 18 for one inside a decorative
+# box full of hatching). Eight sits in the gap. The margins are thin on purpose
+# and drawn from a small sample — tools/probe_confidence.py prints the numbers
+# to re-check before moving it.
+MIN_CONFIDENCE_TEXT_LENGTH = 8
 
 
 @lru_cache(maxsize=1)
@@ -225,6 +238,51 @@ def _vertical_column_bounds(image, direction=None):
     ]
 
 
+def _confidence(engine, image, text):
+    """How likely the model thinks `text` is, given the image.
+
+    MangaOcr.__call__ throws this away. It is the one signal that separates real
+    lettering from artwork the detector mistook for text: asked about hair
+    texture, the model still produces fluent Japanese ("そういえば、"), but with
+    a much lower per-token probability than for text it can actually read.
+
+    Computed by teacher-forcing the text that was already produced, so the
+    recognition path itself is untouched — the reading cannot change because of
+    this. Returns exp(-mean cross entropy), i.e. 1.0 for certainty.
+    """
+    if not text:
+        return 0.0
+    prepared = image.convert("L").convert("RGB")
+    pixel_values = engine.processor(prepared, return_tensors="pt").pixel_values
+    pixel_values = pixel_values.to(engine.model.device)
+    labels = engine.tokenizer(text, return_tensors="pt").input_ids
+    labels = labels.to(engine.model.device)
+    with torch.no_grad():
+        loss = engine.model(pixel_values=pixel_values, labels=labels).loss
+    return math.exp(-float(loss))
+
+
+def is_confident_reading(text, confidence):
+    """Whether a reading is worth keeping.
+
+    Only for regions the *detector* guessed at. When the user drew the box
+    themselves the reading is theirs to judge, and is never dropped here.
+
+    Confidence alone does not separate the two cases cleanly: on a real page the
+    invented readings ("そういえば、", from hair) scored 0.33 and 0.34, while a
+    genuine line inside a decorative box scored 0.38 — the model had to guess at
+    the hatching around it. Length breaks the tie, because a short low-confidence
+    answer is the signature of replying to texture, whereas a long one means the
+    model did read something and merely struggled in places.
+
+    Measured with tools/probe_confidence.py on two real pages: this keeps every
+    genuine line (5/5 and 4/4) and drops both invented ones.
+    """
+    if confidence >= MIN_CONFIDENCE:
+        return True
+    return sum(character.isalnum() for character in text) > MIN_CONFIDENCE_TEXT_LENGTH
+
+
 def recognize_detailed(image):
     """Recognise text and report the writing direction that was used.
 
@@ -236,21 +294,28 @@ def recognize_detailed(image):
 
     Returns {"texts": [...], "direction": "horizontal" | "vertical" | None}.
     """
+    engine = get_engine()
+    prepared = _prepare_image(image)
     direction = _detect_text_direction(image)
     columns = _vertical_column_bounds(image, direction)
     if columns:
         text = "".join(
             "".join(
                 _normalize_texts(
-                    get_engine()(_prepare_image(image.crop((left, 0, right, image.height))))
+                    engine(_prepare_image(image.crop((left, 0, right, image.height))))
                 )
             )
             for left, right in columns
         )
-        return {"texts": [text] if text else [], "direction": "vertical"}
+        texts = [text] if text else []
+    else:
+        texts = _normalize_texts(engine(prepared))
 
-    raw = get_engine()(_prepare_image(image))
-    return {"texts": _normalize_texts(raw), "direction": direction}
+    return {
+        "texts": texts,
+        "direction": direction,
+        "confidence": _confidence(engine, prepared, "".join(texts)),
+    }
 
 
 def recognize(image):
