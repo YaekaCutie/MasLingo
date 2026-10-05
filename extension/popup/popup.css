@@ -1,108 +1,131 @@
+/* Popup: auto translate is the product, so it owns the accent colour and the
+ * top of the panel. Manual translation stays available but visually quieter.
+ *
+ * Accent: a low-saturation verdigris (#2f7d72). Not the default extension blue,
+ * and deliberately not the violet gradient that reads as an AI landing page. */
 :root {
   --bg: #ffffff;
-  --panel: #f6f7f9;
-  --line: #e3e5ea;
-  --text: #1d1f24;
-  --muted: #6b7280;
-  --accent: #1f6feb;
-  --accent-strong: #17539c;
-  --ok: #1a7f3c;
-  --warn: #b06000;
-  --err: #b3261e;
+  --panel: #f7f8f7;
+  --line: #e4e6e4;
+  --text: #17191c;
+  --muted: #6d7370;
+  --accent: #2f7d72;
+  --accent-strong: #26655c;
+  --accent-soft: rgba(47, 125, 114, .12);
+  --warn: #9a6b1f;
+  --err: #a33328;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1b1e23;
-    --panel: #24272d;
-    --line: #33373e;
-    --text: #e8eaed;
-    --muted: #9aa1ab;
-    --accent: #4c8dff;
-    --accent-strong: #6ba1ff;
-    --ok: #6ddc93;
-    --warn: #e0a94a;
-    --err: #ff9a92;
+    --bg: #191c1b;
+    --panel: #212524;
+    --line: #313635;
+    --text: #e9ecea;
+    --muted: #9aa19e;
+    --accent: #63b8ab;
+    --accent-strong: #7fcabd;
+    --accent-soft: rgba(99, 184, 171, .16);
+    --warn: #d7a75a;
+    --err: #e08b80;
   }
 }
 
 * { box-sizing: border-box; }
 
 body {
-  width: 320px;
+  width: 300px;
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-main { padding: 14px; }
+main { padding: 14px 14px 10px; }
 
-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+h1 { font-size: 13px; margin: 0; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
 
 .icon-btn {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text);
-  font-size: 15px;
+  color: var(--muted);
+  font-size: 13px;
   cursor: pointer;
 }
-.icon-btn:hover { background: var(--panel); }
+.icon-btn:hover { color: var(--text); background: var(--panel); }
 
-.status {
-  background: var(--panel);
+/* --- primary feature ------------------------------------------------------ */
+
+.feature {
   border: 1px solid var(--line);
   border-radius: 10px;
-  padding: 8px 11px;
-  margin-bottom: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
 }
-.status-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
-.status-label { color: var(--muted); }
-.status-value { font-weight: 600; text-align: right; }
-.status-value[data-state="ok"] { color: var(--ok); }
-.status-value[data-state="warn"] { color: var(--warn); }
-.status-value[data-state="err"] { color: var(--err); }
+.feature.muted { background: transparent; border-style: dashed; }
 
-.notice {
-  margin: 0 0 10px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--warn);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.5;
+.feature-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.feature-title { font-size: 14px; font-weight: 600; }
+.feature.muted .feature-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+
+/* Switch: the one control that gets the accent colour. */
+.switch { position: relative; display: inline-flex; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background .18s ease;
+  display: flex;
+  align-items: center;
+  padding: 2px;
 }
-.notice button {
-  width: auto;
-  margin: 6px 0 0;
-  padding: 4px 9px;
-  font-size: 12px;
+.switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  transition: transform .18s cubic-bezier(.3, .7, .4, 1);
 }
-.notice[hidden] { display: none; }
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.state { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); flex: 0 0 auto; }
+.state[data-state="scanning"] .state-dot { background: var(--accent); animation: omt-pulse 1.6s ease-in-out infinite; }
+.state[data-state="working"] .state-dot { background: var(--accent); animation: omt-pulse 1s ease-in-out infinite; }
+.state[data-state="done"] .state-dot { background: var(--accent); }
+.state[data-state="error"] .state-dot { background: var(--err); }
+.state[data-state="scanning"] #autoStateText,
+.state[data-state="working"] #autoStateText,
+.state[data-state="done"] #autoStateText { color: var(--text); }
+@keyframes omt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .state-dot { animation: none !important; } }
+
+.hint { margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--muted); }
 
 button:not(.icon-btn) {
   width: 100%;
-  margin: 0 0 8px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text);
-  font: 600 13px/1.2 inherit;
+  font: 500 13px/1.2 inherit;
   cursor: pointer;
 }
 button:not(.icon-btn):hover { background: var(--panel); }
-button.primary { background: var(--accent); border-color: transparent; color: #fff; }
-button.primary:hover { background: var(--accent-strong); }
+button.ghost { color: var(--muted); }
 
 details { margin-top: 4px; border-top: 1px solid var(--line); padding-top: 8px; }
-summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+summary { cursor: pointer; color: var(--muted); font-size: 11px; }
 summary:hover { color: var(--text); }
 
 pre {
@@ -115,9 +138,9 @@ pre {
   border-radius: 8px;
   padding: 8px 10px;
   margin: 8px 0;
-  max-height: 160px;
+  max-height: 150px;
   overflow: auto;
 }
 
 .detail-actions { display: flex; gap: 8px; }
-.detail-actions button { margin: 0; font-weight: 500; }
+.detail-actions button { margin: 0; font-weight: 500; font-size: 12px; }

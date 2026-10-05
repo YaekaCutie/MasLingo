@@ -26,6 +26,31 @@ const keyLabel = document.getElementById("keyLabel");
 const appIdLabel = document.getElementById("appIdLabel");
 const testResult = document.getElementById("testResult");
 
+// --- new controls -----------------------------------------------------------
+
+const autoTranslate = document.getElementById("autoTranslate");
+const autoConcurrency = document.getElementById("autoConcurrency");
+const fontScale = document.getElementById("fontScale");
+const overlayOpacity = document.getElementById("overlayOpacity");
+const fontScaleValue = document.getElementById("fontScaleValue");
+const overlayOpacityValue = document.getElementById("overlayOpacityValue");
+
+function syncSliderLabels() {
+  fontScaleValue.textContent = `${fontScale.value}%`;
+  overlayOpacityValue.textContent = `${overlayOpacity.value}%`;
+}
+
+fontScale.addEventListener("input", syncSliderLabels);
+overlayOpacity.addEventListener("input", syncSliderLabels);
+
+// The key is typed blind by design; this only helps check a paste went in
+// whole, and never reveals a key that was already saved.
+document.getElementById("revealKey").onclick = (event) => {
+  const revealing = translationApiKey.type === "password";
+  translationApiKey.type = revealing ? "text" : "password";
+  event.currentTarget.textContent = revealing ? "隐藏" : "显示";
+};
+
 let savedApiKeyExists = false;
 let savedAppIdExists = false;
 
@@ -149,7 +174,11 @@ document.getElementById("save").onclick = async () => {
     translationEndpoint: endpoint,
     translationModel: translationModel.value.trim(),
     translationAppId: translationAppId.value.trim(),
-    targetLanguage: targetLanguage.value.trim()
+    targetLanguage: targetLanguage.value.trim(),
+    autoTranslate: autoTranslate.checked,
+    autoConcurrency: Number(autoConcurrency.value) || 1,
+    fontScale: Number(fontScale.value) / 100,
+    overlayOpacity: Number(overlayOpacity.value) / 100
   };
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
@@ -190,7 +219,7 @@ document.getElementById("test").onclick = async () => {
 function describeBackend() {
   const value = backendUrl.value.trim();
   backendHint.textContent = value
-    ? `识别时会把页面截图发送到 ${value}；它只用于 OCR，不做其它用途。`
+    ? `漫画画面会发送到 ${value}，只用于 OCR。自动翻译发送图片本身，框选翻译发送截图。`
     : "留空则在识别时尝试本机 http://127.0.0.1:8001。自建后端请参考仓库里的 deploy/。";
 }
 
@@ -199,9 +228,18 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
     "translationApiKey", "targetLanguage",
+    "autoTranslate", "autoConcurrency", "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
   backendUrl.value = cfg.backendUrl || "";
+
+  autoTranslate.checked = Boolean(cfg.autoTranslate);
+  autoConcurrency.value = String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1)));
+  fontScale.value = String(Math.round((cfg.fontScale ?? 1) * 100));
+  overlayOpacity.value = String(Math.round((cfg.overlayOpacity ?? 1) * 100));
+  syncSliderLabels();
+
+  document.getElementById("version").textContent = chrome.runtime.getManifest().version;
 
   // Migrate the old two-value setting onto a provider id.
   let providerId = cfg.translationProvider;

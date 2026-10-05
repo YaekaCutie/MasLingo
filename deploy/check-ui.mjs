@@ -167,17 +167,31 @@ try {
   popup.on("pageerror", (error) => popupErrors.push(String(error)));
   await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
 
+  // The popup was reorganised around auto translate: the headline is the switch
+  // and its state line, and the old OCR / translation status readouts are gone
+  // (they now live in the collapsed diagnostics block).
   const popupState = await popup.waitForFunction(
-    () => document.getElementById("translateStatus")?.textContent !== "检测中…",
+    () => document.getElementById("autoStateText")?.textContent?.length > 0,
     { timeout: 15000 },
   ).then(() => popup.evaluate(() => ({
-    ocr: document.getElementById("ocrStatus").textContent.trim(),
-    translate: document.getElementById("translateStatus").textContent.trim(),
+    title: document.querySelector("h1")?.textContent.trim(),
+    auto: document.getElementById("autoTranslate")?.checked,
+    state: document.getElementById("autoStateText").textContent.trim(),
+    stateKind: document.getElementById("autoState").dataset.state,
+    hasManual: Boolean(document.getElementById("select")),
+    hasSettings: Boolean(document.getElementById("settings")),
+    accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
   }))).catch(() => null);
 
-  console.log(`      OCR: ${popupState?.ocr}   翻译: ${popupState?.translate}`);
-  check("弹窗显示 OCR 状态", Boolean(popupState?.ocr));
-  check("弹窗显示翻译来源", popupState?.translate?.includes("自定义"), popupState?.translate);
+  console.log(`      标题: ${popupState?.title}   自动翻译状态: ${popupState?.state} (${popupState?.stateKind})`);
+  check("弹窗标题正确", popupState?.title === "OpenMangaTranslator", popupState?.title);
+  check("自动翻译开关存在且默认关闭", popupState?.auto === false);
+  check("自动翻译有状态行", Boolean(popupState?.state), popupState?.state);
+  check("手动框选入口保留", popupState?.hasManual === true);
+  check("设置入口存在", popupState?.hasSettings === true);
+  // The whole point of the colour change: not the default extension blue.
+  check("重点色不是默认蓝", popupState?.accent && !/^#(0|1|2|3|4)[0-9a-f]{2}(ff|f{3})?$/i.test(popupState.accent),
+    popupState?.accent);
   check("弹窗没有脚本错误", popupErrors.length === 0, popupErrors.join(" | "));
 
   // --- optional: the real keyless endpoint ---------------------------------

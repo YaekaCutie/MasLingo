@@ -45,6 +45,8 @@
         "<all_urls>"
       ],
       "js": [
+        "content/overlay.js",
+        "content/auto.js",
         "content/content.js"
       ],
       "css": [

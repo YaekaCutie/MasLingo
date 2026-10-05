@@ -1,31 +1,35 @@
+/* Settings page.
+ *
+ * Grouped by thin rules and whitespace rather than a stack of cards, which is
+ * what makes a settings screen read as a tool instead of a landing page. There
+ * is no gradient anywhere and the accent appears on exactly two things: the
+ * primary action and the master switch.
+ */
 :root {
-  --bg: #f4f5f7;
-  --panel: #ffffff;
-  --line: #e2e4e9;
-  --text: #1d1f24;
-  --muted: #6b7280;
-  --accent: #1f6feb;
-  --accent-strong: #17539c;
-  --ok-bg: #eaf7ee;
-  --ok-text: #1a7f3c;
-  --err-bg: #fdecec;
-  --err-text: #b3261e;
-  --radius: 12px;
+  --bg: #fbfbfa;
+  --text: #17191c;
+  --muted: #6d7370;
+  --line: #e2e4e2;
+  --line-strong: #cfd3d0;
+  --field: #ffffff;
+  --accent: #2f7d72;
+  --accent-strong: #26655c;
+  --err: #a33328;
+  --ok: #2f7d72;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181d;
-    --panel: #1e2126;
-    --line: #2e3238;
-    --text: #e8eaed;
-    --muted: #9aa1ab;
-    --accent: #4c8dff;
-    --accent-strong: #6ba1ff;
-    --ok-bg: #17301f;
-    --ok-text: #6ddc93;
-    --err-bg: #3a1d1d;
-    --err-text: #ff9a92;
+    --bg: #161918;
+    --text: #e9ecea;
+    --muted: #9aa19e;
+    --line: #2c302f;
+    --line-strong: #3c4140;
+    --field: #1d2120;
+    --accent: #63b8ab;
+    --accent-strong: #7fcabd;
+    --err: #e08b80;
+    --ok: #63b8ab;
   }
 }
 
@@ -36,81 +40,158 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 14px/1.6 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-main { max-width: 640px; margin: 0 auto; padding: 40px 20px 64px; }
-
-header { margin-bottom: 22px; }
-h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.01em; }
-.sub { color: var(--muted); margin: 0; font-size: 13px; }
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 20px 22px;
-  margin-bottom: 16px;
+main {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 40px 24px 64px;
 }
 
+header { margin-bottom: 32px; }
+h1 { font-size: 19px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.01em; }
+header .sub { margin: 0; color: var(--muted); font-size: 13px; }
+
+section { padding: 22px 0; border-top: 1px solid var(--line); }
+section:first-of-type { border-top: 0; padding-top: 0; }
 h2 {
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 650;
   text-transform: uppercase;
-  letter-spacing: .08em;
+  letter-spacing: .07em;
   color: var(--muted);
-  margin: 0 0 14px;
-  font-weight: 600;
+  margin: 0 0 16px;
 }
 
-label { display: block; font-size: 13px; font-weight: 600; margin: 16px 0 6px; }
-.field:first-of-type label, .panel > label:first-of-type { margin-top: 0; }
+/* --- rows ----------------------------------------------------------------- */
 
-input[type="text"], input[type="url"], input[type="password"], select {
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0;
+}
+.row-text { min-width: 0; }
+.label { font-size: 14px; }
+.row .value { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.hint { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 4px 0 0; }
+/* The key link closes the provider block, so it needs room before the next
+   field rather than sitting flush against it. */
+#providerKeyLink { margin-bottom: 14px; }
+.field { margin-bottom: 16px; }
+.field:last-of-type { margin-bottom: 0; }
+.field > label { display: block; font-size: 13px; margin-bottom: 6px; }
+.field > label output { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* --- controls ------------------------------------------------------------- */
+
+input[type="text"],
+input[type="url"],
+input[type="password"],
+select {
   width: 100%;
-  height: 40px;
-  border: 1px solid var(--line);
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  padding: 0 12px;
-  background: var(--panel);
+  background: var(--field);
   color: var(--text);
-  font-size: 14px;
-  font-family: inherit;
+  font: 13px/1.4 inherit;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+input[type="text"]:focus,
+input[type="url"]:focus,
+input[type="password"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft, rgba(47, 125, 114, .14));
+}
+.row select { width: auto; min-width: 84px; }
+
+input[type="range"] {
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+  background: transparent;
 }
 
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+.checkline { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; cursor: pointer; }
+.checkline input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 
-.hint { font-size: 12px; line-height: 1.55; color: var(--muted); margin-top: 6px; }
-.hint a { color: var(--accent); }
+/* The master switch is the only control that carries the accent when on. */
+.switch { position: relative; display: inline-flex; cursor: pointer; flex: 0 0 auto; }
+.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.switch-track {
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background .18s ease;
+  display: flex;
+  align-items: center;
+  padding: 3px;
+}
+.switch-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
+  transition: transform .18s cubic-bezier(.3, .7, .4, 1);
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.toggle-row { display: flex; align-items: center; gap: 9px; margin: 18px 0 0; cursor: pointer; font-weight: 600; }
-.toggle-row input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
+.input-with-action { display: flex; gap: 8px; }
+.input-with-action input { flex: 1 1 auto; }
+.input-with-action button { flex: 0 0 auto; }
 
-.actions { display: flex; gap: 10px; margin-top: 18px; }
-.actions button {
-  flex: 1;
-  height: 42px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 14px;
-  font-family: inherit;
-  font-weight: 600;
+.row-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+
+button {
+  padding: 9px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--text);
+  font: 500 13px/1.2 inherit;
   cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
 }
-.actions button:hover { background: var(--accent-strong); }
-.actions.secondary { margin-top: 16px; }
-.actions.secondary button { background: transparent; border-color: var(--line); color: var(--text); }
-.actions.secondary button:hover { background: var(--bg); }
+button:hover { border-color: var(--muted); }
+button.subtle { color: var(--muted); }
+button.subtle:hover { color: var(--text); }
 
-.result, #testResult {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: var(--bg);
-  font-size: 13px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  padding: 10px 20px;
 }
-.result[data-kind="ok"], #testResult[data-kind="ok"] { background: var(--ok-bg); color: var(--ok-text); }
-.result[data-kind="error"], #testResult[data-kind="error"] { background: var(--err-bg); color: var(--err-text); }
-#testResult[data-kind="pending"] { color: var(--muted); }
+button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+
+a { color: var(--accent); }
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+}
+
+.result { font-size: 13px; color: var(--muted); }
+.result[data-kind="ok"] { color: var(--ok); }
+.result[data-kind="err"] { color: var(--err); }
+
+.about .row { padding: 4px 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

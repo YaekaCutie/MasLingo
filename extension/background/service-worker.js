@@ -17,8 +17,56 @@ async function fetchBackend(path,options={}){
   throw new Error(`后端连接失败（${lastError?.message||"未配置后端且本机后端未运行"}）`);
 }
 
-// The settings page uses this to check a key before the user relies on it.
+// --- auto-translate channel ------------------------------------------------
+//
+// Auto mode works from the image bytes the content script fetches, not from a
+// screenshot: a screenshot only ever contains the viewport, which is exactly
+// what breaks down on a long scrolling page, and it fails outright while the tab
+// is in the background. Sending the picture itself means detection is
+// independent of scroll position and of which tab is focused.
+async function autoRecognize(imageDataUrl) {
+  const blob = await (await fetch(imageDataUrl)).blob();
+  const form = new FormData();
+  form.append("image", blob, "region.png");
+  const response = await fetchBackend("/api/recognize-page", { method: "POST", body: form });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || "OCR 失败");
+  return payload.items || [];
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "AUTO_OCR") {
+    autoRecognize(message.image).then(
+      (items) => sendResponse({ ok: true, items }),
+      (error) => sendResponse({ ok: false, error: error.message }),
+    );
+    return true;
+  }
+  if (message?.type === "AUTO_TRANSLATE") {
+    (async () => {
+      try {
+        const cfg = await chrome.storage.local.get([
+          "translationMode", "translationProvider", "translationEndpoint",
+          "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+        ]);
+        if (!resolveProvider(cfg)) {
+          sendResponse({ ok: true, mode: "none", items: [] });
+          return;
+        }
+        const translated = await runTranslation(message.texts || [], cfg);
+        sendResponse({
+          ok: true,
+          mode: cfg.translationMode || "none",
+          items: (message.texts || []).map((text, index) => ({
+            text, translated: translated[index],
+          })),
+        });
+      } catch (error) {
+        sendResponse({ ok: false, error: error.message });
+      }
+    })();
+    return true;
+  }
   if (message?.type !== "TEST_TRANSLATION") return undefined;
   (async () => {
     try {

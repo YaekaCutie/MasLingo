@@ -1,19 +1,18 @@
 const status = document.getElementById("status");
-const ocrStatus = document.getElementById("ocrStatus");
-const translateStatus = document.getElementById("translateStatus");
+const autoToggle = document.getElementById("autoTranslate");
+const autoState = document.getElementById("autoState");
+const autoStateText = document.getElementById("autoStateText");
+
+let statusTimer = null;
+let activeTabId = null;
+
+function setStatusText(text, state = "idle") {
+  autoState.dataset.state = state;
+  autoStateText.textContent = text;
+}
 
 function normalize(url) {
   return String(url || "").trim().replace(/\/+$/, "");
-}
-
-function isLocal(base) {
-  return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(normalize(base));
-}
-
-function setStatus(element, text, state = "") {
-  element.textContent = text;
-  if (state) element.dataset.state = state;
-  else delete element.dataset.state;
 }
 
 async function fetchBackend(path, options = {}) {
@@ -22,127 +21,128 @@ async function fetchBackend(path, options = {}) {
   for (const base of backends) {
     try {
       const resp = await fetch(`${base}${path}`, options);
-      if (resp.ok || resp.status >= 400) {
-        return { resp, base };
-      }
+      if (resp.ok || resp.status >= 400) return { resp, base };
       lastError = new Error(`${base} 响应失败: ${resp.status}`);
-    } catch (e) {
-      lastError = e;
+    } catch (error) {
+      lastError = error;
     }
   }
   throw lastError || new Error("未配置后端且本机后端未运行");
 }
 
-/** OCR still runs on the backend, so this is a real dependency. */
-async function refreshOcrStatus() {
+// --- auto translate status --------------------------------------------------
+
+/** Ask the page what auto translate is doing. Failures are normal: the content
+ *  script is absent on chrome:// pages and the Web Store. */
+async function refreshAutoStatus() {
+  if (!activeTabId) {
+    setStatusText("当前页面无法使用", "idle");
+    return;
+  }
   try {
-    const { resp, base } = await fetchBackend("/health");
-    const data = await resp.json();
-    if (resp.ok && data.ok) {
-      const where = base === normalize(globalThis.OMT_BACKEND_URL) ? "托管后端"
-        : isLocal(base) ? "本机后端" : "自建后端";
-      setStatus(ocrStatus, `${where} · 已就绪`, "ok");
+    const stats = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_STATUS" });
+    if (!stats || !stats.enabled) {
+      setStatusText("未开启", "idle");
+      return;
+    }
+    const busy = stats.queued + stats.running;
+    if (busy > 0) {
+      setStatusText(`正在翻译 ${busy} 个区域`, "working");
+    } else if (stats.translated > 0 && stats.failed === 0) {
+      setStatusText(`✓ 当前页面翻译完成（${stats.translated} 处）`, "done");
+    } else if (stats.translated > 0) {
+      setStatusText(`已完成 ${stats.translated} 处，${stats.failed} 处失败`, "error");
     } else {
-      setStatus(ocrStatus, "后端异常", "warn");
+      setStatusText("● 正在检测漫画", "scanning");
     }
-  } catch (error) {
-    setStatus(ocrStatus, "未连接", "warn");
+  } catch {
+    setStatusText("当前页面无法使用", "idle");
   }
 }
 
-async function refreshTranslateStatus() {
-  const cfg = await chrome.storage.local.get(["translationProvider", "translationMode"]);
-  const registry = globalThis.OMT_providers;
-  let providerId = cfg.translationProvider;
-  if (!providerId) {
-    providerId = !cfg.translationMode || cfg.translationMode === "none" ? "none"
-      : cfg.translationMode === "free-translate" ? "google-free" : "openai";
-  }
-  const provider = registry.byId(providerId);
-  if (!provider || provider.id === "none") {
-    setStatus(translateStatus, "已关闭", "");
-    // The default is off (nothing is sent anywhere until the user asks), but a
-    // recognition run then produces no Chinese at all, which reads as "it did
-    // nothing". Say so up front instead of after the fact.
-    document.getElementById("translateHint").hidden = false;
-    return;
-  }
-  setStatus(translateStatus, provider.label, "ok");
-  document.getElementById("translateHint").hidden = true;
+function pollWhileOpen() {
+  refreshAutoStatus();
+  statusTimer = setInterval(refreshAutoStatus, 1000);
 }
 
-async function prepareContentScript(tabId) {
-  try {
-    await chrome.tabs.sendMessage(tabId, {type:"PING"});
-    return;
-  } catch (error) {
-    if (!error.message?.includes("Receiving end does not exist")) {
-      throw error;
-    }
-  }
+window.addEventListener("unload", () => {
+  if (statusTimer) clearInterval(statusTimer);
+});
 
-  await chrome.scripting.insertCSS({
-    target:{tabId},
-    files:["content/styles.css"]
-  });
-  await chrome.scripting.executeScript({
-    target:{tabId},
-    files:["content/content.js"]
-  });
-}
+// --- controls ---------------------------------------------------------------
 
-async function startPageAction(tabId, type) {
-  await prepareContentScript(tabId);
-  await chrome.tabs.sendMessage(tabId, {type});
-}
+autoToggle.addEventListener("change", async () => {
+  await chrome.storage.local.set({ autoTranslate: autoToggle.checked });
+  setStatusText(autoToggle.checked ? "● 正在检测漫画" : "未开启", autoToggle.checked ? "scanning" : "idle");
+  // The content script learns about this through storage.onChanged; give it a
+  // moment before reading the status back.
+  setTimeout(refreshAutoStatus, 600);
+});
 
-function reportStartFailure(action, error) {
-  const restrictedPage = /Cannot access|cannot be scripted|extensions gallery/i.test(error.message);
-  document.getElementById("details").open = true;
-  status.textContent = restrictedPage
-    ? `当前页面受 Chrome 限制，无法${action}。请切换到普通网页后重试。`
-    : `无法${action}：${error.message}`;
-}
-
-document.getElementById("settings").onclick =
-document.getElementById("settings2").onclick =
-document.getElementById("openSettings").onclick = () => chrome.runtime.openOptionsPage();
+document.getElementById("settings").onclick = () => chrome.runtime.openOptionsPage();
 
 document.getElementById("health").onclick = async () => {
   status.textContent = "正在检查…";
   document.getElementById("details").open = true;
   try {
     const { resp, base } = await fetchBackend("/health");
-    const payload = await resp.json();
-    status.textContent = `${base}\n${JSON.stringify(payload, null, 2)}`;
-  } catch (e) {
-    status.textContent = `OCR 后端未运行：${e.message}\n\n` +
+    status.textContent = `${base}\n${JSON.stringify(await resp.json(), null, 2)}`;
+  } catch (error) {
+    status.textContent = `OCR 后端未运行：${error.message}\n\n` +
       "识别需要后端：请在设置里填写后端地址，并在那台机器上启动 backend/（见仓库 deploy/ 目录）。";
   }
-  await refreshOcrStatus();
 };
+
+async function prepareContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    return;
+  } catch (error) {
+    if (!error.message?.includes("Receiving end does not exist")) throw error;
+  }
+  await chrome.scripting.insertCSS({ target: { tabId }, files: ["content/styles.css"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content/overlay.js", "content/auto.js", "content/content.js"],
+  });
+}
+
+function reportStartFailure(action, error) {
+  const restricted = /Cannot access|cannot be scripted|extensions gallery/i.test(error.message);
+  document.getElementById("details").open = true;
+  status.textContent = restricted
+    ? `当前页面受 Chrome 限制，无法${action}。请切换到普通网页后重试。`
+    : `无法${action}：${error.message}`;
+}
 
 document.getElementById("select").onclick = async () => {
-  const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
   try {
-    if (!tab?.id) throw new Error("无法获取当前页面");
-    await startPageAction(tab.id, "START_SELECT");
+    if (!activeTabId) throw new Error("无法获取当前页面");
+    await prepareContentScript(activeTabId);
+    await chrome.tabs.sendMessage(activeTabId, { type: "START_SELECT" });
     window.close();
-  } catch (e) {
-    reportStartFailure("框选", e);
+  } catch (error) {
+    reportStartFailure("框选", error);
   }
 };
 
-document.getElementById("auto").onclick = async () => {
-  const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+document.getElementById("autoPage").onclick = async () => {
   try {
-    if (!tab?.id) throw new Error("无法获取当前页面");
-    await startPageAction(tab.id, "START_AUTO");
+    if (!activeTabId) throw new Error("无法获取当前页面");
+    await prepareContentScript(activeTabId);
+    await chrome.tabs.sendMessage(activeTabId, { type: "START_AUTO" });
     window.close();
-  } catch (e) {
-    reportStartFailure("自动识别", e);
+  } catch (error) {
+    reportStartFailure("整页识别", error);
   }
 };
 
-refreshOcrStatus();
-refreshTranslateStatus();
+// --- boot -------------------------------------------------------------------
+
+(async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  activeTabId = tab?.id ?? null;
+  const cfg = await chrome.storage.local.get(["autoTranslate"]);
+  autoToggle.checked = Boolean(cfg.autoTranslate);
+  pollWhileOpen();
+})();

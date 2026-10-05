@@ -1,3 +1,29 @@
+/* OpenMangaTranslator content styles.
+ *
+ * Accent: a low-saturation verdigris (#2f7d72). Deliberately not the default
+ * blue every extension uses, and not the violet gradient that reads as an AI
+ * landing page — this is a tool, and the accent marks exactly one thing: auto
+ * translate. Everything else stays grey.
+ */
+:root {
+  --omt-accent: #2f7d72;
+  --omt-accent-soft: rgba(47, 125, 114, .18);
+  --omt-ink: #17191c;
+  --omt-paper: #fbfbfa;
+  --omt-line: rgba(23, 25, 28, .12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --omt-accent: #63b8ab;
+    --omt-accent-soft: rgba(99, 184, 171, .22);
+    --omt-ink: #eceef0;
+    --omt-paper: #1a1d1f;
+    --omt-line: rgba(236, 238, 240, .16);
+  }
+}
+
+/* --- manual selection ---------------------------------------------------- */
 .mt-selection{position:fixed;inset:0;z-index:2147483647;overflow:hidden;cursor:crosshair;touch-action:none;user-select:none;-webkit-user-select:none}
 .mt-selection-rect{position:fixed;box-sizing:border-box;border:1px solid #fff;box-shadow:0 0 0 9999px rgba(0,0,0,.48),0 0 0 2px rgba(0,0,0,.7);pointer-events:none}
 .mt-selection-size{position:absolute;top:100%;left:0;margin-top:6px;padding:3px 7px;background:rgba(20,20,22,.9);color:#fff;border-radius:5px;font:12px/1.3 system-ui,"Microsoft YaHei",sans-serif;white-space:nowrap}
@@ -10,8 +36,6 @@
 @keyframes mt-loading-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.mt-loading-spinner{animation-duration:2.4s}}
 
-/* Whole-page mode has no selected region to fill, so it becomes a small pill
-   in the middle instead of covering the artwork. */
 .mt-overlay-page{top:50%;left:50%;width:auto;height:auto;padding:14px 20px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.35);transform:translate(-50%,-50%)}
 .mt-overlay-page .mt-overlay-loading{padding:0}
 
@@ -25,3 +49,34 @@
 /* The translated artwork itself. Only the recognised box is painted; the rest
    stays transparent so the original page shows through untouched. */
 canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!important;display:block!important;max-width:none!important;max-height:none!important;box-sizing:content-box!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;filter:none!important;transform:none!important;object-fit:fill!important;pointer-events:none!important}
+
+/* --- overlay layer ------------------------------------------------------- */
+
+/* Zero-sized and absolutely positioned, so anchoring children in document
+   coordinates costs the page nothing and shifts no layout. */
+#omt-layer{position:absolute!important;top:0!important;left:0!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;background:none!important;pointer-events:none!important;z-index:2147483646!important}
+
+/* The same canvas rules, for canvases anchored inside the layer. */
+#omt-layer canvas.omt-result{position:absolute!important;display:block!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;transform:none!important;pointer-events:none!important}
+
+/* --- detection box ------------------------------------------------------- */
+
+.omt-box{position:absolute;box-sizing:border-box;pointer-events:none;opacity:0;will-change:width,height,left,top,opacity;transition:width .32s cubic-bezier(.22,.61,.36,1),height .32s cubic-bezier(.22,.61,.36,1),left .32s cubic-bezier(.22,.61,.36,1),top .32s cubic-bezier(.22,.61,.36,1),opacity .42s ease}
+.omt-box-visible{opacity:1}
+.omt-box-fading{opacity:0}
+.omt-box-border{position:absolute;inset:0;box-sizing:border-box;border-radius:6px}
+.omt-box-dashed{border:2px dashed var(--omt-accent)}
+/* Cross-faded rather than switched: border-style cannot be interpolated, so a
+   single element would snap from dashed to solid. */
+.omt-box-solid{border:2px solid var(--omt-accent);opacity:0;transition:opacity .24s ease}
+.omt-box-solid-on{opacity:1}
+.omt-box-failed .omt-box-dashed{border-color:#b3261e}
+.omt-box-failed .omt-box-solid{border-color:#b3261e}
+@media(prefers-reduced-motion:reduce){.omt-box{transition-duration:.01ms}.omt-box-solid{transition-duration:.01ms}}
+
+/* --- one-shot notice ----------------------------------------------------- */
+
+.omt-notice{position:fixed;top:16px;right:16px;z-index:2147483647;max-width:min(340px,calc(100vw - 32px));padding:11px 15px;border-radius:10px;background:var(--omt-paper);color:var(--omt-ink);border:1px solid var(--omt-line);border-left:3px solid var(--omt-accent);box-shadow:0 6px 24px rgba(0,0,0,.16);font:13px/1.5 system-ui,"Microsoft YaHei",sans-serif;opacity:0;transform:translateX(12px);transition:opacity .28s ease,transform .28s ease;pointer-events:none}
+.omt-notice-in{opacity:1;transform:translateX(0)}
+.omt-notice-busy{border-left-color:var(--omt-accent)}
+@media(prefers-reduced-motion:reduce){.omt-notice{transition:none}}

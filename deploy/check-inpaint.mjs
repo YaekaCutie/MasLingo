@@ -19,7 +19,12 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const contentScript = readFileSync(join(repoRoot, "extension", "content", "content.js"), "utf8");
+// Loaded in the same order as the manifest's content_scripts: overlay.js defines
+// the layer and animation helpers, auto.js consumes them, content.js wires both
+// up. Loading content.js alone leaves OMT_auto undefined.
+const contentScripts = ["overlay.js", "auto.js", "content.js"].map((name) =>
+  readFileSync(join(repoRoot, "extension", "content", name), "utf8"),
+);
 // The stylesheet has to come along too, otherwise class-based assertions test
 // nothing: the first run of this check passed the element into existence and
 // then found it had no positioning at all.
@@ -46,7 +51,7 @@ try {
     globalThis.chrome = { runtime: { onMessage: { addListener() {} } } };
   });
   await page.addStyleTag({ content: contentStyles });
-  await page.addScriptTag({ content: contentScript });
+  await page.addScriptTag({ content: contentScripts.join("\n;\n") });
 
   const result = await page.evaluate(() => {
     const WIDTH = 240;

@@ -19,12 +19,19 @@ let busyPanel = null;
 // pixel-identical and looks like nothing happened.
 let showSourceText = true;
 
-chrome.runtime.onMessage.addListener(message => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "START_SELECT") startSelect();
   if (message.type === "START_AUTO") startAutoRecognition();
   if (message.type === "RECOGNITION_RESULT") showRecognitionResult(message, activePageMode);
   if (message.type === "TRANSLATION_RESULT") showTranslationResult(message);
   if (message.type === "PING") return;
+  if (message.type === "AUTO_STATUS") {
+    // The popup polls this while it is open; it must never be slower than the
+    // poll interval, so it only reads counters.
+    sendResponse(OMT_auto.stats());
+    return true;
+  }
+  return undefined;
 });
 
 function startSelect() {
@@ -731,7 +738,8 @@ function drawTranslatedPatch(entry, text) {
     25,
     Math.sqrt(coreWidth * coreHeight / (characters.length * (vertical ? 0.8 : 0.95)))
   ));
-  fontSize *= cssScale;
+  fontSize *= cssScale * OMT_display.fontScale;
+  canvas.style.opacity = String(OMT_display.opacity);
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.lineJoin = "round";
@@ -881,3 +889,53 @@ function dismissResults() {
     activeRequestId = null;
   }
 }
+
+// --- display preferences ----------------------------------------------------
+//
+// Mirrored from storage so every paint sees the current values without a storage
+// round-trip; the settings page writes them and the change listener below keeps
+// this in step.
+const OMT_display = { fontScale: 1, opacity: 1 };
+
+async function loadDisplayPreferences() {
+  try {
+    const cfg = await chrome.storage.local.get(["fontScale", "overlayOpacity"]);
+    if (Number.isFinite(cfg.fontScale)) OMT_display.fontScale = Math.min(2, Math.max(0.4, cfg.fontScale));
+    if (Number.isFinite(cfg.overlayOpacity)) OMT_display.opacity = Math.min(1, Math.max(0.2, cfg.overlayOpacity));
+  } catch {
+    /* extension APIs unreachable in this frame; defaults are fine */
+  }
+}
+
+// --- shared with auto.js ----------------------------------------------------
+//
+// Both files are classic content scripts sharing one scope, so auto.js could
+// simply call these — but an implicit cross-file dependency is invisible to
+// anyone reading either file, and the static checker rightly flags it. Naming
+// the shared surface makes the dependency explicit and checkable.
+globalThis.OMT_render = { drawTranslatedPatch, reconstructBackground, resolveTextDirection };
+
+// --- auto translate wiring --------------------------------------------------
+
+// Anchored overlays only need re-placing when layout moves, which for window
+// scrolling it does not — but an inner scroller, a resize or a late-loading
+// font does. Passive and rAF-coalesced, so the cost stays near zero.
+window.addEventListener("scroll", () => OMT_overlay.reposition(), { passive: true, capture: true });
+window.addEventListener("resize", () => OMT_overlay.reposition(), { passive: true });
+
+// Guarded: the script can land in frames where extension APIs are not reachable
+// (sandboxed iframes), and a throw here would break manual translation too.
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (changes.autoTranslate) OMT_auto.sync();
+  if (changes.fontScale || changes.overlayOpacity) {
+    loadDisplayPreferences().then(() => {
+      // Already-painted regions keep their old size until repainted; that is
+      // cheaper than tracking every canvas, and the next translation picks the
+      // new value up.
+    });
+  }
+});
+
+loadDisplayPreferences();
+OMT_auto.sync();

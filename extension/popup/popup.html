@@ -3,43 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Manga Translator</title>
+  <title>OpenMangaTranslator</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <main>
     <header>
-      <h1>Manga Translator</h1>
+      <h1>OpenMangaTranslator</h1>
       <button id="settings" class="icon-btn" title="设置" aria-label="设置">⚙</button>
     </header>
 
-    <section class="status" id="statusCard">
-      <div class="status-row">
-        <span class="status-label">OCR</span>
-        <span class="status-value" id="ocrStatus">检测中…</span>
+    <section class="feature">
+      <div class="feature-head">
+        <span class="feature-title">自动翻译</span>
+        <label class="switch">
+          <input id="autoTranslate" type="checkbox">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
       </div>
-      <div class="status-row">
-        <span class="status-label">翻译</span>
-        <span class="status-value" id="translateStatus">检测中…</span>
+      <div class="state" id="autoState">
+        <span class="state-dot"></span><span id="autoStateText">未开启</span>
       </div>
+      <p class="hint">开启后自动识别页面上的漫画并翻译，译文跟随滚动，同一处不会重复处理。</p>
     </section>
 
-    <p class="notice" id="translateHint" hidden>
-      翻译未开启，识别后只会显示日文。<button id="openSettings" type="button">去开启翻译</button>
-    </p>
-
-    <button id="select" class="primary">框选区域并识别</button>
-    <button id="auto">自动识别整页气泡</button>
+    <section class="feature muted">
+      <div class="feature-title">手动翻译</div>
+      <button id="select">框选翻译</button>
+      <p class="hint">在漫画上拖一个框，只翻译这一块。</p>
+    </section>
 
     <details id="details">
       <summary>诊断信息</summary>
       <pre id="status">准备就绪</pre>
       <div class="detail-actions">
         <button id="health" class="ghost">检查 OCR 后端</button>
-        <button id="settings2" class="ghost">打开设置</button>
+        <button id="autoPage" class="ghost">识别整页气泡</button>
       </div>
     </details>
   </main>
+
   <script src="../config.js"></script>
   <script src="../translation/providers.js"></script>
   <script src="popup.js"></script>

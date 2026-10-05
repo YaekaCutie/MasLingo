@@ -3,35 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Manga Translator 设置</title>
+  <title>OpenMangaTranslator 设置</title>
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
   <main>
     <header>
-      <h1>Manga Translator</h1>
-      <p class="sub">识别画面上的日文，把译文直接画回原处。翻译默认关闭，开启后由你选择的服务完成。</p>
+      <h1>OpenMangaTranslator</h1>
+      <p class="sub">识别画面上的日文，把译文直接画回原处。</p>
     </header>
 
-    <section class="panel">
-      <h2>识别</h2>
-
-      <label for="backendUrl">OCR 后端地址</label>
-      <input id="backendUrl" type="url" placeholder="http://127.0.0.1:8001">
-      <div class="hint" id="backendHint">识别时会把页面截图发送到上面这个后端；它只用于 OCR，不做其它用途。</div>
-
-      <label class="toggle-row" for="debugMode">
-        <input id="debugMode" type="checkbox" checked>
-        <span>显示识别到的日文原文</span>
-      </label>
-      <div class="hint">关闭后识别照常进行，只是不再把日文结果显示出来。</div>
+    <section>
+      <h2>自动翻译</h2>
+      <div class="row">
+        <div class="row-text">
+          <div class="label">自动识别全图</div>
+          <div class="hint">打开后自动翻译页面上的漫画，译文跟随滚动，同一处不会重复处理。</div>
+        </div>
+        <label class="switch">
+          <input id="autoTranslate" type="checkbox">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="label">同时处理数量</div>
+          <div class="hint">越大越快，但对后端和翻译接口的压力也越大。</div>
+        </div>
+        <select id="autoConcurrency">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </div>
     </section>
 
-    <section class="panel">
-      <h2>翻译</h2>
-
-      <label for="translationProvider">翻译来源</label>
-      <select id="translationProvider"></select>
+    <section>
+      <h2>翻译来源</h2>
+      <div class="row">
+        <div class="row-text"><div class="label">使用哪个来源</div></div>
+        <select id="translationProvider"></select>
+      </div>
       <div class="hint" id="providerNote"></div>
       <div class="hint" id="providerKeyLink" hidden>
         <a id="keyLink" href="#" target="_blank" rel="noreferrer noopener">获取密钥 →</a>
@@ -55,8 +67,11 @@
 
       <div class="field" id="fieldKey" hidden>
         <label for="translationApiKey" id="keyLabel">密钥</label>
-        <input id="translationApiKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存的密钥">
-        <label class="toggle-row" for="clearApiKey">
+        <div class="input-with-action">
+          <input id="translationApiKey" type="password" autocomplete="new-password" placeholder="留空则保留已保存的密钥">
+          <button id="revealKey" type="button" class="subtle" aria-label="显示或隐藏密钥">显示</button>
+        </div>
+        <label class="checkline" for="clearApiKey">
           <input id="clearApiKey" type="checkbox">
           <span>清除已保存的密钥</span>
         </label>
@@ -69,16 +84,49 @@
         <div class="hint">用自然语言描述即可，会原样写进给模型的指令里。</div>
       </div>
 
-      <div class="actions secondary">
-        <button id="test" type="button">测试翻译</button>
+      <div class="row-actions">
+        <button id="test" type="button" class="subtle">测试翻译</button>
+        <span class="hint" id="testResult" hidden></span>
       </div>
-      <div class="hint" id="testResult" hidden></div>
     </section>
 
-    <div class="actions">
+    <section>
+      <h2>译文显示</h2>
+      <div class="field">
+        <label for="fontScale">字号 <output id="fontScaleValue">100%</output></label>
+        <input id="fontScale" type="range" min="60" max="160" step="5" value="100">
+      </div>
+      <div class="field">
+        <label for="overlayOpacity">不透明度 <output id="overlayOpacityValue">100%</output></label>
+        <input id="overlayOpacity" type="range" min="30" max="100" step="5" value="100">
+      </div>
+    </section>
+
+    <section>
+      <h2>识别</h2>
+      <div class="field">
+        <label for="backendUrl">OCR 后端地址</label>
+        <input id="backendUrl" type="url" placeholder="http://127.0.0.1:8001">
+        <div class="hint" id="backendHint">识别会把漫画画面发送到这个后端；它只用于 OCR。</div>
+      </div>
+      <label class="checkline" for="debugMode">
+        <input id="debugMode" type="checkbox" checked>
+        <span>显示识别到的日文原文</span>
+      </label>
+    </section>
+
+    <section class="about">
+      <h2>关于</h2>
+      <div class="row">
+        <div class="row-text"><div class="label">版本</div></div>
+        <span class="value" id="version">—</span>
+      </div>
+    </section>
+
+    <footer>
       <button id="save" class="primary">保存设置</button>
-    </div>
-    <div id="result" class="result" hidden></div>
+      <span id="result" class="result" hidden></span>
+    </footer>
   </main>
 
   <script src="../config.js"></script>
