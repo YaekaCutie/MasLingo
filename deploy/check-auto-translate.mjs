@@ -27,10 +27,18 @@ import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
+const consoleLines = [];
 const check = (label, condition) => {
   console.log(`  ${condition ? "ok  " : "FAIL"}  ${label}`);
   if (!condition) failures.push(label);
 };
+
+/** Collect console output and errors from every page the test opens. */
+function watch(page, label) {
+  page.on("pageerror", (error) => consoleLines.push(`${label} pageerror: ${error}`));
+  page.on("console", (message) => consoleLines.push(`${label} ${message.type()}: ${message.text()}`));
+  return page;
+}
 
 /** A page of solid-colour blocks: enough for createImageBitmap, no decode cost. */
 function makePng(width, height, rgb) {
@@ -116,6 +124,29 @@ const backend = http.createServer((request, response) => {
     });
     return;
   }
+  if (request.url === "/v1/chat/completions") {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      let asked = [];
+      let source = [];
+      try {
+        asked = JSON.parse(Buffer.concat(chunks).toString("utf8")).messages || [];
+        const content = asked.at(-1)?.content || "";
+        // chatPrompt puts the source texts after "输入：" as a JSON array, and
+        // the provider layer rejects a reply whose length differs from the
+        // request, so the stub has to mirror it exactly.
+        const marker = content.indexOf("输入：");
+        if (marker !== -1) source = JSON.parse(content.slice(marker + 3).trim());
+      } catch { /* not a request we can mirror */ }
+      translateCalls.push(source.length);
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify(source.map((t) => `译:${t}`)) } }],
+      }));
+    });
+    return;
+  }
   if (request.url === "/health") {
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ ok: true, backend: "stub" }));
@@ -145,6 +176,14 @@ const pages = http.createServer((request, response) => {
     const body = encoded.get(match.name);
     response.writeHead(200, { "Content-Type": "image/png", "Content-Length": body.length });
     response.end(body);
+    return;
+  }
+  if (request.url === "/broken") {
+    response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>broken</title>
+      <style>body{margin:0;background:#2a2a2a}img{display:block;width:600px;height:840px;margin:24px auto}</style>
+      </head><body>
+      <img id="ghost" src="/missing-thumbnail.png">
+      <img id="real" src="/p1.png"></body></html>`);
     return;
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -205,12 +244,10 @@ try {
   }, backendUrl);
 
   const page = await browser.newPage();
+  watch(page, "main");
   await page.setViewport({ width: 800, height: 900 });
   const tabErrors = [];
-  const consoleLines = [];
   page.on("pageerror", (error) => tabErrors.push(String(error)));
-  page.on("console", (message) => consoleLines.push(`${message.type()}: ${message.text()}`));
-  worker.on?.("console", (message) => consoleLines.push(`sw ${message.type()}: ${message.text()}`));
   await page.goto(pageUrl, { waitUntil: "load" });
   await page.waitForSelector("#one");
 
@@ -232,8 +269,31 @@ try {
 
   console.log("\n开启自动翻译");
   await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
-  await new Promise((r) => setTimeout(r, 4000));
+  // Watch the animation while it happens. The box is meant to answer "which
+  // pieces of text did it find?", so a box the size of the whole picture is
+  // exactly the wrong answer — that was the earlier mistake.
+  const boxSamples = await page.evaluate(() => new Promise((resolve) => {
+    const seen = [];
+    const timer = setInterval(() => {
+      for (const box of document.querySelectorAll("#omt-layer .omt-box")) {
+        const rect = box.getBoundingClientRect();
+        if (rect.width > 1 && rect.height > 1) {
+          seen.push({ w: Math.round(rect.width), h: Math.round(rect.height) });
+        }
+      }
+    }, 80);
+    setTimeout(() => { clearInterval(timer); resolve(seen); }, 9000);
+  }));
   const on = await layers();
+  const biggest = boxSamples.reduce((best, b) => (b.w * b.h > best.w * best.h ? b : best), { w: 0, h: 0 });
+  console.log(`      采样到 ${boxSamples.length} 个框，最大 ${biggest.w}x${biggest.h}（整图 600x840）`);
+  check("检测框出现在画面上", boxSamples.length > 0);
+  check("检测框框的是文字区域而不是整张图", biggest.w < 580 || biggest.h < 820,
+    `${biggest.w}x${biggest.h}`);
+  // And it has to actually reach that size. Sampling only the start-up dot is
+  // what a box that never grows looks like from the outside.
+  check("检测框确实长到了文字区域大小", biggest.w > 60 && biggest.h > 40,
+    `最大只有 ${biggest.w}x${biggest.h}`);
   check("出现覆盖层", on.layer);
   check("右上角提示只出现一次且文案正确",
     on.notice.includes("自动翻译") || on.notice.includes("检测到漫画"));
@@ -271,7 +331,7 @@ try {
   const extensionId = new URL(worker.url()).host;
   const bare = await browser.newPage();
   const bareErrors = [];
-  bare.on("pageerror", (error) => bareErrors.push(String(error)));
+  watch(bare, "bare");
   await bare.setViewport({ width: 900, height: 1000 });
   await bare.goto(`${pageUrl}p1.png`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 5000));
@@ -295,7 +355,7 @@ try {
   const growBefore = ocrCalls.length;
   const grow = await browser.newPage();
   const growErrors = [];
-  grow.on("pageerror", (error) => growErrors.push(String(error)));
+  watch(grow, "grow");
   await grow.setViewport({ width: 900, height: 1000 });
   await grow.goto(`${pageUrl}grow`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 7000));
@@ -310,11 +370,102 @@ try {
   await grow.close();
   const afterGrow = ocrCalls.length;
 
+  /**
+   * Read what the content script is reporting for a tab.
+   *
+   * The content script lives in the extension's isolated world, so page
+   * .evaluate() cannot see OMT_auto. An extension page can, which is also the
+   * only way to test the status line the user actually reads.
+   */
+  const probePage = await browser.newPage();
+  watch(probePage, "probe");
+  await probePage.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
+  async function readStatus(pageToRead) {
+    const tabId = await worker.evaluate(async (target) => {
+      const tabs = await chrome.tabs.query({});
+      return tabs.find((candidate) => candidate.url === target)?.id ?? null;
+    }, pageToRead.url());
+    return probePage.evaluate(async (id) => {
+      const stats = await chrome.tabs.sendMessage(id, { type: "AUTO_STATUS" });
+      return { stats, text: document.getElementById("autoStateText")?.textContent?.trim() };
+    }, tabId);
+  }
+
+  console.log("\n页面上有读不出来的图片");
+  // Search-results pages are full of pictures the browser will not hand over.
+  // One of those must not be reported as a backend problem — the user's own
+  // report ("1 处识别失败，请检查后端") came from exactly this, while the backend
+  // had answered 200 with eighteen regions.
+  const brokenBefore = ocrCalls.length;
+  const broken = await browser.newPage();
+  watch(broken, "broken");
+  await broken.setViewport({ width: 900, height: 1000 });
+  await broken.goto(`${pageUrl}broken`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 6000));
+  const brokenState = await broken.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+  }));
+  const brokenProbe = await readStatus(broken);
+  const brokenStats = brokenProbe.stats || { imageFailures: {} };
+  await probePage.evaluate(async (id) => {
+    const tabs = await chrome.tabs.query({});
+    const target = tabs.find((candidate) => candidate.url && candidate.url.endsWith("/broken"));
+    if (target) { activeTabId = target.id; await refreshAutoStatus(); }
+  });
+  const brokenText = await probePage.evaluate(() =>
+    document.getElementById("autoStateText")?.textContent?.trim());
+  console.log(`      画布 ${brokenState.canvases}，图片失败 ${JSON.stringify(brokenStats.imageFailures)}`);
+  console.log(`      状态行 “${brokenText}”`);
+  check("坏图片不影响同页的好图片", brokenState.canvases >= 1);
+  check("坏图片被单独归类为 unreadable", brokenStats.imageFailures.unreadable >= 1);
+  check("坏图片没有被算成识别失败", brokenStats.imageFailures.ocr === 0);
+  check("状态行说的不是后端有问题", !/请检查后端/.test(brokenText || ""), brokenText);
+  await broken.close();
+  const afterBroken = ocrCalls.length;
+
+  console.log("\n配置翻译来源后，坏图片不该被说成后端问题");
+  await worker.evaluate(async (url) => {
+    await chrome.storage.local.set({
+      translationProvider: "custom",
+      translationMode: "openai-compatible",
+      translationEndpoint: `${url}/v1/chat/completions`,
+      translationModel: "stub",
+      translationApiKey: "stub-key",
+      targetLanguage: "简体中文",
+    });
+  }, backendUrl);
+  const translated = await browser.newPage();
+  watch(translated, "translated");
+  await translated.setViewport({ width: 900, height: 1000 });
+  await translated.goto(`${pageUrl}broken`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 8000));
+  const translatedStats = await readStatus(translated);
+  await probePage.evaluate(async () => {
+    const tabs = await chrome.tabs.query({});
+    const target = tabs.find((candidate) => candidate.url?.endsWith("/broken"));
+    if (target) { activeTabId = target.id; await refreshAutoStatus(); }
+  });
+  const translatedText = await probePage.evaluate(() =>
+    document.getElementById("autoStateText")?.textContent?.trim());
+  const translatedMode = translatedStats.stats?.translationMode;
+  console.log(`      翻译模式 ${translatedMode}，翻译请求 ${translateCalls.length} 次`);
+  console.log(`      状态行 “${translatedText}”`);
+  check("翻译链路走通", translateCalls.length >= 1);
+  check("状态不再是“翻译来源未设置”", !/翻译来源未设置/.test(translatedText || ""), translatedText);
+  // One good region translated, one picture the browser would not hand over.
+  // The user's complaint was this being reported as a backend failure; a plain
+  // success with the unreadable picture left incidental is the right answer.
+  check("翻译成功时不被读不出的图片带偏", /完成/.test(translatedText || ""), translatedText);
+  check("状态行仍然不提后端", !/请检查后端/.test(translatedText || ""), translatedText);
+  await translated.close();
+  const afterTranslated = ocrCalls.length;
+
   console.log("\n弹窗状态（用户实际看到的那行字）");
   // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
   // the switch on and nothing happening — a dead end with no way forward. The
   // status must name the real situation instead.
   const popup = await browser.newPage();
+  watch(popup, "popup");
   await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
   // puppeteer's newPage() opens its own window, so the popup would otherwise ask
   // about itself. Point it at the real manga tab, which is what a real popup —
@@ -343,7 +494,7 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterGrow);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterTranslated);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 

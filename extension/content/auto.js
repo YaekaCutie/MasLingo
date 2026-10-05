@@ -25,7 +25,17 @@ const OMT_auto = (() => {
   let enabled = false;
   let concurrency = 1;
   let running = 0;
-  let failures = 0;
+  /**
+   * Image-level failures by cause.
+   *
+   * These are not the same thing and must not be reported as one: a picture the
+   * browser would not hand over ("unreadable") says nothing about the backend,
+   * and a search-results page is full of pictures that will never load.
+   */
+  const imageFailures = { unreadable: 0, ocr: 0, other: 0 };
+  /** What the translation source turned out to be; "none" means text was left
+   *  untranslated, which the status must not report as a success. */
+  let translationMode = null;
   const queue = [];
   /** regionId -> { state, attempts } */
   const tracked = new Map();
@@ -212,6 +222,16 @@ const OMT_auto = (() => {
     }
   }
 
+  /** Which kind of failure a thrown error represents. */
+  function classify(error) {
+    const message = String(error?.message || error);
+    if (/图片|地址|bitmap|decode|decode|Failed to fetch|NetworkError/i.test(message)) {
+      return "unreadable";
+    }
+    if (/OCR|后端|backend|fetch|Failed to fetch/i.test(message)) return "ocr";
+    return "other";
+  }
+
   async function runTask(task) {
     const { element } = task;
     if (!element.isConnected) return;
@@ -225,11 +245,6 @@ const OMT_auto = (() => {
       const scale = Math.min(1, OCR_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
       const sendWidth = Math.max(1, Math.round(bitmap.width * scale));
       const sendHeight = Math.max(1, Math.round(bitmap.height * scale));
-
-      // A single box over the picture while it is being read: the per-region
-      // boxes cannot exist yet, because the regions are what we are waiting for.
-      const scanning = OMT_detectionBox.show(element, { left: 0, top: 0, width: 1, height: 1 });
-      scanning.markReading();
 
       const dataUrl = await toDataUrl(bitmap, sendWidth, sendHeight);
       const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
@@ -249,23 +264,27 @@ const OMT_auto = (() => {
         fresh.push({ id, area, item, box: OMT_detectionBox.show(element, area) });
       }
 
-      if (!fresh.length) {
-        scanning.finish();
-        return;
-      }
+      if (!fresh.length) return;
 
-      scanning.finish();
-      for (const region of fresh) {
-        track(region.id, STATE.PROCESSING);
-        region.box.markReading();
-      }
+      // Each region appears as a small dot and then stretches into its box, one
+      // after another. The box exists to answer one question — "what did it
+      // find?" — so a stagger reads as "this one, and this one", where showing
+      // them all at once would just be a flash.
+      fresh.forEach((region, index) => {
+        setTimeout(() => region.box.markReading(), 180 + Math.min(index, 14) * 55);
+      });
 
       const texts = fresh.map((region) => region.item.text);
       const translation = await chrome.runtime.sendMessage({ type: "AUTO_TRANSLATE", texts });
+      if (translation?.ok) translationMode = translation.mode || "configured";
+      for (const region of fresh) track(region.id, STATE.PROCESSING);
 
       fresh.forEach((region, index) => {
         const translated = translation?.ok && translation.items?.[index]?.translated;
         if (!translation?.ok) {
+          // Not silent: without this the only symptom is a count in the popup,
+          // and there is nothing to act on.
+          console.warn("[OMT] 翻译失败：", translation?.error || "未知原因");
           track(region.id, STATE.FAILED);
           region.box.fail();
           return;
@@ -296,7 +315,7 @@ const OMT_auto = (() => {
         // Let it be considered again — the failure may have been transient, and
         // the picture may also have changed since.
         processed.delete(element);
-        failures += 1;
+        imageFailures[classify(error)] += 1;
       }
       throw error;
     } finally {
@@ -478,6 +497,9 @@ const OMT_auto = (() => {
     const cfg = await readSettings(["autoConcurrency"]);
     concurrency = Math.min(3, Math.max(1, Number(cfg.autoConcurrency) || 1));
     enabled = true;
+    imageFailures.unreadable = 0;
+    imageFailures.ocr = 0;
+    imageFailures.other = 0;
     attachObservers();
     scan(document);
     OMT_notice.reset();
@@ -511,7 +533,9 @@ const OMT_auto = (() => {
       queued: queue.length,
       running,
       translated: [...tracked.values()].filter((r) => r.state === STATE.TRANSLATED).length,
-      failed: [...tracked.values()].filter((r) => r.state === STATE.FAILED).length + failures,
+      failed: [...tracked.values()].filter((r) => r.state === STATE.FAILED).length,
+      imageFailures: { ...imageFailures },
+      translationMode,
     }),
   };
 })();

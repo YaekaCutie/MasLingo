@@ -184,39 +184,28 @@ const OMT_detectionBox = (() => {
    */
   function show(element, region) {
     const { node, solid } = create();
-    // Start as a dot near the region's top-left corner, then grow. Growing the
-    // box itself (rather than animating a separate dot) is what makes the
-    // stretch read as the region being discovered.
-    const dotSize = Math.max(6, Math.min(14, region.width * 200));
-    const entry = OMT_overlay.anchor(node, element, {
-      left: region.left,
-      top: region.top,
-      width: 0,
-      height: 0,
-    });
-    const toBox = entry.place;
-    const startDot = () => {
-      const box = OMT_overlay.contentRect(
-        element,
-        element.naturalWidth || element.videoWidth || 0,
-        element.naturalHeight || element.videoHeight || 0,
-      );
-      node.style.width = `${dotSize}px`;
-      node.style.height = `${dotSize}px`;
-      node.style.left = `${Math.round(box.left + region.left * box.width)}px`;
-      node.style.top = `${Math.round(box.top + region.top * box.height)}px`;
+    // Anchor to the real region first, so `place()` can grow the box to it
+    // later. Anchoring to a zero-sized region and then growing would leave
+    // `place()` setting it back to zero — the box never reached its region, and
+    // the stretch never happened at all.
+    const entry = OMT_overlay.anchor(node, element, region);
+    const natural = {
+      width: element.naturalWidth || element.videoWidth || 0,
+      height: element.naturalHeight || element.videoHeight || 0,
     };
-    startDot();
+    const box = OMT_overlay.contentRect(element, natural.width, natural.height);
+    const dot = Math.max(6, Math.min(14, region.width * (box.width || 1)));
+    node.style.width = `${dot}px`;
+    node.style.height = `${dot}px`;
+    node.style.left = `${Math.round(box.left + region.left * box.width)}px`;
+    node.style.top = `${Math.round(box.top + region.top * box.height)}px`;
     node.classList.add("omt-box-visible");
 
     return {
       node,
-      /** OCR finished, translation starting. */
+      /** Grow the dot into the region's box. */
       markReading() {
-        requestAnimationFrame(() => {
-          node.classList.add("omt-box-stretching");
-          toBox();
-        });
+        requestAnimationFrame(() => entry.place());
       },
       /** Translation is in. Cross-fade dashed to solid, hold, then disappear. */
       finish() {

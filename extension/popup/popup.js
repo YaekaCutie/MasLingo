@@ -110,16 +110,31 @@ async function refreshAutoStatus({ allowInject = true } = {}) {
       return;
     }
     const busy = stats.queued + stats.running;
+    const images = stats.imageFailures || {};
+    const unreadable = (images.unreadable || 0) + (images.other || 0);
     if (busy > 0) {
       setStatusText(`正在翻译 ${busy} 个区域`, "working");
-    } else if (stats.failed > 0 && stats.translated === 0) {
-      // Nothing worked. Reporting "正在检测漫画" here is what left the user
-      // watching a page that was never going to change.
-      setStatusText(`✗ ${stats.failed} 处识别失败，请检查后端`, "error");
+    } else if (stats.failed > 0) {
+      // A region got as far as OCR and then failed — that is a translation
+      // problem, and the translation source is what to look at.
+      setStatusText(`✗ ${stats.failed} 处翻译失败，请检查翻译来源`, "error");
+    } else if (unreadable > 0 && stats.translated === 0) {
+      // The picture never reached the backend. Blaming the backend here is what
+      // sent the user looking in the wrong place; a page can be full of images
+      // the browser will not hand over, and that is not an error worth alarming
+      // about unless nothing at all worked.
+      setStatusText(`✗ ${unreadable} 张图片无法读取`, "error");
+    } else if (images.ocr > 0 && stats.translated === 0) {
+      setStatusText(`✗ ${images.ocr} 张图片识别失败，请检查后端`, "error");
+    } else if (stats.translated > 0 && stats.translationMode === "none") {
+      // The regions were read and painted, but with their original text: no
+      // translation source is configured. Reporting a plain success here would
+      // hide the one thing the user has to do.
+      setStatusText(`✓ 已识别 ${stats.translated} 处 · 翻译来源未设置，显示的是原文`, "error");
     } else if (stats.translated > 0 && stats.failed === 0) {
       setStatusText(`✓ 当前页面翻译完成（${stats.translated} 处）`, "done");
     } else if (stats.translated > 0) {
-      setStatusText(`已完成 ${stats.translated} 处，${stats.failed} 处失败`, "error");
+      setStatusText(`已完成 ${stats.translated} 处，另有 ${stats.failed} 处失败`, "error");
     } else {
       setStatusText("● 正在检测漫画", "scanning");
     }
