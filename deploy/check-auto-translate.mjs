@@ -410,7 +410,7 @@ try {
   await probePage.evaluate(async (id) => {
     const tabs = await chrome.tabs.query({});
     const target = tabs.find((candidate) => candidate.url && candidate.url.endsWith("/broken"));
-    if (target) { activeTabId = target.id; await refreshAutoStatus(); }
+    if (target) { activeTabId = target.id; await refreshAutoStatus(); await refreshDiagnostics(); }
   });
   const brokenText = await probePage.evaluate(() =>
     document.getElementById("autoStateText")?.textContent?.trim());
@@ -443,7 +443,7 @@ try {
   await probePage.evaluate(async () => {
     const tabs = await chrome.tabs.query({});
     const target = tabs.find((candidate) => candidate.url?.endsWith("/broken"));
-    if (target) { activeTabId = target.id; await refreshAutoStatus(); }
+    if (target) { activeTabId = target.id; await refreshAutoStatus(); await refreshDiagnostics(); }
   });
   const translatedText = await probePage.evaluate(() =>
     document.getElementById("autoStateText")?.textContent?.trim());
@@ -457,6 +457,15 @@ try {
   // success with the unreadable picture left incidental is the right answer.
   check("翻译成功时不被读不出的图片带偏", /完成/.test(translatedText || ""), translatedText);
   check("状态行仍然不提后端", !/请检查后端/.test(translatedText || ""), translatedText);
+
+  // "Nothing happened" has to be answerable without guessing, so the popup
+  // reports the content script's own counters.
+  const diagText = await probePage.evaluate(() => document.getElementById("autoDiag").textContent);
+  const collected = Number(/扫描到的图片元素：(\d+)/.exec(diagText)?.[1] ?? -1);
+  console.log(`      诊断：${diagText.split("\n")[1]}`);
+  check("诊断给出了扫描计数", collected >= 1, diagText.slice(0, 120));
+  check("诊断说明了符合尺寸的数量", /其中符合漫画尺寸：\d+/.test(diagText));
+  check("诊断列出了图片失败分类", /图片失败：/.test(diagText));
   await translated.close();
   const afterTranslated = ocrCalls.length;
 

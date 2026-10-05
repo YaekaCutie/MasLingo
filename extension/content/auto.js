@@ -36,6 +36,11 @@ const OMT_auto = (() => {
   /** What the translation source turned out to be; "none" means text was left
    *  untranslated, which the status must not report as a success. */
   let translationMode = null;
+  /** Counters for the diagnostics panel. Without these, "nothing happened" is
+   *  indistinguishable from "nothing was ever considered", and the user is left
+   *  guessing at a page that simply does nothing. */
+  const seen = { collected: 0, candidates: 0, enqueued: 0 };
+  let lastError = null;
   const queue = [];
   /** regionId -> { state, attempts } */
   const tracked = new Map();
@@ -139,6 +144,7 @@ const OMT_auto = (() => {
   function observe(element) {
     if (pendingElements.has(element)) return;
     pendingElements.add(element);
+    seen.collected += 1;
     // Size is deliberately NOT judged here. A picture that is still laying out —
     // Bing's image viewer, a lazy loader, anything behind a CSS transition — is
     // small at this instant and would be rejected for good: the scan happens
@@ -172,6 +178,7 @@ const OMT_auto = (() => {
     if (!isCandidate(element)) return;
     const media = mediaKey(element);
     if (processed.get(element) === media.key) return;
+    seen.candidates += 1;
     visibilityObserver?.unobserve(element);
     sizeObserver?.unobserve(element);
     pendingElements.delete(element);
@@ -205,6 +212,7 @@ const OMT_auto = (() => {
     // cleared on failure so a genuine retry is still possible.
     processed.set(element, media.key);
     inFlight.add(element);
+    seen.enqueued += 1;
     queue.push({ element, media, attempts: 0 });
     pump();
   }
@@ -316,6 +324,7 @@ const OMT_auto = (() => {
         // the picture may also have changed since.
         processed.delete(element);
         imageFailures[classify(error)] += 1;
+        lastError = { message: String(error.message || error), at: Date.now(), src: task.media.src };
       }
       throw error;
     } finally {
@@ -535,6 +544,20 @@ const OMT_auto = (() => {
       translated: [...tracked.values()].filter((r) => r.state === STATE.TRANSLATED).length,
       failed: [...tracked.values()].filter((r) => r.state === STATE.FAILED).length,
       imageFailures: { ...imageFailures },
+      translationMode,
+      seen: { ...seen },
+      lastError,
+    }),
+    /** Everything the popup needs to explain a page that does nothing. */
+    diagnostics: () => ({
+      enabled,
+      concurrency,
+      seen: { ...seen },
+      queued: queue.length,
+      running,
+      anchored: OMT_overlay.count(),
+      imageFailures: { ...imageFailures },
+      lastError,
       translationMode,
     }),
   };

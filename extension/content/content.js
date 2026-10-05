@@ -38,6 +38,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse(OMT_auto.stats());
     return true;
   }
+  if (message.type === "AUTO_DIAG") {
+    sendResponse(OMT_auto.diagnostics());
+    return true;
+  }
   return undefined;
 });
 

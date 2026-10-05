@@ -148,9 +148,52 @@ function tabIsImage() {
   return /\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(lastTabUrl || "");
 }
 
+/** Render the content script's own account of what it has been doing. */
+async function refreshDiagnostics() {
+  const node = document.getElementById("autoDiag");
+  if (!activeTabId) {
+    node.textContent = "自动翻译：没有可用的标签页";
+    return;
+  }
+  try {
+    const diag = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_DIAG" });
+    if (!diag || !diag.enabled) {
+      node.textContent = "自动翻译：未开启";
+      return;
+    }
+    const lines = [
+      `自动翻译：已开启（并发 ${diag.concurrency}）`,
+      `扫描到的图片元素：${diag.seen.collected}`,
+      `其中符合漫画尺寸：${diag.seen.candidates}`,
+      `已入队：${diag.seen.enqueued}   队列中：${diag.queued}   进行中：${diag.running}`,
+      `画面上已锚定的译文：${diag.anchored}`,
+      `翻译来源：${diag.translationMode || "尚未调用"}`,
+      `图片失败：读不出来 ${diag.imageFailures.unreadable} · 识别 ${diag.imageFailures.ocr} · 其它 ${diag.imageFailures.other}`,
+    ];
+    if (diag.lastError) {
+      lines.push(`最后一次错误：${diag.lastError.message}`);
+      if (diag.lastError.src) lines.push(`  来源：${String(diag.lastError.src).slice(0, 90)}`);
+    }
+    if (diag.seen.collected === 0) {
+      lines.push("");
+      lines.push("一个图片元素都没找到 —— 如果不是图片页面，请把这一屏截图给我。");
+    } else if (diag.seen.candidates === 0) {
+      lines.push("");
+      lines.push("找到了图片，但都小于 260px。如果漫画确实更大，说明它当时还没展开。");
+    }
+    node.textContent = lines.join("\n");
+  } catch (error) {
+    node.textContent = `自动翻译：读不到页面状态（${error.message}）`;
+  }
+}
+
 function pollWhileOpen() {
   refreshAutoStatus();
-  statusTimer = setInterval(refreshAutoStatus, 1000);
+  refreshDiagnostics();
+  statusTimer = setInterval(() => {
+    refreshAutoStatus();
+    refreshDiagnostics();
+  }, 1000);
 }
 
 window.addEventListener("unload", () => {
