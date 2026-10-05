@@ -54,12 +54,19 @@ const server = http.createServer((request, response) => {
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
   response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>manga</title>
-    <style>body{margin:0;background:#222}#view{width:760px;margin:0 auto}
-    img{display:block;width:760px;height:auto}</style></head>
+    <style>body{margin:0;background:#222}#view{width:${displayWidth}px;margin:0 auto}
+    img{display:block;width:${displayWidth}px;height:auto}</style></head>
     <body><div id="view"><img id="manga" src="/manga.png"></div></body></html>`);
 });
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
+
+// The detector's ink masks use absolute grey thresholds, so the size the page is
+// *displayed* at decides whether thin strokes survive. Make that settable.
+const displayWidth = Number(
+  (process.argv.find((value) => value.startsWith("--width=")) || "--width=760").split("=")[1],
+);
+console.log(`显示宽度: ${displayWidth}px`);
 
 const browser = await puppeteer.launch({
   headless: true,
@@ -80,7 +87,12 @@ try {
   const worker = await target.worker();
 
   const page = await browser.newPage();
-  await page.setViewport({ width: 900, height: 900 });
+  // captureVisibleTab only sees the viewport, so a viewport shorter than the
+  // page silently cuts off everything below the fold. Size it to fit.
+  const imageAspect = 1119 / 768;
+  const viewportHeight = Math.min(2200, Math.round(displayWidth * imageAspect) + 60);
+  await page.setViewport({ width: Math.max(800, displayWidth + 80), height: viewportHeight });
+  console.log(`视口: ${Math.max(800, displayWidth + 80)}x${viewportHeight}`);
   const tabErrors = [];
   page.on("pageerror", (error) => tabErrors.push(String(error)));
   await page.goto(pageUrl, { waitUntil: "load" });
@@ -143,18 +155,21 @@ try {
   await worker.evaluate((id) => chrome.tabs.sendMessage(id, { type: "START_AUTO" }), tabId);
 
   // Watch for every kind of feedback the user could get.
-  const seen = { busy: false, toast: null, canvases: 0, notice: null };
+  const seen = { busy: false, toast: null, canvases: 0, texts: [] };
   const deadline = Date.now() + 90000;
   while (Date.now() < deadline) {
     const state = await page.evaluate(() => ({
       busy: Boolean(document.querySelector(".mt-overlay")),
       toast: document.getElementById("mt-toast")?.textContent || null,
       canvases: document.querySelectorAll("canvas.mt-overlay-text-canvas").length,
+      texts: [...document.querySelectorAll("canvas.mt-overlay-text-canvas")]
+        .map((node) => node.getAttribute("aria-label")),
     })).catch(() => null);
     if (state) {
       if (state.busy) seen.busy = true;
       if (state.toast) seen.toast = state.toast;
       if (state.canvases) seen.canvases = state.canvases;
+      if (state.texts.length && !seen.texts.length) seen.texts = state.texts;
       if (state.canvases > 0) break;
     }
     await new Promise((done) => setTimeout(done, 400));
@@ -163,6 +178,10 @@ try {
   console.log(`\n出现过加载提示 : ${seen.busy}`);
   console.log(`提示文字       : ${JSON.stringify(seen.toast)}`);
   console.log(`生成的覆盖画布 : ${seen.canvases}`);
+  if (seen.texts.length) {
+    console.log("识别到的内容   :");
+    for (const text of seen.texts) console.log(`   ${JSON.stringify(text)}`);
+  }
   if (tabErrors.length) console.log(`页面错误       : ${tabErrors.join(" | ")}`);
 
   if (!seen.busy && !seen.toast && !seen.canvases) {

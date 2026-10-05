@@ -189,7 +189,19 @@ async function recognizePage(msg,tabId,port){
     };
     const cropWidth=Math.max(1,crop.right-crop.left);
     const cropHeight=Math.max(1,crop.bottom-crop.top);
-    const upscale=Math.max(1,Math.min(3,1600/Math.max(cropWidth,cropHeight)));
+    // Upscale only when the crop is genuinely small.
+    //
+    // Blowing every crop up to 1600px was measured to *lose* text: a 1.45x
+    // bilinear stretch dilutes a one-pixel white-on-black stroke below the
+    // detector's fixed ">235 means light ink" mask, so lettering painted
+    // straight onto the artwork disappears. Sweeping display widths 400-900 on
+    // a real page (tools/probe_pipeline.py), always-upscaling recovered 25 of
+    // 35 known text areas, never-upscaling 23, and "only below 1100px" 28 —
+    // with the white-on-black case found at every width instead of vanishing
+    // on the large ones.
+    const UPSCALE_BELOW=1100;
+    const cropLongest=Math.max(cropWidth,cropHeight);
+    const upscale=cropLongest>=UPSCALE_BELOW?1:Math.max(1,Math.min(3,1600/cropLongest));
     const outputWidth=Math.max(1,Math.round(cropWidth*upscale));
     const outputHeight=Math.max(1,Math.round(cropHeight*upscale));
     const canvas=new OffscreenCanvas(outputWidth,outputHeight);

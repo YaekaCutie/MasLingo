@@ -185,7 +185,16 @@ def detect_text_regions(
         # Remove isolated one-pixel artwork/panel strokes before dilation.
         # Otherwise a dense manga hatch/grid becomes one connected component
         # that encloses and suppresses all of the actual lettering.
-        grouped = grouped.filter(ImageFilter.MinFilter(3))
+        #
+        # The two local-contrast masks are exempt. They are what catches thin
+        # lettering painted straight onto the artwork — white dialogue over a
+        # dark panel, for instance — and a 3x3 erosion deletes exactly the
+        # one-to-two-pixel strokes they exist to find. Measured with
+        # tools/probe_pipeline.py across display widths 400-900 on a real page,
+        # eroding those two masks lost the white-on-black line at every width
+        # where it would otherwise be found.
+        if mask_index < 2:
+            grouped = grouped.filter(ImageFilter.MinFilter(3))
         grouped = grouped.filter(ImageFilter.MaxFilter(kernel))
         for left, top, right, bottom in _components(np.asarray(grouped) > 0):
             box_width, box_height = right - left, bottom - top
