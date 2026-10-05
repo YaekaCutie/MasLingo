@@ -309,6 +309,28 @@ try {
     failures.push(`改动了文字框外的 ${result.outsideChanged} 个像素`);
   }
 
+  // --- the two direction judgements must agree ------------------------------
+  //
+  // The recogniser decides direction from the pixels; the front end used to
+  // re-guess it from the box's aspect ratio, so a two-line horizontal block
+  // could be typeset as one vertical column. The backend's verdict now wins.
+  console.log("\n横竖判定（后端优先）");
+  const direction = await page.evaluate(() => ({
+    // A tall box holding horizontal text: the case the shape heuristic got wrong.
+    backendSaysHorizontalOnTallBox: resolveTextDirection("horizontal", 120, 320),
+    backendSaysVerticalOnWideBox: resolveTextDirection("vertical", 320, 120),
+    fallbackTallBox: resolveTextDirection(null, 120, 320),
+    fallbackWideBox: resolveTextDirection(null, 320, 120),
+    fallbackUndefined: resolveTextDirection(undefined, 120, 320),
+  }));
+  check("后端说横排时，即使框很高也横排",
+    direction.backendSaysHorizontalOnTallBox === false);
+  check("后端说竖排时，即使框很宽也竖排",
+    direction.backendSaysVerticalOnWideBox === true);
+  check("后端没意见时才退回长宽比（高框→竖排）", direction.fallbackTallBox === true);
+  check("后端没意见时才退回长宽比（宽框→横排）", direction.fallbackWideBox === false);
+  check("字段缺失时也走退路", direction.fallbackUndefined === true);
+
   // --- the overlay must never become its own window -------------------------
   console.log("\n译文呈现方式");
   const overlay = await page.evaluate(() => {

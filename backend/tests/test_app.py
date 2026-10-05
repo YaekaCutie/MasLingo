@@ -13,7 +13,13 @@ from backend.ocr.manga_ocr_engine import (
     _vertical_column_bounds,
     get_engine,
     recognize,
+    recognize_detailed,
 )
+
+
+def detailed(*texts, direction="horizontal"):
+    """The shape recognize_detailed returns, so the mocks stay readable."""
+    return {"texts": list(texts), "direction": direction}
 
 
 class AppTests(unittest.TestCase):
@@ -53,7 +59,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["ocr"], "mangaocr")
 
-    @patch("backend.app.recognize", return_value=["こんにちは"])
+    @patch("backend.app.recognize_detailed", return_value=detailed("こんにちは"))
     def test_recognizes_valid_image(self, recognize):
         image = io.BytesIO()
         Image.new("RGB", (8, 8), "white").save(image, format="PNG")
@@ -67,6 +73,22 @@ class AppTests(unittest.TestCase):
         self.assertTrue(response.json()["ok"])
         self.assertEqual(response.json()["items"], [{"text": "こんにちは"}])
         recognize.assert_called_once()
+
+    @patch(
+        "backend.app.recognize_detailed",
+        return_value=detailed("こんにちは", direction="vertical"),
+    )
+    def test_recognize_image_reports_the_direction_it_used(self, _recognize):
+        # The front end typesets from this value, so it has to survive the hop.
+        image = io.BytesIO()
+        Image.new("RGB", (8, 8), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-image",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.json()["direction"], "vertical")
 
     @patch("backend.ocr.manga_ocr_engine.MangaOcr")
     def test_recognize_splits_multiline_output(self, mock_manga_ocr):
@@ -244,7 +266,7 @@ class AppTests(unittest.TestCase):
         )
 
     @patch("backend.app.detect_text_regions", return_value=[(10, 12, 60, 55)])
-    @patch("backend.app.recognize", return_value=["こんにちは"])
+    @patch("backend.app.recognize_detailed", return_value=detailed("こんにちは"))
     def test_recognize_page_detects_and_recognizes_regions(self, recognize_mock, detect_mock):
         image = io.BytesIO()
         Image.new("RGB", (100, 80), "white").save(image, format="PNG")
@@ -260,6 +282,7 @@ class AppTests(unittest.TestCase):
             [{
                 "text": "こんにちは",
                 "bbox": {"left": 10, "top": 12, "right": 60, "bottom": 55},
+                "direction": "horizontal",
             }],
         )
         detect_mock.assert_called_once()
@@ -267,8 +290,8 @@ class AppTests(unittest.TestCase):
         recognize_mock.assert_called_once()
 
     @patch(
-        "backend.app.recognize",
-        side_effect=[["first phrase from panel"], ["second line says hello"]],
+        "backend.app.recognize_detailed",
+        side_effect=[detailed("first phrase from panel"), detailed("second line says hello")],
     )
     def test_recognize_page_returns_multiple_focused_multiword_items(self, recognize_mock):
         page = Image.new("RGB", (1000, 700), (235, 235, 235))
@@ -308,7 +331,10 @@ class AppTests(unittest.TestCase):
         "backend.app.detect_text_regions",
         return_value=[(10, 10, 60, 30), (80, 10, 130, 30), (150, 10, 220, 60)],
     )
-    @patch("backend.app.recognize", side_effect=[["．．．"], ["人間"], ["こんにちは、世界"]])
+    @patch(
+        "backend.app.recognize_detailed",
+        side_effect=[detailed("．．．"), detailed("人間"), detailed("こんにちは、世界")],
+    )
     def test_page_ocr_discards_short_visual_noise_but_keeps_dialogue(
         self, recognize_mock, _detect_mock
     ):
@@ -331,7 +357,7 @@ class AppTests(unittest.TestCase):
         "backend.app.detect_text_regions",
         side_effect=lambda image, limit: [(0, 0, 20, 20)] * limit,
     )
-    @patch("backend.app.recognize", return_value=["こんにちは"])
+    @patch("backend.app.recognize_detailed", return_value=detailed("こんにちは"))
     def test_recognize_page_ocr_calls_respect_region_limit(self, recognize_mock, _detect_mock):
         image = io.BytesIO()
         Image.new("RGB", (100, 80), "white").save(image, format="PNG")

@@ -677,6 +677,23 @@ function reconstructBackground(data, width, height, box) {
   }
 }
 
+/**
+ * Which way to typeset a region.
+ *
+ * The recogniser's verdict wins, because it looked at the pixels. The box's
+ * aspect ratio is only a fallback for when it had no opinion — short crops
+ * often leave the grid vote undecided, and a tall box is not evidence of
+ * vertical text: a two-line horizontal block is taller than it is wide too.
+ *
+ * @param {"vertical"|"horizontal"|null|undefined} direction from the backend
+ * @returns {boolean} true to typeset vertically
+ */
+function resolveTextDirection(direction, coreWidth, coreHeight) {
+  if (direction === "vertical") return true;
+  if (direction === "horizontal") return false;
+  return coreHeight > coreWidth * 1.35;
+}
+
 function drawTranslatedPatch(entry, text) {
   const {canvas, context, image, patch} = entry;
   context.clearRect(0, 0, canvas.width, canvas.height);
@@ -707,7 +724,9 @@ function drawTranslatedPatch(entry, text) {
   const coreHeight = (bottom - top) / (canvas.height / patch.rect.height);
   const characters = [...text.replace(/\s+/g, "")];
   if (!characters.length) return;
-  const vertical = coreHeight > coreWidth * 1.35;
+  // Trust the recogniser's verdict; only guess from the box's shape when it had
+  // no opinion.
+  const vertical = resolveTextDirection(entry.direction, coreWidth, coreHeight);
   let fontSize = Math.max(8, Math.min(
     25,
     Math.sqrt(coreWidth * coreHeight / (characters.length * (vertical ? 0.8 : 0.95)))
@@ -820,7 +839,12 @@ function renderResults(rect, result, pageMode) {
     canvas.height = patch ? Math.max(1, Math.round(patch.rect.height * window.devicePixelRatio)) : 1;
     const context = canvas.getContext("2d", {willReadFrequently: true});
     const image = new Image();
-    const entry = {canvas, context, image, patch, translatedText: null, sourceText: item.text?.trim() || ""};
+    const entry = {
+      canvas, context, image, patch,
+      translatedText: null,
+      sourceText: item.text?.trim() || "",
+      direction: item.direction || null
+    };
     if (patch?.dataUrl) {
       image.onload = () => {
         context.drawImage(image, 0, 0, canvas.width, canvas.height);

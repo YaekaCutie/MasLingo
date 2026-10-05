@@ -30,7 +30,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .image.decode import decode_image
 from .ocr.bubble_detector import MAX_TEXT_REGIONS, detect_text_regions
-from .ocr.manga_ocr_engine import get_engine, recognize
+from .ocr.manga_ocr_engine import get_engine, recognize, recognize_detailed
 from .translation.local_translator import translate_texts
 from .translation.openai_compatible import translate_texts as translate_openai_compatible
 
@@ -231,10 +231,13 @@ async def recognize_image(
     try:
         img = decode_image(raw)
         async with _ocr_slot():
-            texts = await run_in_threadpool(recognize, img)
+            result = await run_in_threadpool(recognize_detailed, img)
         return {
             "ok": True,
-            "items": [{"text": text} for text in texts]
+            # The front end lays the translation out with this, so it has to come
+            # from the same decision that drove recognition.
+            "direction": result["direction"],
+            "items": [{"text": text} for text in result["texts"]]
         }
     except UnidentifiedImageError as e:
         raise HTTPException(415, "无法识别图片格式，请上传 PNG、JPEG、WEBP 等有效图片。") from e
@@ -253,11 +256,15 @@ def _recognize_page_sync(img) -> list[dict]:
     for index, (left, top, right, bottom) in enumerate(regions, start=1):
         logger.info("自动页面 OCR 进度 %d/%d", index, len(regions))
         region = img.crop((left, top, right, bottom))
-        text = "\n".join(recognize(region)).strip()
+        detailed = recognize_detailed(region)
+        text = "\n".join(detailed["texts"]).strip()
         if _has_readable_text(text):
             items.append({
                 "text": text,
                 "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
+                # Reported per region so the extension typesets each one the way
+                # it was actually read.
+                "direction": detailed["direction"],
             })
     return items
 

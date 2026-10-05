@@ -98,7 +98,7 @@ async function recognizeRegion(msg,tabId,port){
       .map(item=>item.text?.trim())
       .filter(Boolean)
       .join("\n");
-    json.items = recognizedText ? [{text:recognizedText,patch}] : [];
+    json.items = recognizedText ? [{text:recognizedText,patch,direction:json.direction}] : [];
     postResult(port,tabId,{
       type:"RECOGNITION_RESULT",
       rect:r,

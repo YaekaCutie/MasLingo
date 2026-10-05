@@ -164,10 +164,12 @@ def _detect_text_direction(image):
     return max(results, key=lambda result: result[1])[0] if results else None
 
 
-def _vertical_column_bounds(image):
+def _vertical_column_bounds(image, direction=None):
     gray = ImageOps.grayscale(image)
     width, height = gray.size
-    if width < 32 or height < 48 or _detect_text_direction(image) != "vertical":
+    if direction is None:
+        direction = _detect_text_direction(image)
+    if width < 32 or height < 48 or direction != "vertical":
         return []
 
     scale = min(1.0, 512 / width, 768 / height)
@@ -223,8 +225,19 @@ def _vertical_column_bounds(image):
     ]
 
 
-def recognize(image):
-    columns = _vertical_column_bounds(image)
+def recognize_detailed(image):
+    """Recognise text and report the writing direction that was used.
+
+    The direction is decided here, from the pixels, by _detect_text_direction.
+    Anything that lays the translation back into the artwork must use this
+    verdict instead of guessing from the box's aspect ratio: a two-line
+    horizontal block is taller than it is wide, and the aspect-ratio guess
+    would typeset it as a single vertical column.
+
+    Returns {"texts": [...], "direction": "horizontal" | "vertical" | None}.
+    """
+    direction = _detect_text_direction(image)
+    columns = _vertical_column_bounds(image, direction)
     if columns:
         text = "".join(
             "".join(
@@ -234,8 +247,11 @@ def recognize(image):
             )
             for left, right in columns
         )
-        return [text] if text else []
+        return {"texts": [text] if text else [], "direction": "vertical"}
 
-    prepared = _prepare_image(image)
-    raw = get_engine()(prepared)
-    return _normalize_texts(raw)
+    raw = get_engine()(_prepare_image(image))
+    return {"texts": _normalize_texts(raw), "direction": direction}
+
+
+def recognize(image):
+    return recognize_detailed(image)["texts"]
