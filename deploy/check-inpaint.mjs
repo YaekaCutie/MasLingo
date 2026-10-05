@@ -63,6 +63,11 @@ try {
     // A plain linear gradient is included as a control: bilinear reproduces
     // that exactly, so it must not regress there.
     const scenarios = {
+      // The real manga case: flat balloon paper with black lettering. The result
+      // has to be clean uniform paper — anything left of the original shows up
+      // as a grey speck on white, which is exactly what "看起来像糊了" means.
+      balloon: { truth: () => 236, soft: false, contaminated: false, texture: 0, tint: [0, 0, 0] },
+      balloonCream: { truth: () => 231, soft: false, contaminated: false, texture: 0, tint: [5, 4, -9] },
       linear: { truth: (x, y) => 238 - 34 * (x / WIDTH) - 22 * (y / HEIGHT), soft: false, contaminated: false, texture: 0 },
       vignette: {
         // Curved falloff: no four corner-ish samples can follow this.
@@ -93,6 +98,7 @@ try {
     const contamination = { left: 0, top: 60, right: 26, bottom: 84 };
 
     const buildPatch = (scenario) => {
+      const tint = scenario.tint || [0, 0, 0];
       const data = new Uint8ClampedArray(WIDTH * HEIGHT * 4);
       for (let y = 0; y < HEIGHT; y += 1) {
         for (let x = 0; x < WIDTH; x += 1) {
@@ -100,9 +106,9 @@ try {
           if (scenario.texture) value += (random() - 0.5) * scenario.texture * 2;
           value = Math.max(0, Math.min(255, value));
           const offset = (y * WIDTH + x) * 4;
-          data[offset] = value;
-          data[offset + 1] = value;
-          data[offset + 2] = value;
+          data[offset] = value + tint[0];
+          data[offset + 1] = value + tint[1];
+          data[offset + 2] = value + tint[2];
           data[offset + 3] = 255;
         }
       }
@@ -175,22 +181,34 @@ try {
       }
     }
 
+    // `truth` must describe what the paper actually looks like, tint included —
+    // otherwise a tinted sample scores a constant offset as pure error.
+    const lumaOf = (scenario, x, y) => scenario.truth(x, y) + ((scenario.tint || [0, 0, 0])[0]);
+
     const score = (data, scenario) => {
       let sum = 0;
       let worst = 0;
       let ghost = 0;
+      const values = [];
       for (const [x, y] of glyphPixels) {
         const offset = (y * WIDTH + x) * 4;
-        const error = Math.abs(data[offset] - scenario.truth(x, y));
+        const expected = lumaOf(scenario, x, y);
+        const error = Math.abs(data[offset] - expected);
         sum += error;
         worst = Math.max(worst, error);
+        values.push(data[offset]);
         // "Ghost" = a pixel that should be paper but still reads as ink.
-        if (data[offset] < scenario.truth(x, y) - 45) ghost += 1;
+        if (data[offset] < expected - 45) ghost += 1;
       }
+      // Spread across the repaired area. A flat fill scores ~0; a smeared one
+      // (the "糊" the user described) scores high even when its average is close.
+      const mean = values.reduce((total, value) => total + value, 0) / values.length;
+      const variance = values.reduce((total, value) => total + (value - mean) ** 2, 0) / values.length;
       return {
         meanError: sum / glyphPixels.length,
         maxError: worst,
         ghostPercent: (ghost / glyphPixels.length) * 100,
+        fillSpread: Math.sqrt(variance),
       };
     };
 
@@ -222,8 +240,10 @@ try {
   });
 
   console.log(`glyph pixels : ${result.glyphCount}\n`);
-  console.log("场景                 旧:平均  旧:最大  旧:残影   新:平均  新:最大  新:残影");
+  console.log("场景                 旧:平均  旧:最大  旧:残影   新:平均  新:最大  新:残影  新:平整度");
   const labels = {
+    balloon: "白气球（真实场景）",
+    balloonCream: "米色气球（带色调）",
     linear: "线性渐变（对照）",
     vignette: "径向渐变（非线性）",
     softGlyphs: "抗锯齿软边字形",
@@ -235,7 +255,8 @@ try {
     console.log(
       `${label} ${entry.old.meanError.toFixed(1).padStart(6)}  ${entry.old.maxError.toFixed(0).padStart(6)}  ` +
       `${entry.old.ghostPercent.toFixed(1).padStart(5)}%  ${entry.next.meanError.toFixed(1).padStart(6)}  ` +
-      `${entry.next.maxError.toFixed(0).padStart(6)}  ${entry.next.ghostPercent.toFixed(1).padStart(5)}%`,
+      `${entry.next.maxError.toFixed(0).padStart(6)}  ${entry.next.ghostPercent.toFixed(1).padStart(5)}%  ` +
+      `${entry.next.fillSpread.toFixed(1).padStart(8)}`,
     );
   }
   console.log(`\n文字框外的像素被改动: ${result.outsideChanged}（应为 0）`);
@@ -253,6 +274,20 @@ try {
   //    better, which is the whole point of the change.
   const VISIBLE = 3;
   const NEGLIGIBLE = 0.6;
+  // The flat-balloon cases are the ones the user actually sees, and there the
+  // bar is higher: nothing left of the original and a perfectly even fill.
+  for (const name of ["balloon", "balloonCream"]) {
+    const entry = result.report[name];
+    if (entry.next.meanError > 2.5) {
+      failures.push(`${labels[name]} 与背景色差 ${entry.next.meanError.toFixed(1)}，超过 2.5`);
+    }
+    if (entry.next.ghostPercent > 0.2) {
+      failures.push(`${labels[name]} 仍有 ${entry.next.ghostPercent.toFixed(1)}% 原墨迹残留`);
+    }
+    if (entry.next.fillSpread > 3) {
+      failures.push(`${labels[name]} 填补区域不平整（标准差 ${entry.next.fillSpread.toFixed(1)}，像糊了）`);
+    }
+  }
   for (const name of ["vignette", "softGlyphs", "contaminatedEdge", "textured"]) {
     const entry = result.report[name];
     if (entry.old.meanError > VISIBLE) {

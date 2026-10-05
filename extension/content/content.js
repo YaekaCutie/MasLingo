@@ -469,7 +469,41 @@ function reconstructBackground(data, width, height, box) {
 
   const ink = new Uint8Array(boxWidth * boxHeight);
   const estimate = new Float32Array(boxWidth * boxHeight * 3);
-  const threshold = 26;
+
+  // How flat is the paper around this box? The bands sampled just outside it are
+  // background by construction, so their spread answers that before the mask is
+  // built — which matters, because the right mask depends on the answer. A
+  // generous mask is safe on flat paper (the fill is solid anyway) and damaging
+  // on a gradient (it eats artwork the diffusion then has to invent).
+  const bandLuma = [];
+  for (const band of [leftBand, rightBand, topBand, bottomBand]) {
+    for (const sample of band) {
+      if (sample) bandLuma.push((sample[0] * 299 + sample[1] * 587 + sample[2] * 114) / 1000);
+    }
+  }
+  let flatPaper = false;
+  if (bandLuma.length >= 8) {
+    const histogram = new Uint32Array(256);
+    for (const value of bandLuma) histogram[Math.max(0, Math.min(255, Math.round(value)))] += 1;
+    let mode = 0;
+    let modeCount = 0;
+    for (let value = 0; value < 256; value += 1) {
+      if (histogram[value] > modeCount) { modeCount = histogram[value]; mode = value; }
+    }
+    let within = 0;
+    // Tight on purpose. Real balloon paper stays within a couple of levels, and
+    // a loose band here misclassifies a gentle gradient as flat — which then
+    // gets a solid fill and shows up as a rectangle.
+    for (let value = Math.max(0, mode - 6); value <= Math.min(255, mode + 6); value += 1) {
+      within += histogram[value];
+    }
+    flatPaper = within / bandLuma.length >= 0.9;
+  }
+
+  // Deliberately generous on flat paper: the fill is solid, so anything the mask
+  // misses stays behind as a grey speck on white, which is far more noticeable
+  // than covering a few extra pixels of a balloon.
+  const threshold = flatPaper ? 18 : 26;
 
   for (let y = top; y < bottom; y++) {
     const verticalPosition = (y - top + 0.5) / boxHeight;
@@ -490,14 +524,15 @@ function reconstructBackground(data, width, height, box) {
     }
   }
 
-  // Dilate by one pixel: antialiased stroke edges sit close to the estimate and
-  // would otherwise survive as a pale outline around the new text.
+  // Dilate by two pixels: antialiased stroke edges sit close to the estimate
+  // and would otherwise survive as a pale outline around the new text.
   const mask = new Uint8Array(boxWidth * boxHeight);
+  const dilate = flatPaper ? 2 : 1;
   for (let y = 0; y < boxHeight; y++) {
     for (let x = 0; x < boxWidth; x++) {
       let hit = 0;
-      for (let dy = -1; dy <= 1 && !hit; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -dilate; dy <= dilate && !hit; dy++) {
+        for (let dx = -dilate; dx <= dilate; dx++) {
           const nx = x + dx;
           const ny = y + dy;
           if (nx < 0 || ny < 0 || nx >= boxWidth || ny >= boxHeight) continue;
@@ -506,6 +541,71 @@ function reconstructBackground(data, width, height, box) {
       }
       mask[y * boxWidth + x] = hit;
     }
+  }
+
+  // --- dominant background colour ------------------------------------------
+  //
+  // Diffusion gave a soft, smeared fill: whatever ink the mask missed got
+  // averaged into the result, so a white balloon came back light grey and read
+  // as "blurry". Manga balloons are flat, so the right answer is usually the
+  // single most common tone, painted on solid — indistinguishable from the
+  // untouched page. Diffusion is kept only for genuinely non-uniform
+  // backgrounds, where a flat fill would show up as a rectangle.
+  const lumaHistogram = new Uint32Array(256);
+  let backgroundPixels = 0;
+  for (let index = 0; index < mask.length; index++) {
+    if (mask[index]) continue;
+    const x = left + (index % boxWidth);
+    const y = top + Math.floor(index / boxWidth);
+    const offset = (y * width + x) * 4;
+    const luma = (data[offset] * 299 + data[offset + 1] * 587 + data[offset + 2] * 114) / 1000;
+    lumaHistogram[Math.max(0, Math.min(255, Math.round(luma)))] += 1;
+    backgroundPixels += 1;
+  }
+  let modalLuma = 0;
+  let modalCount = 0;
+  for (let value = 0; value < 256; value += 1) {
+    if (lumaHistogram[value] > modalCount) {
+      modalCount = lumaHistogram[value];
+      modalLuma = value;
+    }
+  }
+  let inModalBand = 0;
+  for (let value = Math.max(0, modalLuma - 8); value <= Math.min(255, modalLuma + 8); value += 1) {
+    inModalBand += lumaHistogram[value];
+  }
+  const uniformity = backgroundPixels ? inModalBand / backgroundPixels : 0;
+
+  // Average the modal band rather than the exact mode, so a slightly warm or
+  // cool paper keeps its tint.
+  const flat = new Float32Array([modalLuma, modalLuma, modalLuma]);
+  if (backgroundPixels) {
+    const sums = [0, 0, 0];
+    let counted = 0;
+    for (let index = 0; index < mask.length; index++) {
+      if (mask[index]) continue;
+      const x = left + (index % boxWidth);
+      const y = top + Math.floor(index / boxWidth);
+      const offset = (y * width + x) * 4;
+      const luma = (data[offset] * 299 + data[offset + 1] * 587 + data[offset + 2] * 114) / 1000;
+      if (Math.abs(luma - modalLuma) > 8) continue;
+      for (let c = 0; c < 3; c += 1) sums[c] += data[offset + c];
+      counted += 1;
+    }
+    if (counted) for (let c = 0; c < 3; c += 1) flat[c] = sums[c] / counted;
+  }
+
+  if (uniformity >= 0.72 && backgroundPixels > 0) {
+    for (let index = 0; index < mask.length; index += 1) {
+      if (!mask[index]) continue;
+      const x = left + (index % boxWidth);
+      const y = top + Math.floor(index / boxWidth);
+      const offset = (y * width + x) * 4;
+      data[offset] = flat[0];
+      data[offset + 1] = flat[1];
+      data[offset + 2] = flat[2];
+    }
+    return;
   }
 
   // Colours to fill, seeded from the original pixels; `known` marks the ones we
