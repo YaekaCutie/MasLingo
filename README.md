@@ -1,4 +1,4 @@
-# OpenMangaTranslator v1.0.2
+# OpenMangaTranslator v1.1.4
 
 日漫全平台 OCR 翻译器浏览器插件。根据 OCR 原理，可以自动检测当前可见页面中的文字区域翻译当前页面，或者框选翻译；翻译开启后，扩展在原图文字范围内修复背景并绘制中文。
 
