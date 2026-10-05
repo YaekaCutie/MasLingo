@@ -55,7 +55,42 @@ async function fetchImageBytes(url) {
   return `data:${mime};base64,${btoa(binary)}`;
 }
 
+/**
+ * Crop an element's pixels out of a screenshot of the visible tab.
+ *
+ * The fallback for pictures that cannot be fetched at all — a CDN that refuses
+ * the extension outright. A screenshot is always readable because it never
+ * touches the page's own image loading, and it is what manual mode has always
+ * used. It only covers the viewport, so the caller must confirm the element is
+ * fully on screen before relying on it.
+ */
+async function captureElementCrop(viewport) {
+  const { tab, bmp } = await captureVisibleImage(viewport.tabId);
+  const scaleX = bmp.width / viewport.width;
+  const scaleY = bmp.height / viewport.height;
+  const rect = viewport.rect;
+  const left = Math.max(0, Math.floor(rect.left * scaleX));
+  const top = Math.max(0, Math.floor(rect.top * scaleY));
+  const right = Math.min(bmp.width, Math.ceil((rect.left + rect.width) * scaleX));
+  const bottom = Math.min(bmp.height, Math.ceil((rect.top + rect.height) * scaleY));
+  const width = right - left;
+  const height = bottom - top;
+  if (width < 16 || height < 16) throw new Error("元素不在可视区域内");
+
+  const canvas = new OffscreenCanvas(width, height);
+  canvas.getContext("2d").drawImage(bmp, left, top, width, height, 0, 0, width, height);
+  const blob = await canvas.convertToBlob({ type: "image/png" });
+  return { dataUrl: await blobToDataUrl(blob), tab };
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "CAPTURE_CROP") {
+    captureElementCrop(message).then(
+      (result) => sendResponse({ ok: true, dataUrl: result.dataUrl }),
+      (error) => sendResponse({ ok: false, error: error.message }),
+    );
+    return true;
+  }
   if (message?.type === "FETCH_IMAGE") {
     fetchImageBytes(message.url).then(
       (dataUrl) => sendResponse({ ok: true, dataUrl }),

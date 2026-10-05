@@ -170,6 +170,29 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 manifest.host_permissions = [...(manifest.host_permissions || []), "<all_urls>"];
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
+// A third origin that serves the picture to the page but refuses the extension.
+// That is what a hotlink-protecting CDN looks like from inside an extension, and
+// it is the case only the screenshot route can handle: the picture is on screen,
+// so its pixels can be captured even though they cannot be fetched.
+const guarded = http.createServer((request, response) => {
+  const match = IMAGES.find(({ name }) => request.url === `/${name}`);
+  if (!match) {
+    response.writeHead(404).end();
+    return;
+  }
+  const fromExtension = Boolean(request.headers.origin?.startsWith("chrome-extension://"))
+    || request.headers["sec-fetch-site"] === "cross-site";
+  if (fromExtension) {
+    response.writeHead(403).end("no");
+    return;
+  }
+  const body = encoded.get(match.name);
+  response.writeHead(200, { "Content-Type": "image/png", "Content-Length": body.length });
+  response.end(body);
+});
+await new Promise((done) => guarded.listen(0, "127.0.0.1", done));
+const guardedUrl = `http://127.0.0.1:${guarded.address().port}`;
+
 // A second origin for the pictures. A content script cannot use the extension's
 // host permissions to fetch cross-origin (MV3), so this reproduces the user's
 // "图片读取失败 403": the direct fetch fails and only the service worker relay
@@ -202,6 +225,12 @@ const pages = http.createServer((request, response) => {
       </head><body>
       <img id="ghost" src="/missing-thumbnail.png">
       <img id="real" src="/p1.png"></body></html>`);
+    return;
+  }
+  if (request.url === "/guarded") {
+    response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>guarded</title>
+      <style>body{margin:0;background:#2a2a2a}img{display:block;width:600px;height:840px;margin:8px auto}</style>
+      </head><body><img id="locked" src="${guardedUrl}/p1.png"></body></html>`);
     return;
   }
   if (request.url === "/crossorigin") {
@@ -512,6 +541,24 @@ try {
   await cross.close();
   const afterCross = ocrCalls.length;
 
+  console.log("\nCDN 拒绝扩展取图（只剩截图一条路）");
+  const lockedBefore = ocrCalls.length;
+  const locked = await browser.newPage();
+  watch(locked, "locked");
+  await locked.setViewport({ width: 900, height: 1000 });
+  await locked.goto(`${pageUrl}guarded`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 9000));
+  const lockedState = await locked.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+  }));
+  const lockedProbe = await readStatus(locked);
+  console.log(`      画布 ${lockedState.canvases}，图片失败 ${JSON.stringify(lockedProbe.stats?.imageFailures)}`);
+  check("拒绝扩展取图时仍然读到", ocrCalls.length > lockedBefore);
+  check("拒绝扩展取图时画出了译文", lockedState.canvases >= 1);
+  check("截图兜底没有被记为失败", (lockedProbe.stats?.imageFailures?.unreadable || 0) === 0);
+  await locked.close();
+  const afterLocked = ocrCalls.length;
+
   console.log("\n弹窗状态（用户实际看到的那行字）");
   // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
   // the switch on and nothing happening — a dead end with no way forward. The
@@ -546,7 +593,7 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterCross);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterLocked);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 
@@ -564,6 +611,7 @@ try {
   backend.close();
   pages.close();
   cdn.close();
+  guarded.close();
   rmSync(workDir, { recursive: true, force: true });
 }
 

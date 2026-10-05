@@ -335,39 +335,82 @@ const OMT_auto = (() => {
 
   // --- pixels ---------------------------------------------------------------
 
+  /**
+   * Get the picture's pixels, preferring the original file.
+   *
+   * Three routes, tried in this order, because each one fails where the others
+   * work:
+   *
+   *   1. a plain fetch — free for same-origin pictures and anything that sends
+   *      CORS headers;
+   *   2. the service worker fetching it — needed for every other host, since a
+   *      content script cannot use the extension's host permissions (MV3) and
+   *      most manga CDNs therefore answer it 403;
+   *   3. a screenshot of the visible tab, cropped — the always-works fallback,
+   *      which is what manual mode has used all along. It only sees the
+   *      viewport, so it is used only when the element is fully on screen.
+   *
+   * Fetching is preferred because it yields the whole picture at its original
+   * resolution: a screenshot is limited to what is visible right now and to the
+   * screen's pixel density, so a page taller than the window would be read in
+   * fragments.
+   */
   async function loadBitmap(element) {
     if (element.tagName === "CANVAS") {
       // A canvas the page drew cross-origin content into is tainted; reading it
       // throws, and there is nothing safe to do about that.
       return createImageBitmap(element);
     }
+
     const src = element.currentSrc || element.src;
-    if (!src) {
+    let fromUrl = src;
+    if (!fromUrl) {
       const background = getComputedStyle(element).backgroundImage.match(/url\(["']?([^"')]+)/);
       if (!background) throw new Error("没有可用的图片地址");
-      return loadFromUrl(background[1]);
+      fromUrl = background[1];
     }
-    return loadFromUrl(src);
-  }
 
-  async function loadFromUrl(url) {
-    // Fetched as bytes rather than drawn from the element: a cross-origin <img>
-    // drawn straight into a canvas taints it, and every later getImageData()
-    // would throw. Bytes from the extension are same-origin to the blob.
-    //
-    // The direct fetch only works for same-origin or CORS-enabled pictures. A
-    // content script cannot use the extension's host permissions, so anything
-    // else — which is most manga CDNs — has to go through the service worker.
+    const errors = [];
     try {
-      const response = await fetch(url, { credentials: "omit" });
-      if (response.ok) return createImageBitmap(await response.blob());
-    } catch {
-      /* fall through to the service worker */
+      const response = await fetch(fromUrl, { credentials: "omit" });
+      if (response.ok) return await createImageBitmap(await response.blob());
+      errors.push(`直连 ${response.status}`);
+    } catch (error) {
+      errors.push(`直连 ${error.message}`);
     }
-    const relayed = await chrome.runtime.sendMessage({ type: "FETCH_IMAGE", url });
-    if (!relayed?.ok) throw new Error(relayed?.error || "图片读取失败");
-    const blob = await (await fetch(relayed.dataUrl)).blob();
-    return createImageBitmap(blob);
+
+    try {
+      const relayed = await chrome.runtime.sendMessage({ type: "FETCH_IMAGE", url: fromUrl });
+      if (relayed?.ok) {
+        const blob = await (await fetch(relayed.dataUrl)).blob();
+        return await createImageBitmap(blob);
+      }
+      errors.push(relayed?.error || "后台取图失败");
+    } catch (error) {
+      errors.push(`后台 ${error.message}`);
+    }
+
+    const rect = element.getBoundingClientRect();
+    const fullyVisible = (
+      rect.top >= 0 && rect.left >= 0 &&
+      rect.bottom <= window.innerHeight && rect.right <= window.innerWidth
+    );
+    if (fullyVisible && rect.width >= 16 && rect.height >= 16) {
+      const shot = await chrome.runtime.sendMessage({
+        type: "CAPTURE_CROP",
+        rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      if (shot?.ok) {
+        const blob = await (await fetch(shot.dataUrl)).blob();
+        return await createImageBitmap(blob);
+      }
+      errors.push(shot?.error || "截图失败");
+    } else {
+      errors.push("元素未完整显示，无法截图");
+    }
+
+    throw new Error(errors.join("；"));
   }
 
   function toDataUrl(bitmap, width, height) {
