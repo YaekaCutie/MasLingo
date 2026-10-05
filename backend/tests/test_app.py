@@ -519,11 +519,17 @@ class ConfidenceFilterTests(unittest.TestCase):
                 self.assertFalse(is_confident_reading(text, confidence))
 
     def test_keeps_short_readings_the_model_is_sure_of(self):
-        for text, confidence in [
-            ("楓ちゃんね♥", 1.00), ("え！？", 1.00), ("魚", 0.77), ("！！", 1.00),
-        ]:
+        for text, confidence in [("楓ちゃんね♥", 1.00), ("え！？", 1.00), ("ん", 0.76)]:
             with self.subTest(text=text[:8]):
                 self.assertTrue(is_confident_reading(text, confidence))
+
+    def test_drops_short_readings_without_kana(self):
+        # A region of artwork reads back as an isolated kanji or bare
+        # punctuation, never as speech. Both were measured on a real page: a
+        # running figure as '魚', a hand as '（'.
+        for text, confidence in [("魚", 0.77), ("（", 0.84), ("！", 1.00), ("！！", 1.00)]:
+            with self.subTest(text=text[:8]):
+                self.assertFalse(is_confident_reading(text, confidence))
 
     def test_documents_what_the_short_rule_costs(self):
         for text, confidence in self.DROPPED_SHORT:

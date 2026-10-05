@@ -41,6 +41,13 @@ MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
 SHORT_READING_LENGTH = int(os.getenv("OMT_SHORT_READING_LENGTH", "5"))
 SHORT_READING_CONFIDENCE = float(os.getenv("OMT_SHORT_READING_CONFIDENCE", "0.75"))
 
+
+def _has_kana(text: str) -> bool:
+    return any(
+        "\u3040" <= character <= "\u30ff" or "\uff66" <= character <= "\uff9f"
+        for character in text
+    )
+
 # Share of full-width Latin letters above which a reading is rejected.
 #
 # This targets one specific failure with no ambiguity in it: given English
@@ -337,6 +344,13 @@ def is_confident_reading(text, confidence):
         return False
     length = sum(1 for character in text if character.isalnum())
     if length <= SHORT_READING_LENGTH:
+        # A short answer also has to look like speech. Isolated kanji and bare
+        # punctuation are what a region of artwork produces — a running figure
+        # came back as '魚' at 0.77 and a hand as '（' at 0.84 — and no dialogue
+        # line is ever just those. Sound effects and drawn-in lettering are
+        # deliberately out of scope, so requiring kana costs nothing wanted.
+        if not _has_kana(text):
+            return False
         return confidence >= SHORT_READING_CONFIDENCE
     if confidence >= MIN_CONFIDENCE:
         return True
