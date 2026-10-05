@@ -25,15 +25,20 @@ const OMT_auto = (() => {
   let enabled = false;
   let concurrency = 1;
   let running = 0;
+  let failures = 0;
   const queue = [];
   /** regionId -> { state, attempts } */
   const tracked = new Map();
   const elementIds = new WeakMap();
   let nextElementId = 1;
   let visibilityObserver = null;
+  let sizeObserver = null;
   let mutationObserver = null;
   let mutationTimer = null;
   const pendingElements = new Set();
+  /** Pictures already handed to the queue, by media key. */
+  const processed = new WeakMap();
+  const inFlight = new Set();
 
   // --- identity -------------------------------------------------------------
 
@@ -43,15 +48,17 @@ const OMT_auto = (() => {
   }
 
   /**
-   * A stable name for the picture.
+   * A stable name for the picture, from what the element already knows.
    *
    * The URL alone is not enough: a reader that swaps `src` on the same element
    * between pages would look identical, and one image reused in two places would
    * collide. Size and the element's identity disambiguate both.
    */
-  function imageKey(element, width, height) {
+  function mediaKey(element) {
     const src = element.currentSrc || element.src || element.getAttribute?.("src") || "";
-    return `${src}|${width}x${height}|${elementId(element)}`;
+    const width = element.naturalWidth || element.width || 0;
+    const height = element.naturalHeight || element.height || 0;
+    return { src, width, height, key: `${src}|${width}x${height}|${elementId(element)}` };
   }
 
   /**
@@ -97,9 +104,13 @@ const OMT_auto = (() => {
     const selector = "img, canvas, [role='img'], [style*='background-image']";
     const walk = (node) => {
       if (node.nodeType !== 1) return;
-      if (node.matches?.(selector) && isCandidate(node)) found.push(node);
+      // No size judgement here either. Filtering by size at collect time was the
+      // actual bug behind "detected the manga, then did nothing for nine
+      // minutes": the picture was small at that instant, so it was never even
+      // handed to the observers that would have noticed it grow.
+      if (node.matches?.(selector)) found.push(node);
       const nested = node.querySelectorAll?.(selector);
-      if (nested) for (const child of nested) if (isCandidate(child)) found.push(child);
+      if (nested) for (const child of nested) found.push(child);
     };
     if (root === document) {
       walk(document.documentElement);
@@ -109,35 +120,82 @@ const OMT_auto = (() => {
     return found;
   }
 
-  function observe(element) {
-    if (pendingElements.has(element)) return;
-    pendingElements.add(element);
-    visibilityObserver?.observe(element);
-  }
-
   /** Scan without rescanning the world: only newly added subtrees are walked. */
   function scan(root = document) {
     if (!enabled) return;
     for (const element of collect(root)) observe(element);
   }
 
+  function observe(element) {
+    if (pendingElements.has(element)) return;
+    pendingElements.add(element);
+    // Size is deliberately NOT judged here. A picture that is still laying out —
+    // Bing's image viewer, a lazy loader, anything behind a CSS transition — is
+    // small at this instant and would be rejected for good: the scan happens
+    // once, and nothing looks at it again. It is judged when it becomes visible,
+    // and re-judged every time it resizes.
+    visibilityObserver?.observe(element);
+    sizeObserver?.observe(element);
+  }
+
+  /** Is any part of this element near the viewport? */
+  function onScreen(element) {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const margin = 400;
+    return (
+      rect.bottom > -margin &&
+      rect.top < window.innerHeight + margin &&
+      rect.right > -margin &&
+      rect.left < window.innerWidth + margin
+    );
+  }
+
+  /**
+   * Take a picture under consideration — this is the only path into the queue.
+   *
+   * Called when an element becomes visible and whenever it resizes, so an image
+   * that grows into a manga page is picked up the moment it does.
+   */
+  function consider(element) {
+    if (!enabled || !element.isConnected) return;
+    if (!isCandidate(element)) return;
+    const media = mediaKey(element);
+    if (processed.get(element) === media.key) return;
+    visibilityObserver?.unobserve(element);
+    sizeObserver?.unobserve(element);
+    pendingElements.delete(element);
+    enqueue(element, media);
+  }
+
   function onVisible(entries) {
     if (!enabled) return;
     for (const entry of entries) {
       if (!entry.isIntersecting) continue;
-      const element = entry.target;
-      visibilityObserver.unobserve(element);
-      pendingElements.delete(element);
-      enqueue(element);
+      // Stays observed when it is not a candidate yet: it may still grow.
+      consider(entry.target);
+    }
+  }
+
+  function onResize(entries) {
+    if (!enabled) return;
+    for (const entry of entries) {
+      if (!onScreen(entry.target)) continue;
+      consider(entry.target);
     }
   }
 
   // --- queue ----------------------------------------------------------------
 
-  function enqueue(element) {
+  function enqueue(element, media) {
     if (!enabled) return;
+    if (inFlight.has(element)) return;
     if (queue.some((task) => task.element === element)) return;
-    queue.push({ element, attempts: 0 });
+    // Remembered now so a resize mid-flight cannot queue the same picture twice;
+    // cleared on failure so a genuine retry is still possible.
+    processed.set(element, media.key);
+    inFlight.add(element);
+    queue.push({ element, media, attempts: 0 });
     pump();
   }
 
@@ -163,7 +221,7 @@ const OMT_auto = (() => {
       bitmap = await loadBitmap(element);
       if (!bitmap || bitmap.width < MIN_IMAGE_SIDE || bitmap.height < MIN_IMAGE_SIDE) return;
 
-      const key = imageKey(element, bitmap.width, bitmap.height);
+      const key = task.media.key;
       const scale = Math.min(1, OCR_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
       const sendWidth = Math.max(1, Math.round(bitmap.width * scale));
       const sendHeight = Math.max(1, Math.round(bitmap.height * scale));
@@ -235,9 +293,14 @@ const OMT_auto = (() => {
         }, 800 * task.attempts);
       } else {
         console.warn("[OMT] 放弃这张图片：", error.message);
+        // Let it be considered again — the failure may have been transient, and
+        // the picture may also have changed since.
+        processed.delete(element);
+        failures += 1;
       }
       throw error;
     } finally {
+      inFlight.delete(element);
       bitmap?.close?.();
     }
   }
@@ -361,6 +424,12 @@ const OMT_auto = (() => {
         rootMargin: "400px 0px",
       });
     }
+    if (!sizeObserver) {
+      // The reason this exists: a picture that reaches its real size after the
+      // scan. Without it, anything still laying out at that moment is invisible
+      // to auto translate forever.
+      sizeObserver = new ResizeObserver(onResize);
+    }
     if (!mutationObserver) {
       mutationObserver = new MutationObserver((records) => {
         // Coalesced: image galleries fire hundreds of mutations while loading.
@@ -382,6 +451,7 @@ const OMT_auto = (() => {
 
   function detachObservers() {
     visibilityObserver?.disconnect();
+    sizeObserver?.disconnect();
     mutationObserver?.disconnect();
     if (mutationTimer) clearTimeout(mutationTimer);
     mutationTimer = null;
@@ -441,7 +511,7 @@ const OMT_auto = (() => {
       queued: queue.length,
       running,
       translated: [...tracked.values()].filter((r) => r.state === STATE.TRANSLATED).length,
-      failed: [...tracked.values()].filter((r) => r.state === STATE.FAILED).length,
+      failed: [...tracked.values()].filter((r) => r.state === STATE.FAILED).length + failures,
     }),
   };
 })();

@@ -112,6 +112,10 @@ async function refreshAutoStatus({ allowInject = true } = {}) {
     const busy = stats.queued + stats.running;
     if (busy > 0) {
       setStatusText(`正在翻译 ${busy} 个区域`, "working");
+    } else if (stats.failed > 0 && stats.translated === 0) {
+      // Nothing worked. Reporting "正在检测漫画" here is what left the user
+      // watching a page that was never going to change.
+      setStatusText(`✗ ${stats.failed} 处识别失败，请检查后端`, "error");
     } else if (stats.translated > 0 && stats.failed === 0) {
       setStatusText(`✓ 当前页面翻译完成（${stats.translated} 处）`, "done");
     } else if (stats.translated > 0) {

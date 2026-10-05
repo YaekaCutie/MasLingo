@@ -148,6 +148,19 @@ const pages = http.createServer((request, response) => {
     return;
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  if (request.url === "/grow") {
+    // An image that is laid out small and only reaches its real size later —
+    // what Bing's image viewer, lazy loaders and CSS transitions all do.
+    response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>grow</title>
+      <style>body{margin:0;background:#2a2a2a}#late{display:block;width:90px;height:126px;margin:40px}</style>
+      </head><body><img id="late" src="/p1.png">
+      <script>setTimeout(() => {
+        const image = document.getElementById("late");
+        image.style.width = "600px";
+        image.style.height = "840px";
+      }, 1800);</script></body></html>`);
+    return;
+  }
   response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>manga</title>
     <style>
       body{margin:0;background:#2a2a2a;font:14px system-ui}
@@ -274,8 +287,28 @@ try {
   check("图片直链页面画出了译文", bareState.canvases >= 1);
   if (bareErrors.length) for (const error of bareErrors) console.log(`      ${error.slice(0, 200)}`);
   await bare.close();
-  // The bare page added one more OCR call; later comparisons use this baseline.
-  const afterBare = ocrCalls.length;
+
+  console.log("\n图片先小后大（查看器 / 懒加载 / CSS 过渡）");
+  // The user's recording showed the notice firing and then nothing at all for
+  // nine minutes: the scan ran, but the picture had not reached its final size
+  // yet, and a candidate rejected at scan time was never looked at again.
+  const growBefore = ocrCalls.length;
+  const grow = await browser.newPage();
+  const growErrors = [];
+  grow.on("pageerror", (error) => growErrors.push(String(error)));
+  await grow.setViewport({ width: 900, height: 1000 });
+  await grow.goto(`${pageUrl}grow`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 7000));
+  const growState = await grow.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+    width: document.getElementById("late")?.getBoundingClientRect().width,
+  }));
+  console.log(`      图片最终宽度 ${growState.width}px，画布 ${growState.canvases}`);
+  check("图片长大后仍然被处理", ocrCalls.length > growBefore);
+  check("图片长大后画出了译文", growState.canvases >= 1);
+  if (growErrors.length) for (const error of growErrors) console.log(`      ${error.slice(0, 200)}`);
+  await grow.close();
+  const afterGrow = ocrCalls.length;
 
   console.log("\n弹窗状态（用户实际看到的那行字）");
   // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
@@ -310,7 +343,7 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterBare);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterGrow);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 
