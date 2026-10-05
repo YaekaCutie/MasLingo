@@ -1,3 +1,10 @@
+// Marks this frame as carrying the extension's scripts. The popup probes for it
+// to tell "never injected here" apart from "injected by a previous version of
+// the extension and now orphaned", which is what happens when the extension is
+// reloaded while a page stays open. The two look identical from the popup and
+// need opposite advice: inject, or refresh the page.
+globalThis.__OMT_LOADED__ = true;
+
 let selecting = false;
 let dragging = false;
 let startX = 0;

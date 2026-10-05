@@ -249,12 +249,68 @@ try {
   await new Promise((r) => setTimeout(r, 2500));
   check("反复滚动不产生新的 OCR 请求", ocrCalls.length === afterScroll);
 
+  console.log("\n图片直链页面（Chrome 会包一层最简 HTML）");
+  // Manga sites very often link straight at the .jpg, and the user's own test
+  // page was one of those. It is a different document shape from a real page,
+  // so it gets its own pass rather than being assumed equivalent.
+  await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
+  const bareBefore = ocrCalls.length;
+  const extensionId = new URL(worker.url()).host;
+  const bare = await browser.newPage();
+  const bareErrors = [];
+  bare.on("pageerror", (error) => bareErrors.push(String(error)));
+  await bare.setViewport({ width: 900, height: 1000 });
+  await bare.goto(`${pageUrl}p1.png`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 5000));
+  const bareState = await bare.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+    images: document.querySelectorAll("img").length,
+    layer: Boolean(document.getElementById("omt-layer")),
+  })).catch(() => ({ canvases: -1, images: -1, layer: false }));
+  console.log(`      img=${bareState.images} layer=${bareState.layer} canvases=${bareState.canvases}`);
+  check("图片直链页面注入了覆盖层", bareState.layer);
+  check("图片直链页面识别到了图片", bareState.images >= 1);
+  check("图片直链页面被送去 OCR", ocrCalls.length > bareBefore);
+  check("图片直链页面画出了译文", bareState.canvases >= 1);
+  if (bareErrors.length) for (const error of bareErrors) console.log(`      ${error.slice(0, 200)}`);
+  await bare.close();
+  // The bare page added one more OCR call; later comparisons use this baseline.
+  const afterBare = ocrCalls.length;
+
+  console.log("\n弹窗状态（用户实际看到的那行字）");
+  // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
+  // the switch on and nothing happening — a dead end with no way forward. The
+  // status must name the real situation instead.
+  const popup = await browser.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
+  // puppeteer's newPage() opens its own window, so the popup would otherwise ask
+  // about itself. Point it at the real manga tab, which is what a real popup —
+  // not being a tab at all — would see.
+  const mangaTabId = await worker.evaluate(async (url) => {
+    const tabs = await chrome.tabs.query({});
+    return tabs.find((candidate) => candidate.url === url)?.id ?? null;
+  }, pageUrl);
+  await popup.evaluate(async (tabId) => {
+    activeTabId = tabId;
+    await refreshAutoStatus();
+  }, mangaTabId);
+  await new Promise((r) => setTimeout(r, 1200));
+  const popupText = await popup.evaluate(() => ({
+    text: document.getElementById("autoStateText")?.textContent?.trim(),
+    kind: document.getElementById("autoState")?.dataset.state,
+  }));
+  console.log(`      “${popupText.text}” (${popupText.kind})`);
+  check("弹窗给出可操作的状态而不是死路",
+    Boolean(popupText.text) && popupText.text !== "当前页面无法使用", popupText.text);
+  check("自动翻译已开时状态不是“未开启”", popupText.text !== "未开启", popupText.text);
+  await popup.close();
+
   console.log("\n关闭开关");
   await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: false }));
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterScroll);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterBare);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 

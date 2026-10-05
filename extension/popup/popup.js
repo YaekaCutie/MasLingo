@@ -5,6 +5,7 @@ const autoStateText = document.getElementById("autoStateText");
 
 let statusTimer = null;
 let activeTabId = null;
+let lastTabUrl = "";
 
 function setStatusText(text, state = "idle") {
   autoState.dataset.state = state;
@@ -32,13 +33,76 @@ async function fetchBackend(path, options = {}) {
 
 // --- auto translate status --------------------------------------------------
 
-/** Ask the page what auto translate is doing. Failures are normal: the content
- *  script is absent on chrome:// pages and the Web Store. */
-async function refreshAutoStatus() {
-  if (!activeTabId) {
-    setStatusText("当前页面无法使用", "idle");
+/**
+ * Work out why a page is not answering.
+ *
+ * Three different situations all present as "no response", and telling the user
+ * the wrong one sends them nowhere:
+ *
+ *   ok         — the content script is there and talking;
+ *   stale      — a script from a previous version of the extension is still in
+ *                the page but its runtime is gone (the extension was reloaded
+ *                with the page open). Only a page refresh fixes this; injecting
+ *                again would just stack a second copy on top of a dead one;
+ *   missing    — nothing was injected here, which is normal for a page that was
+ *                already open when the extension loaded. Injecting fixes it;
+ *   restricted — the browser forbids extensions on this page.
+ */
+async function diagnoseFrame(tabId) {
+  if (!tabId) return "restricted";
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    return "ok";
+  } catch {
+    /* fall through to the probe */
+  }
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => Boolean(globalThis.__OMT_LOADED__),
+    });
+    return probe?.result ? "stale" : "missing";
+  } catch (error) {
+    return /Cannot access|chrome:\/\/|extensions gallery|The extensions gallery/i.test(error.message)
+      ? "restricted"
+      : "restricted";
+  }
+}
+
+async function injectContentScript(tabId) {
+  await chrome.scripting.insertCSS({ target: { tabId }, files: ["content/styles.css"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content/overlay.js", "content/auto.js", "content/content.js"],
+  });
+}
+
+/**
+ * Ask the page what auto translate is doing, repairing what can be repaired.
+ */
+async function refreshAutoStatus({ allowInject = true } = {}) {
+  const state = await diagnoseFrame(activeTabId);
+  if (state === "restricted") {
+    setStatusText(tabIsImage() ? "此页面受浏览器限制" : "当前页面无法使用", "idle");
     return;
   }
+  if (state === "stale") {
+    setStatusText("扩展已更新，请刷新此页面", "error");
+    return;
+  }
+  if (state === "missing") {
+    if (!allowInject) {
+      setStatusText("当前页面无法使用", "idle");
+      return;
+    }
+    try {
+      await injectContentScript(activeTabId);
+    } catch {
+      setStatusText("当前页面无法使用", "idle");
+      return;
+    }
+  }
+
   try {
     const stats = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_STATUS" });
     if (!stats || !stats.enabled) {
@@ -58,6 +122,11 @@ async function refreshAutoStatus() {
   } catch {
     setStatusText("当前页面无法使用", "idle");
   }
+}
+
+/** A tab showing an image directly: Chrome wraps it in its own minimal HTML. */
+function tabIsImage() {
+  return /\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(lastTabUrl || "");
 }
 
 function pollWhileOpen() {
@@ -94,17 +163,15 @@ document.getElementById("health").onclick = async () => {
 };
 
 async function prepareContentScript(tabId) {
-  try {
-    await chrome.tabs.sendMessage(tabId, { type: "PING" });
-    return;
-  } catch (error) {
-    if (!error.message?.includes("Receiving end does not exist")) throw error;
+  const state = await diagnoseFrame(tabId);
+  if (state === "ok") return;
+  if (state === "stale") {
+    throw new Error("扩展已更新，请先刷新此页面");
   }
-  await chrome.scripting.insertCSS({ target: { tabId }, files: ["content/styles.css"] });
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content/overlay.js", "content/auto.js", "content/content.js"],
-  });
+  if (state === "restricted") {
+    throw new Error("当前页面受浏览器限制，无法在这里运行");
+  }
+  await injectContentScript(tabId);
 }
 
 function reportStartFailure(action, error) {
@@ -142,6 +209,7 @@ document.getElementById("autoPage").onclick = async () => {
 (async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id ?? null;
+  lastTabUrl = tab?.url || "";
   const cfg = await chrome.storage.local.get(["autoTranslate"]);
   autoToggle.checked = Boolean(cfg.autoTranslate);
   pollWhileOpen();
