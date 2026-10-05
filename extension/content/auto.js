@@ -466,20 +466,14 @@ const OMT_auto = (() => {
     const displayed = element.getBoundingClientRect();
     const displayScale = displayed.width / bitmap.width || 1;
 
-    const image = document.createElement("canvas");
-    image.width = Math.max(1, Math.round(crop.width * displayScale * ratio));
-    image.height = Math.max(1, Math.round(crop.height * displayScale * ratio));
-    image.getContext("2d").drawImage(
-      bitmap, crop.left, crop.top, crop.width, crop.height,
-      0, 0, image.width, image.height,
-    );
-
+    // Only the geometry is needed: the cover is flat white, so no pixels of the
+    // original are carried into the overlay any more.
     const canvas = document.createElement("canvas");
     canvas.className = "omt-result";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", text);
-    canvas.width = image.width;
-    canvas.height = image.height;
+    canvas.width = Math.max(1, Math.round(crop.width * displayScale * ratio));
+    canvas.height = Math.max(1, Math.round(crop.height * displayScale * ratio));
     const context = canvas.getContext("2d", { willReadFrequently: true });
 
     const core = {
@@ -498,7 +492,7 @@ const OMT_auto = (() => {
     // Painting is shared with manual mode; see the OMT_render export in
     // content.js.
     OMT_render.drawTranslatedPatch(
-      { canvas, context, image, patch: { core, rect }, direction: region.item.direction },
+      { canvas, context, patch: { core, rect }, direction: region.item.direction },
       text,
     );
 

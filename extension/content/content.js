@@ -323,11 +323,7 @@ function paintSourceText() {
   for (const entry of resultContents) {
     if (!entry.canvas.isConnected || !entry.sourceText) continue;
     entry.canvas.setAttribute("aria-label", entry.sourceText);
-    if (entry.image.complete && entry.image.naturalWidth) {
-      drawTranslatedPatch(entry, entry.sourceText);
-    } else {
-      entry.translatedText = entry.sourceText;
-    }
+    drawTranslatedPatch(entry, entry.sourceText);
     painted = true;
   }
   return painted;
@@ -354,19 +350,15 @@ function showTranslationResult(message) {
     if (!hasAllTranslations) {
       clearOverlay();
       showToast("翻译服务未返回完整结果，已保留日文原文。", "error");
-    } else if (resultContents.some(entry => !entry.patch?.dataUrl)) {
+    } else if (resultContents.some(entry => !entry.patch)) {
       clearOverlay();
-      showToast("缺少原图修复数据，请重载扩展并刷新漫画页面后重试。", "error");
+      showToast("缺少文字框位置，请重载扩展并刷新漫画页面后重试。", "error");
     } else {
       resultContents.forEach((entry, index) => {
         if (entry.canvas.isConnected && entry.patch) {
           const translated = items[index].translated.trim();
           entry.canvas.setAttribute("aria-label", translated);
-          if (entry.image.complete && entry.image.naturalWidth) {
-            drawTranslatedPatch(entry, translated);
-          } else {
-            entry.translatedText = translated;
-          }
+          drawTranslatedPatch(entry, translated);
         }
       });
     }
@@ -416,286 +408,6 @@ function clearOverlay() {
 }
 
 /**
- * Rebuild the artwork behind recognised text.
- *
- * The previous approach replaced each pixel with a bilinear blend of four
- * single samples taken from the edges of the text box, keeping anything within
- * 28 levels of that estimate. Two things went wrong with it: thick strokes left
- * ghosts (their interior sits close to the blend), and a gradient or screentone
- * cannot be reconstructed from four points, so patches of tone survived.
- *
- * Here the box is classified into "ink" and "background" against a per-row and
- * per-column band average (which follows gradients in both axes), the ink mask
- * is dilated so the antialiased fringe goes too, and the holes are then filled
- * by inward diffusion from the surrounding pixels — layer by layer, so the fill
- * follows the local tone instead of guessing at it.
- *
- * @returns {void} mutates `data` in place
- */
-function reconstructBackground(data, width, height, box) {
-  const {left, top, right, bottom} = box;
-  const boxWidth = right - left;
-  const boxHeight = bottom - top;
-  if (boxWidth < 3 || boxHeight < 3) return;
-
-  const at = (x, y, channel) => data[(y * width + x) * 4 + channel];
-  const band = Math.max(1, Math.round(Math.min(boxWidth, boxHeight) * 0.12));
-
-  // Average a band just outside each edge: one sample per side (the old code)
-  // lets a single dark speck or a stray stroke skew the whole estimate.
-  const rowBand = (from, to) => {
-    const out = [];
-    for (let y = top; y < bottom; y++) {
-      const sum = [0, 0, 0];
-      let count = 0;
-      for (let x = Math.max(0, from); x < Math.min(width, to); x++) {
-        for (let c = 0; c < 3; c++) sum[c] += at(x, y, c);
-        count++;
-      }
-      out.push(count ? sum.map(value => value / count) : null);
-    }
-    return out;
-  };
-  const columnBand = (from, to) => {
-    const out = [];
-    for (let x = left; x < right; x++) {
-      const sum = [0, 0, 0];
-      let count = 0;
-      for (let y = Math.max(0, from); y < Math.min(height, to); y++) {
-        for (let c = 0; c < 3; c++) sum[c] += at(x, y, c);
-        count++;
-      }
-      out.push(count ? sum.map(value => value / count) : null);
-    }
-    return out;
-  };
-
-  const leftBand = rowBand(left - band, left);
-  const rightBand = rowBand(right, right + band);
-  const topBand = columnBand(top - band, top);
-  const bottomBand = columnBand(bottom, bottom + band);
-
-  const mix = (a, b, position) => {
-    if (!a) return b;
-    if (!b) return a;
-    return [
-      a[0] + (b[0] - a[0]) * position,
-      a[1] + (b[1] - a[1]) * position,
-      a[2] + (b[2] - a[2]) * position,
-    ];
-  };
-
-  const ink = new Uint8Array(boxWidth * boxHeight);
-  const estimate = new Float32Array(boxWidth * boxHeight * 3);
-
-  // How flat is the paper around this box? The bands sampled just outside it are
-  // background by construction, so their spread answers that before the mask is
-  // built — which matters, because the right mask depends on the answer. A
-  // generous mask is safe on flat paper (the fill is solid anyway) and damaging
-  // on a gradient (it eats artwork the diffusion then has to invent).
-  const bandLuma = [];
-  for (const band of [leftBand, rightBand, topBand, bottomBand]) {
-    for (const sample of band) {
-      if (sample) bandLuma.push((sample[0] * 299 + sample[1] * 587 + sample[2] * 114) / 1000);
-    }
-  }
-  let flatPaper = false;
-  if (bandLuma.length >= 8) {
-    const histogram = new Uint32Array(256);
-    for (const value of bandLuma) histogram[Math.max(0, Math.min(255, Math.round(value)))] += 1;
-    let mode = 0;
-    let modeCount = 0;
-    for (let value = 0; value < 256; value += 1) {
-      if (histogram[value] > modeCount) { modeCount = histogram[value]; mode = value; }
-    }
-    let within = 0;
-    // Tight on purpose. Real balloon paper stays within a couple of levels, and
-    // a loose band here misclassifies a gentle gradient as flat — which then
-    // gets a solid fill and shows up as a rectangle.
-    for (let value = Math.max(0, mode - 6); value <= Math.min(255, mode + 6); value += 1) {
-      within += histogram[value];
-    }
-    flatPaper = within / bandLuma.length >= 0.9;
-  }
-
-  // Deliberately generous on flat paper: the fill is solid, so anything the mask
-  // misses stays behind as a grey speck on white, which is far more noticeable
-  // than covering a few extra pixels of a balloon.
-  const threshold = flatPaper ? 18 : 26;
-
-  for (let y = top; y < bottom; y++) {
-    const verticalPosition = (y - top + 0.5) / boxHeight;
-    for (let x = left; x < right; x++) {
-      const horizontalPosition = (x - left + 0.5) / boxWidth;
-      // Interpolate along both axes and average, so a vertical gradient and a
-      // horizontal one are each followed instead of one winning outright.
-      const horizontal = mix(leftBand[y - top], rightBand[y - top], horizontalPosition);
-      const vertical = mix(topBand[x - left], bottomBand[x - left], verticalPosition);
-      const index = (y - top) * boxWidth + (x - left);
-      let difference = 0;
-      for (let c = 0; c < 3; c++) {
-        const value = (horizontal[c] + vertical[c]) / 2;
-        estimate[index * 3 + c] = value;
-        difference = Math.max(difference, Math.abs(at(x, y, c) - value));
-      }
-      ink[index] = difference > threshold ? 1 : 0;
-    }
-  }
-
-  // Dilate by two pixels: antialiased stroke edges sit close to the estimate
-  // and would otherwise survive as a pale outline around the new text.
-  const mask = new Uint8Array(boxWidth * boxHeight);
-  const dilate = flatPaper ? 2 : 1;
-  for (let y = 0; y < boxHeight; y++) {
-    for (let x = 0; x < boxWidth; x++) {
-      let hit = 0;
-      for (let dy = -dilate; dy <= dilate && !hit; dy++) {
-        for (let dx = -dilate; dx <= dilate; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= boxWidth || ny >= boxHeight) continue;
-          if (ink[ny * boxWidth + nx]) { hit = 1; break; }
-        }
-      }
-      mask[y * boxWidth + x] = hit;
-    }
-  }
-
-  // --- dominant background colour ------------------------------------------
-  //
-  // Diffusion gave a soft, smeared fill: whatever ink the mask missed got
-  // averaged into the result, so a white balloon came back light grey and read
-  // as "blurry". Manga balloons are flat, so the right answer is usually the
-  // single most common tone, painted on solid — indistinguishable from the
-  // untouched page. Diffusion is kept only for genuinely non-uniform
-  // backgrounds, where a flat fill would show up as a rectangle.
-  const lumaHistogram = new Uint32Array(256);
-  let backgroundPixels = 0;
-  for (let index = 0; index < mask.length; index++) {
-    if (mask[index]) continue;
-    const x = left + (index % boxWidth);
-    const y = top + Math.floor(index / boxWidth);
-    const offset = (y * width + x) * 4;
-    const luma = (data[offset] * 299 + data[offset + 1] * 587 + data[offset + 2] * 114) / 1000;
-    lumaHistogram[Math.max(0, Math.min(255, Math.round(luma)))] += 1;
-    backgroundPixels += 1;
-  }
-  let modalLuma = 0;
-  let modalCount = 0;
-  for (let value = 0; value < 256; value += 1) {
-    if (lumaHistogram[value] > modalCount) {
-      modalCount = lumaHistogram[value];
-      modalLuma = value;
-    }
-  }
-  let inModalBand = 0;
-  for (let value = Math.max(0, modalLuma - 8); value <= Math.min(255, modalLuma + 8); value += 1) {
-    inModalBand += lumaHistogram[value];
-  }
-  const uniformity = backgroundPixels ? inModalBand / backgroundPixels : 0;
-
-  // Average the modal band rather than the exact mode, so a slightly warm or
-  // cool paper keeps its tint.
-  const flat = new Float32Array([modalLuma, modalLuma, modalLuma]);
-  if (backgroundPixels) {
-    const sums = [0, 0, 0];
-    let counted = 0;
-    for (let index = 0; index < mask.length; index++) {
-      if (mask[index]) continue;
-      const x = left + (index % boxWidth);
-      const y = top + Math.floor(index / boxWidth);
-      const offset = (y * width + x) * 4;
-      const luma = (data[offset] * 299 + data[offset + 1] * 587 + data[offset + 2] * 114) / 1000;
-      if (Math.abs(luma - modalLuma) > 8) continue;
-      for (let c = 0; c < 3; c += 1) sums[c] += data[offset + c];
-      counted += 1;
-    }
-    if (counted) for (let c = 0; c < 3; c += 1) flat[c] = sums[c] / counted;
-  }
-
-  if (uniformity >= 0.72 && backgroundPixels > 0) {
-    for (let index = 0; index < mask.length; index += 1) {
-      if (!mask[index]) continue;
-      const x = left + (index % boxWidth);
-      const y = top + Math.floor(index / boxWidth);
-      const offset = (y * width + x) * 4;
-      data[offset] = flat[0];
-      data[offset + 1] = flat[1];
-      data[offset + 2] = flat[2];
-    }
-    return;
-  }
-
-  // Colours to fill, seeded from the original pixels; `known` marks the ones we
-  // trust (background inside the box plus the dilated-away fringe).
-  const colors = new Float32Array(boxWidth * boxHeight * 3);
-  for (let index = 0; index < boxWidth * boxHeight; index++) {
-    const x = left + (index % boxWidth);
-    const y = top + Math.floor(index / boxWidth);
-    for (let c = 0; c < 3; c++) colors[index * 3 + c] = at(x, y, c);
-  }
-
-  let unknown = 0;
-  for (let index = 0; index < mask.length; index++) if (mask[index]) unknown++;
-
-  const filled = new Uint8Array(mask.length);
-  let remaining = unknown;
-  let guard = 0;
-  const maxPasses = Math.max(8, Math.ceil(Math.max(boxWidth, boxHeight) / 2) + 4);
-  while (remaining > 0 && guard++ < maxPasses) {
-    const candidates = [];
-    for (let y = 0; y < boxHeight; y++) {
-      for (let x = 0; x < boxWidth; x++) {
-        const index = y * boxWidth + x;
-        if (!mask[index] || filled[index]) continue;
-        const sum = [0, 0, 0];
-        let count = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          const ny = y + dy;
-          if (ny < 0 || ny >= boxHeight) continue;
-          for (let dx = -1; dx <= 1; dx++) {
-            const nx = x + dx;
-            if (nx < 0 || nx >= boxWidth) continue;
-            const neighbour = ny * boxWidth + nx;
-            if (mask[neighbour] && !filled[neighbour]) continue;
-            for (let c = 0; c < 3; c++) sum[c] += colors[neighbour * 3 + c];
-            count++;
-          }
-        }
-        if (count) candidates.push([index, sum[0] / count, sum[1] / count, sum[2] / count]);
-      }
-    }
-    if (!candidates.length) break;
-    // Applied after the scan so each pass advances exactly one layer inward,
-    // which keeps the diffusion symmetric instead of bleeding in scan order.
-    for (const [index, r, g, b] of candidates) {
-      colors[index * 3] = r;
-      colors[index * 3 + 1] = g;
-      colors[index * 3 + 2] = b;
-      filled[index] = 1;
-      remaining--;
-    }
-  }
-
-  // Anything the guard left behind (very large solid areas) falls back to the
-  // band estimate rather than to black.
-  for (let index = 0; index < mask.length; index++) {
-    if (!mask[index] || filled[index]) continue;
-    for (let c = 0; c < 3; c++) colors[index * 3 + c] = estimate[index * 3 + c];
-  }
-
-  for (let index = 0; index < mask.length; index++) {
-    if (!mask[index]) continue;
-    const x = left + (index % boxWidth);
-    const y = top + Math.floor(index / boxWidth);
-    const offset = (y * width + x) * 4;
-    data[offset] = colors[index * 3];
-    data[offset + 1] = colors[index * 3 + 1];
-    data[offset + 2] = colors[index * 3 + 2];
-  }
-}
-
-/**
  * Which way to typeset a region.
  *
  * The recogniser's verdict wins, because it looked at the pixels. The box's
@@ -714,27 +426,21 @@ function resolveTextDirection(direction, coreWidth, coreHeight) {
 
 function drawTranslatedPatch(entry, text) {
   const {canvas, context, image, patch} = entry;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-  const data = pixels.data;
   const left = Math.max(0, Math.floor(patch.core.left * canvas.width));
   const top = Math.max(0, Math.floor(patch.core.top * canvas.height));
   const right = Math.min(canvas.width, Math.ceil((patch.core.left + patch.core.width) * canvas.width));
   const bottom = Math.min(canvas.height, Math.ceil((patch.core.top + patch.core.height) * canvas.height));
-  const sample = (x, y, channel) => data[(y * canvas.width + x) * 4 + channel];
-  reconstructBackground(data, canvas.width, canvas.height, {left, top, right, bottom});
 
-  // Only the text box is painted; everything outside it is made transparent so
-  // the untouched artwork underneath shows through.
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      if (x < left || x >= right || y < top || y >= bottom) {
-        data[(y * canvas.width + x) * 4 + 3] = 0;
-      }
-    }
-  }
-  context.putImageData(pixels, 0, 0);
+  // Flat white over the original lettering, then the translation on top.
+  //
+  // This replaced a background reconstruction pass that sampled the surrounding
+  // paper and diffused it inward. It was cleverer and worse: any mismatch showed
+  // as a visible patch, and on a balloon — which is plain white anyway — there
+  // was nothing to reconstruct. Nothing is drawn outside the text box, so the
+  // artwork around it is untouched either way.
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
   canvas.style.visibility = "visible";
 
   const cssScale = canvas.width / patch.rect.width;
@@ -756,14 +462,20 @@ function drawTranslatedPatch(entry, text) {
   context.lineJoin = "round";
   context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
 
-  const corners = [
-    sample(left, top, 0), sample(right - 1, top, 0),
-    sample(left, bottom - 1, 0), sample(right - 1, bottom - 1, 0)
-  ];
-  const lightBackground = corners.reduce((sum, value) => sum + value, 0) / corners.length > 145;
-  context.fillStyle = lightBackground ? "#171512" : "#fffdf5";
-  context.strokeStyle = lightBackground ? "rgba(255,253,245,.76)" : "rgba(20,18,16,.78)";
+  // Dark text, because the box behind it was just filled white. The outline is
+  // a light halo, which is what keeps glyphs legible where the box edge cuts
+  // across artwork.
+  context.fillStyle = "#171512";
+  context.strokeStyle = "rgba(255,253,245,.76)";
   context.lineWidth = Math.max(1, fontSize * 0.09);
+
+  // Clipped to the box. Glyph metrics can push the last column or line slightly
+  // past the edge, and anything that spills lands on the drawing where it is no
+  // longer sitting on the white cover — measured at 192 stray pixels before this.
+  context.save();
+  context.beginPath();
+  context.rect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+  context.clip();
 
   if (vertical) {
     const maxCharsPerColumn = Math.max(1, Math.floor((bottom - top) / (fontSize * 1.2)));
@@ -790,6 +502,7 @@ function drawTranslatedPatch(entry, text) {
         context.fillText(character, x, y);
       });
     });
+    context.restore();
     return;
   }
 
@@ -809,6 +522,7 @@ function drawTranslatedPatch(entry, text) {
     context.strokeText(line, (left + right) / 2, firstY + index * lineHeight, maxLineWidth);
     context.fillText(line, (left + right) / 2, firstY + index * lineHeight, maxLineWidth);
   });
+  context.restore();
 }
 
 function closeRequestPort() {
@@ -857,28 +571,22 @@ function renderResults(rect, result, pageMode) {
     canvas.width = patch ? Math.max(1, Math.round(patch.rect.width * window.devicePixelRatio)) : 1;
     canvas.height = patch ? Math.max(1, Math.round(patch.rect.height * window.devicePixelRatio)) : 1;
     const context = canvas.getContext("2d", {willReadFrequently: true});
-    const image = new Image();
     const entry = {
-      canvas, context, image, patch,
+      canvas, context, patch,
       translatedText: null,
       sourceText: item.text?.trim() || "",
       direction: item.direction || null
     };
-    if (patch?.dataUrl) {
-      image.onload = () => {
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        if (entry.translatedText) drawTranslatedPatch(entry, entry.translatedText);
-      };
-      image.onerror = () => {
-        canvas.remove();
-        showToast("无法载入原图画布，未能融合翻译结果。", "error");
-      };
-      image.src = patch.dataUrl;
+    // Nothing to load any more: the cover is flat white, so painting needs the
+    // geometry and nothing else. Waiting on an image decode here used to delay
+    // every result by a frame trip for pixels that are no longer used.
+    if (patch) {
+      if (entry.translatedText) drawTranslatedPatch(entry, entry.translatedText);
     } else {
       canvas.width = Math.max(1, Math.round(bounds.width * window.devicePixelRatio));
       canvas.height = Math.max(1, Math.round(bounds.height * window.devicePixelRatio));
-      canvas.setAttribute("aria-label", `${item.text || ""}（请重新加载扩展以启用画面融合）`);
-      showToast("当前扩展未提供原图修复数据，请重载扩展并刷新漫画页面。", "error");
+      canvas.setAttribute("aria-label", item.text || "");
+      showToast("当前扩展未提供文字框位置，请重载扩展并刷新漫画页面。", "error");
     }
     document.body.appendChild(canvas);
     resultPanels.push(canvas);
@@ -924,7 +632,7 @@ async function loadDisplayPreferences() {
 // simply call these — but an implicit cross-file dependency is invisible to
 // anyone reading either file, and the static checker rightly flags it. Naming
 // the shared surface makes the dependency explicit and checkable.
-globalThis.OMT_render = { drawTranslatedPatch, reconstructBackground, resolveTextDirection };
+globalThis.OMT_render = { drawTranslatedPatch, resolveTextDirection };
 
 // --- auto translate wiring --------------------------------------------------
 

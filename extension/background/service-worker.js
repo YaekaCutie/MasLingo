@@ -224,7 +224,7 @@ async function recognizeRegion(msg,tabId,port){
     const json=await resp.json();
     if(!resp.ok) throw new Error(json.detail||"后端错误");
     json.debug_mode=cfg.debugMode!==false;
-    const patch = await createImagePatch(bmp,r,viewport);
+    const patch = describeRegion(bmp,r,viewport);
     const recognizedText = (json.items||[])
       .map(item=>item.text?.trim())
       .filter(Boolean)
@@ -264,7 +264,15 @@ async function blobToDataUrl(blob){
   return `data:${blob.type};base64,${btoa(binary)}`;
 }
 
-async function createImagePatch(bmp,rect,viewport){
+/**
+ * Describe where a detected box sits inside the screenshot, in CSS pixels.
+ *
+ * It used to return the cropped pixels as a data URL so the content script could
+ * rebuild the paper around the lettering. The cover is flat white now, so the
+ * pixels are not needed for painting at all — only the geometry, and the region
+ * is already covered by the screenshot's normal flow.
+ */
+function describeRegion(bmp,rect,viewport){
   const scaleX=bmp.width/viewport.width;
   const scaleY=bmp.height/viewport.height;
   const padX=Math.min(32,Math.max(8,rect.width*0.14));
@@ -275,14 +283,7 @@ async function createImagePatch(bmp,rect,viewport){
   const bottom=Math.min(bmp.height,Math.ceil((rect.top+rect.height+padY)*scaleY));
   const width=Math.max(1,right-left);
   const height=Math.max(1,bottom-top);
-  const imageScale=Math.min(1,1200/width,1200/height);
-  const outputWidth=Math.max(1,Math.round(width*imageScale));
-  const outputHeight=Math.max(1,Math.round(height*imageScale));
-  const canvas=new OffscreenCanvas(outputWidth,outputHeight);
-  canvas.getContext("2d").drawImage(bmp,left,top,width,height,0,0,outputWidth,outputHeight);
-  const blob=await canvas.convertToBlob({type:"image/jpeg",quality:0.9});
   return {
-    dataUrl:await blobToDataUrl(blob),
     rect:{
       left:left/scaleX,
       top:top/scaleY,
@@ -356,7 +357,7 @@ async function recognizePage(msg,tabId,port){
     }));
     result.items=await Promise.all(result.items.map(async item=>({
       ...item,
-      patch:await createImagePatch(bmp,item.rect,viewport)
+      patch:describeRegion(bmp,item.rect,viewport)
     })));
     postResult(port,tabId,{
       type:"RECOGNITION_RESULT",rect:{left:0,top:0,width:viewport.width,height:viewport.height},
