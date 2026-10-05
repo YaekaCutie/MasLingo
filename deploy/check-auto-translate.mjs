@@ -170,6 +170,24 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 manifest.host_permissions = [...(manifest.host_permissions || []), "<all_urls>"];
 writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
+// A second origin for the pictures. A content script cannot use the extension's
+// host permissions to fetch cross-origin (MV3), so this reproduces the user's
+// "图片读取失败 403": the direct fetch fails and only the service worker relay
+// can get the bytes. Same-origin pages cannot catch this.
+const cdn = http.createServer((request, response) => {
+  const match = IMAGES.find(({ name }) => request.url === `/${name}`);
+  if (!match) {
+    response.writeHead(404).end();
+    return;
+  }
+  const body = encoded.get(match.name);
+  // Deliberately no Access-Control-Allow-Origin.
+  response.writeHead(200, { "Content-Type": "image/png", "Content-Length": body.length });
+  response.end(body);
+});
+await new Promise((done) => cdn.listen(0, "127.0.0.1", done));
+const cdnUrl = `http://127.0.0.1:${cdn.address().port}`;
+
 const pages = http.createServer((request, response) => {
   const match = IMAGES.find(({ name }) => request.url === `/${name}`);
   if (match) {
@@ -184,6 +202,12 @@ const pages = http.createServer((request, response) => {
       </head><body>
       <img id="ghost" src="/missing-thumbnail.png">
       <img id="real" src="/p1.png"></body></html>`);
+    return;
+  }
+  if (request.url === "/crossorigin") {
+    response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>cdn</title>
+      <style>body{margin:0;background:#2a2a2a}img{display:block;width:600px;height:840px;margin:24px auto}</style>
+      </head><body><img id="remote" src="${cdnUrl}/p1.png"></body></html>`);
     return;
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -469,6 +493,25 @@ try {
   await translated.close();
   const afterTranslated = ocrCalls.length;
 
+  console.log("\n图片在另一个源上（内容脚本取不到，必须走后台）");
+  await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
+  const crossBefore = ocrCalls.length;
+  const cross = await browser.newPage();
+  watch(cross, "cross");
+  await cross.setViewport({ width: 900, height: 1000 });
+  await cross.goto(`${pageUrl}crossorigin`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 8000));
+  const crossState = await cross.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+  }));
+  const crossProbe = await readStatus(cross);
+  console.log(`      画布 ${crossState.canvases}，图片失败 ${JSON.stringify(crossProbe.stats?.imageFailures)}`);
+  check("跨域图片仍然被读到", ocrCalls.length > crossBefore);
+  check("跨域图片画出了译文", crossState.canvases >= 1);
+  check("跨域图片没有被记为失败", (crossProbe.stats?.imageFailures?.unreadable || 0) === 0);
+  await cross.close();
+  const afterCross = ocrCalls.length;
+
   console.log("\n弹窗状态（用户实际看到的那行字）");
   // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
   // the switch on and nothing happening — a dead end with no way forward. The
@@ -503,7 +546,7 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterTranslated);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterCross);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 
@@ -520,6 +563,7 @@ try {
   await browser.close();
   backend.close();
   pages.close();
+  cdn.close();
   rmSync(workDir, { recursive: true, force: true });
 }
 

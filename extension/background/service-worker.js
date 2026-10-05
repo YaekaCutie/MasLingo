@@ -34,7 +34,35 @@ async function autoRecognize(imageDataUrl) {
   return payload.items || [];
 }
 
+/**
+ * Fetch an image on the content script's behalf.
+ *
+ * A content script's fetch is subject to the page's origin rules — since MV3 it
+ * cannot use the extension's host permissions to reach cross-origin bytes. That
+ * is why auto translate reported "图片读取失败 403" on a manga CDN that answers
+ * 200 to everyone else. The service worker can make the request properly.
+ */
+async function fetchImageBytes(url) {
+  const response = await fetch(url, { credentials: "omit", cache: "force-cache" });
+  if (!response.ok) throw new Error(`图片读取失败 ${response.status}`);
+  const buffer = new Uint8Array(await response.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let offset = 0; offset < buffer.length; offset += chunk) {
+    binary += String.fromCharCode(...buffer.subarray(offset, offset + chunk));
+  }
+  const mime = response.headers.get("content-type") || "image/png";
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "FETCH_IMAGE") {
+    fetchImageBytes(message.url).then(
+      (dataUrl) => sendResponse({ ok: true, dataUrl }),
+      (error) => sendResponse({ ok: false, error: error.message }),
+    );
+    return true;
+  }
   if (message?.type === "AUTO_OCR") {
     autoRecognize(message.image).then(
       (items) => sendResponse({ ok: true, items }),

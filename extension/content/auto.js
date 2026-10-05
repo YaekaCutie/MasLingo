@@ -354,9 +354,20 @@ const OMT_auto = (() => {
     // Fetched as bytes rather than drawn from the element: a cross-origin <img>
     // drawn straight into a canvas taints it, and every later getImageData()
     // would throw. Bytes from the extension are same-origin to the blob.
-    const response = await fetch(url, { credentials: "omit" });
-    if (!response.ok) throw new Error(`图片读取失败 ${response.status}`);
-    return createImageBitmap(await response.blob());
+    //
+    // The direct fetch only works for same-origin or CORS-enabled pictures. A
+    // content script cannot use the extension's host permissions, so anything
+    // else — which is most manga CDNs — has to go through the service worker.
+    try {
+      const response = await fetch(url, { credentials: "omit" });
+      if (response.ok) return createImageBitmap(await response.blob());
+    } catch {
+      /* fall through to the service worker */
+    }
+    const relayed = await chrome.runtime.sendMessage({ type: "FETCH_IMAGE", url });
+    if (!relayed?.ok) throw new Error(relayed?.error || "图片读取失败");
+    const blob = await (await fetch(relayed.dataUrl)).blob();
+    return createImageBitmap(blob);
   }
 
   function toDataUrl(bitmap, width, height) {
