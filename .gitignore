@@ -34,3 +34,6 @@ Image from URL*
 
 # UI 截图（deploy/screenshot-ui.mjs 生成）
 deploy/screenshots/
+
+# 测试语料（合成生成，可随时重建）
+testdata/
