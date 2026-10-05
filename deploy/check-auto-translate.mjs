@@ -180,8 +180,10 @@ const guarded = http.createServer((request, response) => {
     response.writeHead(404).end();
     return;
   }
-  const fromExtension = Boolean(request.headers.origin?.startsWith("chrome-extension://"))
-    || request.headers["sec-fetch-site"] === "cross-site";
+  // Keyed on a header the page's own <img> sends but an extension request never
+  // does. The earlier version checked Origin, which the service worker omits
+  // anyway — so it passed without ever exercising the fallback.
+  const fromExtension = request.headers["sec-fetch-dest"] !== "image";
   if (fromExtension) {
     response.writeHead(403).end("no");
     return;
@@ -211,6 +213,30 @@ const cdn = http.createServer((request, response) => {
 await new Promise((done) => cdn.listen(0, "127.0.0.1", done));
 const cdnUrl = `http://127.0.0.1:${cdn.address().port}`;
 
+// A fourth origin that enforces hotlink protection the ordinary way: it refuses
+// requests that do not carry a referrer from one of its own pages. The page's
+// own <img> passes; the extension's first attempt does not. Unlike the origin
+// check above, this one *can* be satisfied by sending the page as the referrer,
+// which is what the service worker now does.
+const hotlink = http.createServer((request, response) => {
+  const match = IMAGES.find(({ name }) => request.url === `/${name}`);
+  if (!match) {
+    response.writeHead(404).end();
+    return;
+  }
+  const referrer = request.headers.referer || "";
+  // The page's own <img> carries a referrer; a bare extension request does not.
+  if (!referrer) {
+    response.writeHead(403).end("hotlink");
+    return;
+  }
+  const body = encoded.get(match.name);
+  response.writeHead(200, { "Content-Type": "image/png", "Content-Length": body.length });
+  response.end(body);
+});
+await new Promise((done) => hotlink.listen(0, "127.0.0.1", done));
+const hotlinkUrl = `http://127.0.0.1:${hotlink.address().port}`;
+
 const pages = http.createServer((request, response) => {
   const match = IMAGES.find(({ name }) => request.url === `/${name}`);
   if (match) {
@@ -225,6 +251,12 @@ const pages = http.createServer((request, response) => {
       </head><body>
       <img id="ghost" src="/missing-thumbnail.png">
       <img id="real" src="/p1.png"></body></html>`);
+    return;
+  }
+  if (request.url === "/hotlink") {
+    response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>hotlink</title>
+      <style>body{margin:0;background:#2a2a2a}img{display:block;width:600px;height:840px;margin:8px auto}</style>
+      </head><body><img id="hot" src="${hotlinkUrl}/p1.png"></body></html>`);
     return;
   }
   if (request.url === "/guarded") {
@@ -559,6 +591,29 @@ try {
   await locked.close();
   const afterLocked = ocrCalls.length;
 
+  console.log("\n防盗链 CDN：不带 Referer 就拒（后台补上 Referer 即可通过）");
+  const hotBefore = ocrCalls.length;
+  const hot = await browser.newPage();
+  watch(hot, "hotlink");
+  await hot.setViewport({ width: 900, height: 1000 });
+  await hot.goto(`${pageUrl}hotlink`, { waitUntil: "load" });
+  await new Promise((r) => setTimeout(r, 9000));
+  const hotState = await hot.evaluate(() => ({
+    canvases: document.querySelectorAll("#omt-layer canvas.omt-result").length,
+    shown: document.getElementById("hot")?.naturalWidth || 0,
+  }));
+  const hotProbe = await readStatus(hot);
+  console.log(`      图片已显示 ${hotState.shown}px，画布 ${hotState.canvases}，`
+    + `失败 ${JSON.stringify(hotProbe.stats?.imageFailures)}`);
+  if (hotProbe.stats?.lastError) {
+    console.log(`      错误：${hotProbe.stats.lastError.message}`);
+  }
+  check("防盗链下图片本身能显示", hotState.shown > 0);
+  check("后台补 Referer 后取到了图", ocrCalls.length > hotBefore);
+  check("防盗链下画出了译文", hotState.canvases >= 1);
+  await hot.close();
+  const afterHot = ocrCalls.length;
+
   console.log("\n弹窗状态（用户实际看到的那行字）");
   // The user's own screenshot showed the popup stuck on "当前页面无法使用" with
   // the switch on and nothing happening — a dead end with no way forward. The
@@ -593,7 +648,7 @@ try {
   await new Promise((r) => setTimeout(r, 800));
   await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
   await new Promise((r) => setTimeout(r, 2000));
-  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterLocked);
+  check("关闭后不再产生 OCR 请求", ocrCalls.length === afterHot);
   const kept = await layers();
   check("关闭后已完成的译文保留", kept.canvases >= 1);
 
@@ -612,6 +667,7 @@ try {
   pages.close();
   cdn.close();
   guarded.close();
+  hotlink.close();
   rmSync(workDir, { recursive: true, force: true });
 }
 

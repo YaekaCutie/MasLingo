@@ -41,9 +41,20 @@ async function autoRecognize(imageDataUrl) {
  * cannot use the extension's host permissions to reach cross-origin bytes. That
  * is why auto translate reported "图片读取失败 403" on a manga CDN that answers
  * 200 to everyone else. The service worker can make the request properly.
+ *
+ * The referrer is set to the page the picture belongs to because a hotlink
+ * check is usually just "did this request come from one of our own pages", and
+ * an extension's request otherwise arrives with none. Where the server instead
+ * refuses by origin or by fingerprint, nothing here can help and the screenshot
+ * route takes over.
  */
-async function fetchImageBytes(url) {
-  const response = await fetch(url, { credentials: "omit", cache: "force-cache" });
+async function fetchImageBytes(url, pageUrl) {
+  const options = { credentials: "omit", cache: "force-cache" };
+  if (pageUrl && /^https?:/.test(pageUrl)) {
+    options.referrer = pageUrl;
+    options.referrerPolicy = "no-referrer-when-downgrade";
+  }
+  const response = await fetch(url, options);
   if (!response.ok) throw new Error(`图片读取失败 ${response.status}`);
   const buffer = new Uint8Array(await response.arrayBuffer());
   let binary = "";
@@ -64,11 +75,17 @@ async function fetchImageBytes(url) {
  * used. It only covers the viewport, so the caller must confirm the element is
  * fully on screen before relying on it.
  */
-async function captureElementCrop(viewport) {
-  const { tab, bmp } = await captureVisibleImage(viewport.tabId);
+async function captureElementCrop(tabId, message) {
+  if (!tabId) throw new Error("拿不到标签页");
+  const { bmp } = await captureVisibleImage(tabId);
+  // Read the nested field: the message carries `viewport` alongside `rect`, and
+  // reading `viewport.width` off the message itself yields undefined, which
+  // turns every derived number into NaN and OffscreenCanvas rejects it.
+  const viewport = message.viewport || {};
+  if (!viewport.width || !viewport.height) throw new Error("缺少视口尺寸");
   const scaleX = bmp.width / viewport.width;
   const scaleY = bmp.height / viewport.height;
-  const rect = viewport.rect;
+  const rect = message.rect;
   const left = Math.max(0, Math.floor(rect.left * scaleX));
   const top = Math.max(0, Math.floor(rect.top * scaleY));
   const right = Math.min(bmp.width, Math.ceil((rect.left + rect.width) * scaleX));
@@ -80,19 +97,22 @@ async function captureElementCrop(viewport) {
   const canvas = new OffscreenCanvas(width, height);
   canvas.getContext("2d").drawImage(bmp, left, top, width, height, 0, 0, width, height);
   const blob = await canvas.convertToBlob({ type: "image/png" });
-  return { dataUrl: await blobToDataUrl(blob), tab };
+  return blobToDataUrl(blob);
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "CAPTURE_CROP") {
-    captureElementCrop(message).then(
-      (result) => sendResponse({ ok: true, dataUrl: result.dataUrl }),
+    // The tab is taken from the sender rather than the message: a content
+    // script has no way to know its own tab id, and the first version of this
+    // passed undefined straight into tabs.get().
+    captureElementCrop(sender?.tab?.id, message).then(
+      (dataUrl) => sendResponse({ ok: true, dataUrl }),
       (error) => sendResponse({ ok: false, error: error.message }),
     );
     return true;
   }
   if (message?.type === "FETCH_IMAGE") {
-    fetchImageBytes(message.url).then(
+    fetchImageBytes(message.url, message.pageUrl).then(
       (dataUrl) => sendResponse({ ok: true, dataUrl }),
       (error) => sendResponse({ ok: false, error: error.message }),
     );

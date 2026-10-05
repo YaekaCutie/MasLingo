@@ -380,7 +380,13 @@ const OMT_auto = (() => {
     }
 
     try {
-      const relayed = await chrome.runtime.sendMessage({ type: "FETCH_IMAGE", url: fromUrl });
+      const relayed = await chrome.runtime.sendMessage({
+        type: "FETCH_IMAGE",
+        url: fromUrl,
+        // Passed along so the request can carry this page as its referrer, which
+        // is what a hotlink check usually looks at.
+        pageUrl: location.href,
+      });
       if (relayed?.ok) {
         const blob = await (await fetch(relayed.dataUrl)).blob();
         return await createImageBitmap(blob);
@@ -391,11 +397,17 @@ const OMT_auto = (() => {
     }
 
     const rect = element.getBoundingClientRect();
+    // A screenshot only helps if there is a picture on screen to capture. A
+    // broken image still occupies its box, and screenshotting the empty
+    // placeholder would send a blank region to OCR for nothing.
+    const rendered = element.tagName === "CANVAS"
+      ? element.width > 0
+      : (element.naturalWidth || 0) > 0;
     const fullyVisible = (
       rect.top >= 0 && rect.left >= 0 &&
       rect.bottom <= window.innerHeight && rect.right <= window.innerWidth
     );
-    if (fullyVisible && rect.width >= 16 && rect.height >= 16) {
+    if (rendered && fullyVisible && rect.width >= 16 && rect.height >= 16) {
       const shot = await chrome.runtime.sendMessage({
         type: "CAPTURE_CROP",
         rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
@@ -406,6 +418,8 @@ const OMT_auto = (() => {
         return await createImageBitmap(blob);
       }
       errors.push(shot?.error || "截图失败");
+    } else if (!rendered) {
+      errors.push("图片没有加载出来");
     } else {
       errors.push("元素未完整显示，无法截图");
     }
