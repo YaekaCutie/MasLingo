@@ -16,10 +16,10 @@ MODEL_ID = "kha-white/manga-ocr-base"
 # Below this, the reading is treated as the model answering noise rather than
 # text — but only when the reading is also short. See is_confident_reading.
 MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
-# Measured across four real pages, sorted by confidence, true and false readings
-# interleave: 0.419 true, 0.408 true, 0.391 false, 0.381 true, 0.376 true,
-# 0.364 false, 0.341 false. No threshold separates them cleanly, so this is a
-# deliberate trade-off rather than a solved problem:
+# Measured on two real pages, one Japanese and one English, sorted by confidence,
+# true and false readings interleave: 0.419 true, 0.408 true, 0.391 false,
+# 0.381 true, 0.376 true, 0.364 false, 0.341 false. No threshold separates them
+# cleanly, so this is a deliberate trade-off rather than a solved problem:
 #   * at 0.45 with the length rule below, all eight invented readings across the
 #     four pages are removed, and two genuine ones are lost as well (a sound
 #     effect and a balloon line on a dialogue-dense spread);
@@ -29,6 +29,38 @@ MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
 # artwork, while a missing one leaves Japanese the user can still select by hand.
 # Both values are environment-tunable so this can be revisited without an edit.
 MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
+
+# Share of full-width Latin letters above which a reading is rejected.
+#
+# This targets one specific failure with no ambiguity in it: given English
+# lettering the model answers in full-width Latin, producing things like
+# 'Ｄｏ．ｙｏｕ．ｃｏｌｕｄｙｓｅｄｏｎｉｔｉｏｎｅでは…'. Such readings scored 0.46
+# and 0.49 confidence, so the confidence rule alone let them through and they
+# were painted onto the drawing as if they were Japanese.
+#
+# Swept with tools/tune_thresholds.py over a page that is entirely English
+# (where every reading is invented by definition) and a Japanese page whose
+# balloons were transcribed by hand. The measured margins are thin and worth
+# knowing: genuine readings that legitimately contain Latin (a move name in a
+# decorative box, a line mentioning VTuber) reached 0.38 and 0.27, while invented
+# full-width Latin reached 0.74 and 0.85. 0.45 sits in that gap. An earlier sweep
+# without those two genuine cases picked 0.20 and quietly killed the move name.
+MIN_LATIN_RATIO = float(os.getenv("OMT_MIN_LATIN_RATIO", "0.45"))
+
+_FULLWIDTH_LATIN = set(
+    "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"
+    "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
+    "０１２３４５６７８９"
+)
+
+
+def latin_ratio(text: str) -> float:
+    """Share of the reading that is Latin letters, half- or full-width."""
+    if not text:
+        return 0.0
+    count = sum(1 for character in text if character in _FULLWIDTH_LATIN)
+    count += sum(1 for character in text if character.isascii() and character.isalpha())
+    return count / len(text)
 
 
 @lru_cache(maxsize=1)
@@ -280,11 +312,17 @@ def is_confident_reading(text, confidence):
     genuine line inside a decorative box scored 0.38 — the model had to guess at
     the hatching around it. Length breaks the tie, because a short low-confidence
     answer is the signature of replying to texture, whereas a long one means the
-    model did read something and merely struggled in places.
+    model did read something and merely struggled in places. The Latin share
+    catches a third case the other two miss: English lettering answered in
+    full-width Latin, at a confidence high enough to pass both.
 
-    Measured with tools/probe_confidence.py on two real pages: this keeps every
-    genuine line (5/5 and 4/4) and drops both invented ones.
+    Measured with tools/tune_thresholds.py over a page that is entirely English
+    (so every reading from it is invented) and a Japanese page whose balloons
+    were transcribed by hand: four of four genuine readings survive, none of the
+    inventions do.
     """
+    if latin_ratio(text) >= MIN_LATIN_RATIO:
+        return False
     if confidence >= MIN_CONFIDENCE:
         return True
     return sum(character.isalnum() for character in text) > MIN_CONFIDENCE_TEXT_LENGTH

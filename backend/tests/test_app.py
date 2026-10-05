@@ -293,7 +293,7 @@ class AppTests(unittest.TestCase):
 
     @patch(
         "backend.app.recognize_detailed",
-        side_effect=[detailed("first phrase from panel"), detailed("second line says hello")],
+        side_effect=[detailed("パネルから一つ目の文"), detailed("二行目はこう言っている")],
     )
     def test_recognize_page_returns_multiple_focused_multiword_items(self, recognize_mock):
         page = Image.new("RGB", (1000, 700), (235, 235, 235))
@@ -319,7 +319,7 @@ class AppTests(unittest.TestCase):
         items = response.json()["items"]
         self.assertEqual(
             [item["text"] for item in items],
-            ["first phrase from panel", "second line says hello"],
+            ["パネルから一つ目の文", "二行目はこう言っている"],
         )
         self.assertEqual(len(items), 2)
         self.assertTrue(all(
@@ -477,6 +477,28 @@ class ConfidenceFilterTests(unittest.TestCase):
         for confidence in (0.329, 0.341):
             with self.subTest(confidence=confidence):
                 self.assertFalse(is_confident_reading("そういえば、", confidence))
+
+    def test_drops_english_lettering_answered_in_fullwidth_latin(self):
+        # A page of English dialogue: the model replies in full-width Latin at a
+        # confidence high enough to pass every other rule.
+        invented = [
+            ("Ｄｏ．ｙｏｕ．ｃｏｌｕｄｙｓｅｄｏｎｉｔｉｏｎｅ", 0.46),
+            ("．．．いいでも、Ｇｏｏｇｌｉｇｈｔｒｏｐｔｅｃｔｅｎｅｒ．", 0.42),
+            ("「ｆｆｆｒｅａｙｎ９ｔｈｏｔｙｏｕｍｅｃｏｍｉｎｇｎｏｒ」", 0.49),
+        ]
+        for text, confidence in invented:
+            with self.subTest(text=text[:12]):
+                self.assertFalse(is_confident_reading(text, confidence))
+
+    def test_keeps_genuine_readings_that_contain_latin(self):
+        # Real Japanese manga does contain Latin — move names, brand names. A
+        # threshold chosen without these cases rejected them.
+        for text, confidence in [
+            ("そんなことで、ミラＣＯＯＬ・ペコＴＵＲＮ！", 0.381),
+            ("最初僕は逃げるためにＶＴｕｂｅｒを選んだんだ", 0.940),
+        ]:
+            with self.subTest(text=text[:12]):
+                self.assertTrue(is_confident_reading(text, confidence))
 
 
 if __name__ == "__main__":

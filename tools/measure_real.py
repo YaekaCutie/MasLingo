@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image  # noqa: E402
 
 from backend.ocr.bubble_detector import detect_text_regions  # noqa: E402
-from backend.ocr.manga_ocr_engine import recognize_detailed  # noqa: E402
+from backend.ocr.manga_ocr_engine import is_confident_reading, recognize_detailed  # noqa: E402
 
 
 def readable(text: str) -> bool:
@@ -53,7 +53,7 @@ def main() -> int:
     if args.annotate:
         Path(args.annotate).mkdir(parents=True, exist_ok=True)
 
-    totals = {"pages": 0, "regions": 0, "kept": 0}
+    totals = {"pages": 0, "regions": 0, "kept": 0, "accepted": 0}
     for path in images:
         source = Image.open(path).convert("RGB")
         scale = min(1.0, args.width / source.width)
@@ -67,18 +67,25 @@ def main() -> int:
         for box in regions:
             detailed = recognize_detailed(image.crop(box))
             text = "\n".join(detailed["texts"]).strip()
-            if readable(text):
-                kept.append((box, text, detailed["confidence"], detailed["direction"]))
+            if not readable(text):
+                continue
+            # The production filter, so this reflects what actually reaches the
+            # page rather than what the model happened to say.
+            accepted = is_confident_reading(text, detailed["confidence"])
+            kept.append((box, text, detailed["confidence"], detailed["direction"], accepted))
 
         totals["pages"] += 1
         totals["regions"] += len(regions)
         totals["kept"] += len(kept)
+        totals["accepted"] += sum(1 for entry in kept if entry[4])
         print(f"{path.name[:34]:<36} {image.size[0]}x{image.size[1]:<6} "
-              f"检出 {len(regions):>2}  通过过滤 {len(kept):>2}")
+              f"检出 {len(regions):>2}  可读 {len(kept):>2}  "
+              f"通过过滤 {sum(1 for entry in kept if entry[4]):>2}")
 
         if args.verbose:
-            for box, text, confidence, direction in kept:
-                print(f"     {str(direction):<10} {confidence:.3f}  {text[:52]!r}")
+            for box, text, confidence, direction, accepted in kept:
+                mark = "  " if accepted else "× "
+                print(f"     {mark}{str(direction):<10} {confidence:.3f}  {text[:52]!r}")
 
         if args.annotate:
             from PIL import ImageDraw
@@ -87,13 +94,13 @@ def main() -> int:
             draw = ImageDraw.Draw(preview)
             for box in regions:
                 draw.rectangle(box, outline=(220, 40, 40), width=2)
-            for box, _text, _c, _d in kept:
+            for box, _text, _c, _d, _a in kept:
                 draw.rectangle(box, outline=(20, 140, 120), width=2)
             preview.save(Path(args.annotate) / path.name)
 
     print()
     print(f"{totals['pages']} 页，检出 {totals['regions']} 个区域，"
-          f"其中通过可读性过滤 {totals['kept']} 个")
+          f"可读 {totals['kept']} 个，其中通过过滤器 {totals['accepted']} 个")
     print(f"平均每页检出 {totals['regions'] / totals['pages']:.1f}，"
           f"通过 {totals['kept'] / totals['pages']:.1f}")
     return 0
