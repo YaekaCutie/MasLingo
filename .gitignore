@@ -25,3 +25,9 @@ package-lock.json
 
 # 用户提供的原图样本，不入库
 Image from URL*
+
+# 本地测试用漫画页（版权原因不入库）；需要入库的样例放 tools/fixtures/
+/*.jpg
+/*.jpeg
+/*.png
+/*.webp

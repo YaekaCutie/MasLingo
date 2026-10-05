@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -14,14 +15,20 @@ MODEL_ID = "kha-white/manga-ocr-base"
 
 # Below this, the reading is treated as the model answering noise rather than
 # text — but only when the reading is also short. See is_confident_reading.
-MIN_CONFIDENCE = 0.45
-# Measured on two real pages: invented readings came back short (5 and 7
-# characters), while every genuine low-confidence reading was longer (10 for a
-# line the model prefixed with stray characters, 18 for one inside a decorative
-# box full of hatching). Eight sits in the gap. The margins are thin on purpose
-# and drawn from a small sample — tools/probe_confidence.py prints the numbers
-# to re-check before moving it.
-MIN_CONFIDENCE_TEXT_LENGTH = 8
+MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
+# Measured across four real pages, sorted by confidence, true and false readings
+# interleave: 0.419 true, 0.408 true, 0.391 false, 0.381 true, 0.376 true,
+# 0.364 false, 0.341 false. No threshold separates them cleanly, so this is a
+# deliberate trade-off rather than a solved problem:
+#   * at 0.45 with the length rule below, all eight invented readings across the
+#     four pages are removed, and two genuine ones are lost as well (a sound
+#     effect and a balloon line on a dialogue-dense spread);
+#   * lowering it to ~0.36 keeps those two but lets several invented readings
+#     through again.
+# It errs towards removing them because a wrong reading paints white over the
+# artwork, while a missing one leaves Japanese the user can still select by hand.
+# Both values are environment-tunable so this can be revisited without an edit.
+MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
 
 
 @lru_cache(maxsize=1)
