@@ -461,10 +461,17 @@ class ConfidenceFilterTests(unittest.TestCase):
         ("告白したの私じゃないのに～！", 0.897),
         ("早く時間過ぎて～！", 0.857),
         ("まあまあ．．．っていうか普通．．：", 0.514),
-        ("くっ、", 0.667),
         # Real, but read from inside a decorative box surrounded by hatching —
         # the model is unsure and still right, so length has to save it.
         ("そんなことで、ミラＣＯＯＬ・ペコＴＵＲＮ！", 0.381),
+    ]
+
+    # The price of the short-reading rule, recorded rather than hidden: a
+    # two-character grunt at moderate confidence is indistinguishable from the
+    # fragments the model invents, and those are far more common.
+    DROPPED_SHORT = [
+        ("くっ、", 0.667),
+        ("ホオオオ", 0.408),
     ]
 
     def test_keeps_every_genuine_reading_measured(self):
@@ -499,6 +506,29 @@ class ConfidenceFilterTests(unittest.TestCase):
         ]:
             with self.subTest(text=text[:12]):
                 self.assertTrue(is_confident_reading(text, confidence))
+
+    def test_drops_short_fragments_at_moderate_confidence(self):
+        # The model's answer when it has nothing to read: short, plausible, and
+        # sure enough to clear the ordinary bar. Every one of these was measured
+        # on a real page.
+        for text, confidence in [
+            ("そして、", 0.56), ("この", 0.58), ("●", 0.69), ("バ", 0.55),
+            ("くっ．．．", 0.48), ("いくつ", 0.48), ("うーん．．．", 0.45),
+        ]:
+            with self.subTest(text=text[:8]):
+                self.assertFalse(is_confident_reading(text, confidence))
+
+    def test_keeps_short_readings_the_model_is_sure_of(self):
+        for text, confidence in [
+            ("楓ちゃんね♥", 1.00), ("え！？", 1.00), ("魚", 0.77), ("！！", 1.00),
+        ]:
+            with self.subTest(text=text[:8]):
+                self.assertTrue(is_confident_reading(text, confidence))
+
+    def test_documents_what_the_short_rule_costs(self):
+        for text, confidence in self.DROPPED_SHORT:
+            with self.subTest(text=text[:8]):
+                self.assertFalse(is_confident_reading(text, confidence))
 
 
 if __name__ == "__main__":

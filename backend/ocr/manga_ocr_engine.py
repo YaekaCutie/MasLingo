@@ -30,6 +30,17 @@ MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
 # Both values are environment-tunable so this can be revisited without an edit.
 MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
 
+# Short readings carry almost no evidence, so the model has to be sure of them.
+#
+# Measured on Japanese pages, the fragments the model produces when it has
+# nothing to read are short and only moderately confident — 'そして、' 0.56,
+# 'この' 0.58, '●' 0.69, 'バ' 0.55, 'くっ…' 0.48 — while every genuine short line
+# scored far higher: '楓ちゃんね♥' 1.00, 'え！？' 1.00, '魚' 0.77. A single
+# threshold cannot separate them because the fragments clear the ordinary bar;
+# a higher bar for short readings can.
+SHORT_READING_LENGTH = int(os.getenv("OMT_SHORT_READING_LENGTH", "5"))
+SHORT_READING_CONFIDENCE = float(os.getenv("OMT_SHORT_READING_CONFIDENCE", "0.75"))
+
 # Share of full-width Latin letters above which a reading is rejected.
 #
 # This targets one specific failure with no ambiguity in it: given English
@@ -314,7 +325,8 @@ def is_confident_reading(text, confidence):
     answer is the signature of replying to texture, whereas a long one means the
     model did read something and merely struggled in places. The Latin share
     catches a third case the other two miss: English lettering answered in
-    full-width Latin, at a confidence high enough to pass both.
+    full-width Latin, at a confidence high enough to pass both. Short readings
+    are held to a higher bar still — see SHORT_READING_CONFIDENCE.
 
     Measured with tools/tune_thresholds.py over a page that is entirely English
     (so every reading from it is invented) and a Japanese page whose balloons
@@ -323,9 +335,12 @@ def is_confident_reading(text, confidence):
     """
     if latin_ratio(text) >= MIN_LATIN_RATIO:
         return False
+    length = sum(1 for character in text if character.isalnum())
+    if length <= SHORT_READING_LENGTH:
+        return confidence >= SHORT_READING_CONFIDENCE
     if confidence >= MIN_CONFIDENCE:
         return True
-    return sum(character.isalnum() for character in text) > MIN_CONFIDENCE_TEXT_LENGTH
+    return length > MIN_CONFIDENCE_TEXT_LENGTH
 
 
 def recognize_detailed(image):
