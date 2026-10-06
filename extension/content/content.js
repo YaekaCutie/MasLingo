@@ -374,7 +374,19 @@ function showTranslationResult(message) {
 // artwork.
 let toastTimer = null;
 
+/**
+ * Status text goes to the panel's single-line strip.
+ *
+ * There used to be a second, independent toast element. Two places showing
+ * status meant neither was authoritative, and the strip is the one that sits
+ * where the eye already goes during auto translate. Keeping one also removes any
+ * chance of the two overlapping.
+ */
 function showToast(text, kind = "info") {
+  if (globalThis.OMT_panel) {
+    OMT_panel.status(text, kind);
+    return;
+  }
   let toast = document.getElementById("mt-toast");
   if (!toast) {
     toast = document.createElement("div");
@@ -658,3 +670,8 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
 
 loadDisplayPreferences();
 OMT_auto.sync();
+
+// The in-page panel is the primary surface now: the popup closes as soon as the
+// user touches the page, which makes it useless for controls you need while
+// reading. Mounting is cheap and does no work beyond one health check.
+globalThis.OMT_panel?.mount?.().catch(() => {});

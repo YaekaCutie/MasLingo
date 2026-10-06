@@ -18,12 +18,14 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-// Loaded in the same order as the manifest's content_scripts: overlay.js defines
-// the layer and animation helpers, auto.js consumes them, content.js wires both
-// up. Loading content.js alone leaves OMT_auto undefined.
-const contentScripts = ["overlay.js", "auto.js", "content.js"].map((name) =>
-  readFileSync(join(repoRoot, "extension", "content", name), "utf8"),
-);
+// Loaded in the same order as the manifest's content_scripts, because the files
+// depend on each other at load time. Loading content.js alone leaves OMT_auto and
+// OMT_panel undefined.
+const contentScripts = [
+  "extension/config.js", "extension/translation/providers.js",
+  "extension/content/overlay.js", "extension/content/auto.js",
+  "extension/content/panel.js", "extension/content/content.js",
+].map((name) => readFileSync(join(repoRoot, name), "utf8"));
 // The stylesheet has to come along too, otherwise class-based assertions test
 // nothing: an earlier run of this check passed the element into existence and
 // then found it had no positioning at all.
@@ -46,10 +48,25 @@ try {
 
   await page.setContent("<!doctype html><html><body></body></html>");
   await page.evaluate(() => {
-    globalThis.chrome = { runtime: { onMessage: { addListener() {} } } };
+    // Enough of the extension API for the content scripts to load and for the
+    // panel to mount. Status text lives in the panel's strip now, so the panel
+    // has to exist for the status assertions below to mean anything.
+    globalThis.chrome = {
+      runtime: {
+        onMessage: { addListener() {} },
+        getManifest: () => ({ version: "0.0.0-test" }),
+        sendMessage: async () => ({ ok: false }),
+      },
+      storage: {
+        local: { get: async () => ({}), set: async () => {} },
+        onChanged: { addListener() {} },
+      },
+    };
   });
   await page.addStyleTag({ content: contentStyles });
   await page.addScriptTag({ content: contentScripts.join("\n;\n") });
+  await page.evaluate(() => globalThis.OMT_panel.mount());
+  await new Promise((r) => setTimeout(r, 400));
 
   // --- the cover ------------------------------------------------------------
   console.log("纯白覆盖");
@@ -148,11 +165,16 @@ try {
     const out = {};
     out.noticeFunctionRemoved = typeof showTranslationNotice === "undefined";
 
+    // Status goes to the panel's single-line strip; there is no second toast any
+    // more, so that is what must behave.
+    out.noToastElement = document.getElementById("mt-toast") === null;
     showToast("测试提示", "info");
-    const toast = document.getElementById("mt-toast");
-    out.toastCreated = Boolean(toast);
-    out.toastFixed = toast ? getComputedStyle(toast).position === "fixed" : false;
-    out.toastPassive = toast ? getComputedStyle(toast).pointerEvents === "none" : false;
+    const strip = document.getElementById("omt-status");
+    out.stripCreated = Boolean(strip);
+    out.stripText = strip ? strip.textContent : null;
+    out.stripFixed = strip ? getComputedStyle(strip).position === "fixed" : false;
+    out.stripPassive = strip ? getComputedStyle(strip).pointerEvents === "none" : false;
+    out.stripSingleLine = strip ? getComputedStyle(strip).whiteSpace === "nowrap" : false;
 
     activeRequestId = "check-1";
     showTranslationResult({ requestId: "check-1", mode: "none", result: {} });
@@ -160,14 +182,16 @@ try {
     out.canvasesAfterNone = document.querySelectorAll("canvas.mt-overlay-text-canvas").length;
 
     hideToast();
-    out.toastRemoved = document.getElementById("mt-toast") === null;
     return out;
   });
 
   check("旧的居中结果面板函数已移除", overlay.noticeFunctionRemoved);
-  check("状态提示是角落小条", overlay.toastCreated && overlay.toastFixed, JSON.stringify(overlay));
-  check("状态提示不拦截鼠标", overlay.toastPassive);
-  check("提示可自行消失", overlay.toastRemoved);
+  check("不再存在第二个提示元素", overlay.noToastElement);
+  check("状态提示挂在状态条上", overlay.stripCreated && overlay.stripText === "测试提示",
+    JSON.stringify({ text: overlay.stripText }));
+  check("状态条固定在角落", overlay.stripFixed);
+  check("状态条不拦截鼠标", overlay.stripPassive);
+  check("状态条只有一行", overlay.stripSingleLine);
   check("关闭翻译时不留下任何面板", overlay.panelsAfterNone === 0, `还有 ${overlay.panelsAfterNone} 个`);
   check("关闭翻译时不留下覆盖画布", overlay.canvasesAfterNone === 0, `还有 ${overlay.canvasesAfterNone} 个`);
 } finally {

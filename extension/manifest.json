@@ -45,8 +45,11 @@
         "<all_urls>"
       ],
       "js": [
+        "config.js",
+        "translation/providers.js",
         "content/overlay.js",
         "content/auto.js",
+        "content/panel.js",
         "content/content.js"
       ],
       "css": [

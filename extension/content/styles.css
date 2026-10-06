@@ -11,6 +11,13 @@
   --omt-ink: #17191c;
   --omt-paper: #fbfbfa;
   --omt-line: rgba(23, 25, 28, .12);
+  /* Liquid glass surfaces: translucent enough to read the page through, opaque
+     enough that text on top stays legible over dark artwork. */
+  --omt-glass: rgba(252, 252, 251, .72);
+  --omt-glass-solid: rgba(252, 252, 251, .92);
+  --omt-glass-line: rgba(23, 25, 28, .14);
+  --omt-muted: #6d7370;
+  --omt-hover: rgba(23, 25, 28, .07);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +27,11 @@
     --omt-ink: #eceef0;
     --omt-paper: #1a1d1f;
     --omt-line: rgba(236, 238, 240, .16);
+    --omt-glass: rgba(26, 29, 31, .68);
+    --omt-glass-solid: rgba(26, 29, 31, .92);
+    --omt-glass-line: rgba(236, 238, 240, .16);
+    --omt-muted: #9aa19e;
+    --omt-hover: rgba(236, 238, 240, .09);
   }
 }
 
@@ -61,18 +73,25 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 
 /* --- detection box ------------------------------------------------------- */
 
-.omt-box{position:absolute;box-sizing:border-box;pointer-events:none;opacity:0;will-change:width,height,left,top,opacity;transition:width .32s cubic-bezier(.22,.61,.36,1),height .32s cubic-bezier(.22,.61,.36,1),left .32s cubic-bezier(.22,.61,.36,1),top .32s cubic-bezier(.22,.61,.36,1),opacity .42s ease}
+/* No growth animation: the box is placed at its final size the moment the
+   region is known, and only its opacity comes in. */
+.omt-box{position:absolute;box-sizing:border-box;pointer-events:none;opacity:0;will-change:opacity;transition:opacity .18s ease}
 .omt-box-visible{opacity:1}
-.omt-box-fading{opacity:0}
+.omt-box-fading{opacity:0;transition:opacity .42s ease}
 .omt-box-border{position:absolute;inset:0;box-sizing:border-box;border-radius:6px}
 .omt-box-dashed{border:2px dashed var(--omt-accent)}
 /* Cross-faded rather than switched: border-style cannot be interpolated, so a
    single element would snap from dashed to solid. */
 .omt-box-solid{border:2px solid var(--omt-accent);opacity:0;transition:opacity .24s ease}
-.omt-box-solid-on{opacity:1}
+/* While reading and translating, the dashed edge drifts towards solid — slow
+   enough to read as progress rather than as a flicker. */
+.omt-box-working{opacity:.55;transition:opacity 1.8s ease-out}
+.omt-box-solid-on{opacity:1;transition:opacity .24s ease}
 .omt-box-failed .omt-box-dashed{border-color:#b3261e}
 .omt-box-failed .omt-box-solid{border-color:#b3261e}
-@media(prefers-reduced-motion:reduce){.omt-box{transition-duration:.01ms}.omt-box-solid{transition-duration:.01ms}}
+@media(prefers-reduced-motion:reduce){
+  .omt-box,.omt-box-fading,.omt-box-solid,.omt-box-working,.omt-box-solid-on{transition-duration:.01ms}
+}
 
 /* --- one-shot notice ----------------------------------------------------- */
 
@@ -80,3 +99,141 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 .omt-notice-in{opacity:1;transform:translateX(0)}
 .omt-notice-busy{border-left-color:var(--omt-accent)}
 @media(prefers-reduced-motion:reduce){.omt-notice{transition:none}}
+
+/* --- in-page panel ------------------------------------------------------- */
+/*
+ * Liquid glass, kept restrained: a translucent pane, a blur, a hairline border
+ * and a soft shadow. No gradients, no glow, no saturated theme — the panel sits
+ * on top of artwork the user is reading and has to stay out of its way.
+ */
+.omt-panel{
+  position:fixed;right:16px;bottom:60px;z-index:2147483645;
+  width:260px;box-sizing:border-box;
+  border-radius:14px;
+  border:1px solid var(--omt-glass-line);
+  background:var(--omt-glass);
+  -webkit-backdrop-filter:blur(16px) saturate(140%);
+  backdrop-filter:blur(16px) saturate(140%);
+  box-shadow:0 8px 32px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.12);
+  color:var(--omt-ink);
+  font:13px/1.45 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  overflow:hidden;
+  transition:opacity .22s ease,transform .22s cubic-bezier(.3,.7,.4,1);
+  transform-origin:100% 100%;
+}
+.omt-panel-dragging{transition:none;cursor:grabbing}
+.omt-panel-body{padding:10px 12px 12px}
+.omt-panel-bar{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 10px 8px 12px;
+  border-bottom:1px solid var(--omt-glass-line);
+  cursor:grab;touch-action:none;user-select:none;
+}
+.omt-brand{font-size:11px;font-weight:600;letter-spacing:.02em;color:var(--omt-muted)}
+.omt-panel-btn{
+  width:20px;height:20px;padding:0;line-height:1;
+  border:0;border-radius:6px;background:transparent;color:var(--omt-muted);
+  cursor:pointer;font-size:14px;
+}
+.omt-panel-btn:hover{background:var(--omt-hover);color:var(--omt-ink)}
+
+/* --- status dots --------------------------------------------------------- */
+/* Colour lives here and nowhere else in the panel. */
+.omt-dots{display:flex;align-items:center;gap:14px;padding:2px 0 10px}
+.omt-dot{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--omt-muted);white-space:nowrap}
+.omt-dot i{width:7px;height:7px;border-radius:50%;background:#9aa19e;flex:0 0 auto;transition:background .2s ease}
+.omt-dot[data-state="working"] i{background:#d9a53b;animation:omt-pulse 1.2s ease-in-out infinite}
+.omt-dot[data-state="ok"] i{background:#3f9d63}
+.omt-dot[data-state="bad"] i{background:#c0503f}
+.omt-dot[data-state="ok"] .omt-dot-text,
+.omt-dot[data-state="bad"] .omt-dot-text{color:var(--omt-ink)}
+@keyframes omt-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* --- rows and controls --------------------------------------------------- */
+.omt-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0}
+.omt-row-tight{padding:0}
+.omt-label{font-size:12px;color:var(--omt-muted)}
+.omt-sep{height:1px;background:var(--omt-glass-line);margin:10px 0}
+
+.omt-switch{position:relative;display:inline-flex;cursor:pointer}
+.omt-switch input{position:absolute;opacity:0;width:0;height:0}
+.omt-switch-track{width:38px;height:22px;border-radius:999px;background:var(--omt-glass-line);display:flex;align-items:center;padding:2px;transition:background .18s ease}
+.omt-switch-thumb{width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28);transition:transform .18s cubic-bezier(.3,.7,.4,1)}
+.omt-switch input:checked + .omt-switch-track{background:var(--omt-accent)}
+.omt-switch input:checked + .omt-switch-track .omt-switch-thumb{transform:translateX(16px)}
+
+.omt-btn{
+  width:100%;margin-top:8px;padding:7px 10px;
+  border:1px solid var(--omt-glass-line);border-radius:9px;
+  background:transparent;color:var(--omt-ink);
+  font:500 12px/1.2 inherit;cursor:pointer;
+  transition:background .15s ease;
+}
+.omt-btn:hover:not(:disabled){background:var(--omt-hover)}
+.omt-btn:disabled{opacity:.6;cursor:default}
+.omt-btn-small{width:auto;margin:0;padding:5px 10px;font-weight:500;white-space:nowrap}
+
+.omt-select{
+  flex:1 1 auto;min-width:0;padding:5px 8px;
+  border:1px solid var(--omt-glass-line);border-radius:9px;
+  background:var(--omt-glass-solid);color:var(--omt-ink);
+  font:12px/1.2 inherit;
+}
+.omt-select:focus{outline:none;border-color:var(--omt-accent)}
+
+/* --- the one-liner ------------------------------------------------------- */
+.omt-line{
+  margin-top:10px;min-height:18px;
+  font-size:12px;color:var(--omt-ink);opacity:.85;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
+.omt-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.omt-link{border:0;background:transparent;color:var(--omt-muted);cursor:pointer;padding:0;font:12px inherit}
+.omt-link:hover{color:var(--omt-ink)}
+.omt-version{font-size:10px;color:var(--omt-muted)}
+
+/* --- collapsed widget ---------------------------------------------------- */
+.omt-widget{
+  display:none;align-items:center;gap:7px;
+  width:100%;padding:8px 12px;
+  border:0;background:transparent;color:var(--omt-ink);
+  font:500 12px/1.2 inherit;cursor:pointer;
+}
+.omt-widget i{width:8px;height:8px;border-radius:50%;background:#9aa19e;flex:0 0 auto}
+.omt-panel-collapsed{width:auto}
+.omt-panel-collapsed .omt-panel-body,
+.omt-panel-collapsed .omt-panel-bar{display:none}
+.omt-panel-collapsed .omt-widget{display:flex}
+.omt-panel-collapsed .omt-widget i{background:#3f9d63}
+.omt-panel-collapsed[data-busy="1"] .omt-widget i{background:#d9a53b;animation:omt-pulse 1.2s ease-in-out infinite}
+
+/* --- single-line status strip -------------------------------------------- */
+/*
+ * One line, replaced rather than appended. It is the only place detailed
+ * progress appears, which is what keeps the panel above it free of a log.
+ */
+.omt-status{
+  position:fixed;right:16px;bottom:16px;z-index:2147483646;
+  max-width:min(320px,calc(100vw - 32px));
+  box-sizing:border-box;padding:8px 12px;
+  border-radius:10px;
+  border:1px solid var(--omt-glass-line);
+  background:var(--omt-glass);
+  -webkit-backdrop-filter:blur(14px) saturate(140%);
+  backdrop-filter:blur(14px) saturate(140%);
+  box-shadow:0 6px 22px rgba(0,0,0,.2);
+  color:var(--omt-ink);
+  font:12px/1.35 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  pointer-events:none;
+  opacity:0;transform:translateY(8px);
+  transition:opacity .2s ease,transform .2s ease;
+}
+.omt-status-in{opacity:1;transform:translateY(0)}
+.omt-status-error{border-color:rgba(192,80,63,.55)}
+
+@media(prefers-reduced-motion:reduce){
+  .omt-panel,.omt-status{transition:none}
+  .omt-dot i{animation:none !important}
+}

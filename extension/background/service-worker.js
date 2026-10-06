@@ -101,6 +101,81 @@ async function captureElementCrop(tabId, message) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "CHECK_BACKEND") {
+    // Run here rather than in the panel. A content script's fetch is bound by
+    // the page's origin, so a backend on any other host — including the user's
+    // own machine on a different port — is unreachable from there, and the
+    // check would report "not running" for a backend that is running fine.
+    (async () => {
+      let bases = [];
+      try {
+        bases = await globalThis.OMT_backendCandidates();
+      } catch {
+        bases = [];
+      }
+      for (const base of bases) {
+        try {
+          const response = await fetch(`${base}/health`, { cache: "no-store" });
+          if (!response.ok) continue;
+          const payload = await response.json();
+          if (payload?.ok) {
+            sendResponse({ ok: true, base });
+            return;
+          }
+        } catch {
+          /* try the next candidate */
+        }
+      }
+      sendResponse({ ok: false });
+    })();
+    return true;
+  }
+  if (message?.type === "TEST_PROVIDER") {
+    // Same reason: the request has to leave from the extension, not the page.
+    (async () => {
+      try {
+        const cfg = message.cfg || {};
+        const provider = globalThis.OMT_providers.byId(cfg.translationProvider);
+        if (!provider || provider.id === "none" || !provider.adapter) {
+          sendResponse({ ok: false, reason: "尚未选择翻译来源" });
+          return;
+        }
+        const built = provider.adapter({
+          endpoint: cfg.translationEndpoint || provider.endpoint || "",
+          apiKey: cfg.translationApiKey || "",
+          appId: cfg.translationAppId || "",
+          model: cfg.translationModel || provider.model || "",
+          target: cfg.targetLanguage || provider.target || "简体中文",
+          source: provider.source || "ja",
+          texts: [message.text],
+        });
+        const response = await fetch(built.url, built.init);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          sendResponse({
+            ok: false,
+            httpStatus: response.status,
+            detail: String(
+              payload?.error?.message || payload?.message || payload?.detail || "",
+            ).slice(0, 120),
+          });
+          return;
+        }
+        const parsed = provider.parse(payload, 1);
+        sendResponse({ ok: true, translated: String(parsed?.[0] ?? "").trim() });
+      } catch (error) {
+        sendResponse({ ok: false, reason: String(error?.message || error).slice(0, 120) });
+      }
+    })();
+    return true;
+  }
+  if (message?.type === "OPEN_OPTIONS") {
+    // The panel's settings link: a content script cannot open an options page
+    // itself, so it asks the service worker to.
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return true;
+  }
   if (message?.type === "CAPTURE_CROP") {
     // The tab is taken from the sender rather than the message: a content
     // script has no way to know its own tab id, and the first version of this

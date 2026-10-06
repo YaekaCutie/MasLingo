@@ -154,18 +154,21 @@ const OMT_overlay = (() => {
 })();
 
 /**
- * The detection box: a small progress animation that reports what is happening
- * to a region and then gets out of the way.
+ * The detection box: immediate feedback that a region was found, then a quiet
+ * progress indicator that gets out of the way.
  *
- * dot -> stretch into a rectangle (dashed) -> dashed fades into solid as the
- * work completes -> hold -> fade out. The dashed and solid borders are two
- * elements because `border-style` cannot be interpolated; cross-fading them is
- * what makes the dashed-to-solid step smooth instead of a jump.
+ * The whole rectangle appears at once, dashed — no growing, no stretching, no
+ * animating into shape. The moment a region is known the user is shown exactly
+ * where it is and how big it is. While the reading and translation run, the
+ * dashed edge cross-fades towards solid; when the translation lands the box
+ * completes, holds briefly and fades out.
+ *
+ * Dashed and solid are separate elements because `border-style` cannot be
+ * interpolated: switching it on one element snaps, cross-fading two blends.
  */
 const OMT_detectionBox = (() => {
   const HOLD_MS = 500;
   const FADE_MS = 420;
-  const STRETCH_MS = 320;
 
   function create() {
     const node = document.createElement("div");
@@ -175,7 +178,7 @@ const OMT_detectionBox = (() => {
     const solid = document.createElement("div");
     solid.className = "omt-box-border omt-box-solid";
     node.append(dashed, solid);
-    return { node, dashed, solid };
+    return { node, solid };
   }
 
   /**
@@ -184,31 +187,18 @@ const OMT_detectionBox = (() => {
    */
   function show(element, region) {
     const { node, solid } = create();
-    // Anchor to the real region first, so `place()` can grow the box to it
-    // later. Anchoring to a zero-sized region and then growing would leave
-    // `place()` setting it back to zero — the box never reached its region, and
-    // the stretch never happened at all.
     const entry = OMT_overlay.anchor(node, element, region);
-    const natural = {
-      width: element.naturalWidth || element.videoWidth || 0,
-      height: element.naturalHeight || element.videoHeight || 0,
-    };
-    const box = OMT_overlay.contentRect(element, natural.width, natural.height);
-    const dot = Math.max(6, Math.min(14, region.width * (box.width || 1)));
-    node.style.width = `${dot}px`;
-    node.style.height = `${dot}px`;
-    node.style.left = `${Math.round(box.left + region.left * box.width)}px`;
-    node.style.top = `${Math.round(box.top + region.top * box.height)}px`;
     node.classList.add("omt-box-visible");
 
     return {
       node,
-      /** Grow the dot into the region's box. */
-      markReading() {
-        requestAnimationFrame(() => entry.place());
+      /** Work has started: let the dashed edge begin turning solid. */
+      markProcessing() {
+        solid.classList.add("omt-box-working");
       },
-      /** Translation is in. Cross-fade dashed to solid, hold, then disappear. */
+      /** Translation is in. Complete the border, hold, then disappear. */
       finish() {
+        solid.classList.remove("omt-box-working");
         solid.classList.add("omt-box-solid-on");
         setTimeout(() => {
           node.classList.add("omt-box-fading");
@@ -217,13 +207,13 @@ const OMT_detectionBox = (() => {
       },
       /** Something went wrong: same exit, different colour. */
       fail() {
+        solid.classList.remove("omt-box-working");
         node.classList.add("omt-box-failed");
         setTimeout(() => {
           node.classList.add("omt-box-fading");
           setTimeout(() => OMT_overlay.release(entry), FADE_MS);
         }, HOLD_MS);
       },
-      stretchMs: STRETCH_MS,
     };
   }
 

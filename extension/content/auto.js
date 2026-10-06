@@ -240,6 +240,21 @@ const OMT_auto = (() => {
     return "other";
   }
 
+  /**
+   * Progress goes to the panel's one-line strip, never to the panel itself.
+   *
+   * Only the current step is ever shown, and each call replaces the last — a
+   * log next to the artwork would be noise, which is why there is no terminal in
+   * the panel.
+   */
+  function say(text, kind = "info") {
+    try {
+      globalThis.OMT_panel?.status(text, kind);
+    } catch {
+      /* panel not mounted in this frame */
+    }
+  }
+
   async function runTask(task) {
     const { element } = task;
     if (!element.isConnected) return;
@@ -255,8 +270,10 @@ const OMT_auto = (() => {
       const sendHeight = Math.max(1, Math.round(bitmap.height * scale));
 
       const dataUrl = await toDataUrl(bitmap, sendWidth, sendHeight);
+      say("正在 OCR……");
       const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
       if (!ocr?.ok) throw new Error(ocr?.error || "OCR 失败");
+      say(ocr.items?.length ? "OCR 完成，正在翻译……" : "没有找到文字");
 
       const fresh = [];
       for (const item of ocr.items || []) {
@@ -273,14 +290,13 @@ const OMT_auto = (() => {
       }
 
       if (!fresh.length) return;
+      say(`检测到 ${fresh.length} 个文字区域，正在翻译……`);
 
-      // Each region appears as a small dot and then stretches into its box, one
-      // after another. The box exists to answer one question — "what did it
-      // find?" — so a stagger reads as "this one, and this one", where showing
-      // them all at once would just be a flash.
-      fresh.forEach((region, index) => {
-        setTimeout(() => region.box.markReading(), 180 + Math.min(index, 14) * 55);
-      });
+      // Every box is already on screen in full, dashed, because that is what
+      // `show` does — the instant a region is known, its whole rectangle is
+      // drawn. Marking them as processing starts the dashed edge turning solid,
+      // which is the only progress cue from here until the translation lands.
+      for (const region of fresh) region.box.markProcessing();
 
       const texts = fresh.map((region) => region.item.text);
       const translation = await chrome.runtime.sendMessage({ type: "AUTO_TRANSLATE", texts });
@@ -293,6 +309,7 @@ const OMT_auto = (() => {
           // Not silent: without this the only symptom is a count in the popup,
           // and there is nothing to act on.
           console.warn("[OMT] 翻译失败：", translation?.error || "未知原因");
+          say(`翻译失败：${translation?.error || "未知原因"}`, "error");
           track(region.id, STATE.FAILED);
           region.box.fail();
           return;
@@ -301,6 +318,7 @@ const OMT_auto = (() => {
           paintRegion(element, bitmap, region, translated || region.item.text);
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
+          say("翻译完成");
         } catch (error) {
           console.warn("[OMT] 绘制失败：", error.message);
           track(region.id, STATE.FAILED);
@@ -568,6 +586,7 @@ const OMT_auto = (() => {
     const cfg = await readSettings(["autoConcurrency"]);
     concurrency = Math.min(3, Math.max(1, Number(cfg.autoConcurrency) || 1));
     enabled = true;
+    say("正在扫描漫画……");
     imageFailures.unreadable = 0;
     imageFailures.ocr = 0;
     imageFailures.other = 0;
