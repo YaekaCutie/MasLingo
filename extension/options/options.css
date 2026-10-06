@@ -1,21 +1,28 @@
 /* Settings page.
  *
- * Grouped by thin rules and whitespace rather than a stack of cards, which is
- * what makes a settings screen read as a tool instead of a landing page. There
- * is no gradient anywhere and the accent appears on exactly two things: the
+ * Same design language as the panel and the popup: controls are told apart by a
+ * translucent fill rather than by outlines, radii come from one scale, and there
+ * is no gradient anywhere. Grouping is done with thin rules and whitespace
+ * rather than a stack of cards, which is what makes a settings screen read as a
+ * tool instead of a landing page. The accent appears on exactly two things: the
  * primary action and the master switch.
  */
 :root {
   --bg: #fbfbfa;
   --text: #17191c;
   --muted: #6d7370;
-  --line: #e2e4e2;
-  --line-strong: #cfd3d0;
-  --field: #ffffff;
   --accent: #2f7d72;
   --accent-strong: #26655c;
+  --accent-soft: rgba(47, 125, 114, .14);
   --err: #a33328;
   --ok: #2f7d72;
+  --fill: rgba(23, 25, 28, .05);
+  --fill-strong: rgba(23, 25, 28, .09);
+  --line: rgba(23, 25, 28, .10);
+  --r-lg: 16px;
+  --r-md: 12px;
+  --r-sm: 10px;
+  --r-xs: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,13 +30,14 @@
     --bg: #161918;
     --text: #e9ecea;
     --muted: #9aa19e;
-    --line: #2c302f;
-    --line-strong: #3c4140;
-    --field: #1d2120;
     --accent: #63b8ab;
     --accent-strong: #7fcabd;
+    --accent-soft: rgba(99, 184, 171, .18);
     --err: #e08b80;
     --ok: #63b8ab;
+    --fill: rgba(236, 238, 240, .07);
+    --fill-strong: rgba(236, 238, 240, .12);
+    --line: rgba(236, 238, 240, .12);
   }
 }
 
@@ -53,7 +61,7 @@ header { margin-bottom: 32px; }
 h1 { font-size: 19px; font-weight: 650; margin: 0 0 4px; letter-spacing: -.01em; }
 header .sub { margin: 0; color: var(--muted); font-size: 13px; }
 
-section { padding: 22px 0; border-top: 1px solid var(--line); }
+section { padding: 24px 0; border-top: 1px solid var(--line); }
 section:first-of-type { border-top: 0; padding-top: 0; }
 h2 {
   font-size: 12px;
@@ -77,13 +85,13 @@ h2 {
 .label { font-size: 14px; }
 .row .value { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.hint { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 4px 0 0; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 6px 0 0; }
 /* The key link closes the provider block, so it needs room before the next
    field rather than sitting flush against it. */
 #providerKeyLink { margin-bottom: 14px; }
-.field { margin-bottom: 16px; }
+.field { margin-bottom: 18px; }
 .field:last-of-type { margin-bottom: 0; }
-.field > label { display: block; font-size: 13px; margin-bottom: 6px; }
+.field > label { display: block; font-size: 13px; margin-bottom: 7px; }
 .field > label output { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* --- controls ------------------------------------------------------------- */
@@ -93,21 +101,21 @@ input[type="url"],
 input[type="password"],
 select {
   width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--field);
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--fill);
   color: var(--text);
   font: 13px/1.4 inherit;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: background .15s ease, box-shadow .15s ease;
 }
 input[type="text"]:focus,
 input[type="url"]:focus,
 input[type="password"]:focus,
 select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft, rgba(47, 125, 114, .14));
+  background: var(--fill-strong);
+  box-shadow: 0 0 0 2px var(--accent-soft), 0 0 0 1px var(--accent);
 }
 .row select { width: auto; min-width: 84px; }
 
@@ -129,7 +137,7 @@ input[type="range"] {
   width: 44px;
   height: 26px;
   border-radius: 999px;
-  background: var(--line-strong);
+  background: var(--fill-strong);
   transition: background .18s ease;
   display: flex;
   align-items: center;
@@ -140,7 +148,6 @@ input[type="range"] {
   height: 20px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
   transition: transform .18s cubic-bezier(.3, .7, .4, 1);
 }
 .switch input:checked + .switch-track { background: var(--accent); }
@@ -151,29 +158,28 @@ input[type="range"] {
 .input-with-action input { flex: 1 1 auto; }
 .input-with-action button { flex: 0 0 auto; }
 
-.row-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+.row-actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
 
 button {
-  padding: 9px 15px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--field);
+  padding: 10px 16px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: var(--fill-strong);
   color: var(--text);
   font: 500 13px/1.2 inherit;
   cursor: pointer;
-  transition: background .15s ease, border-color .15s ease;
+  transition: background .15s ease, filter .15s ease;
 }
-button:hover { border-color: var(--muted); }
-button.subtle { color: var(--muted); }
-button.subtle:hover { color: var(--text); }
+button:hover { filter: brightness(.97); }
+button.subtle { background: var(--fill); color: var(--muted); }
+button.subtle:hover { color: var(--text); background: var(--fill-strong); }
 
 button.primary {
   background: var(--accent);
-  border-color: var(--accent);
   color: #fff;
-  padding: 10px 20px;
+  padding: 11px 22px;
 }
-button.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+button.primary:hover { background: var(--accent-strong); filter: none; }
 
 a { color: var(--accent); }
 
