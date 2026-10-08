@@ -46,6 +46,10 @@
     --maslingo-morph var(--maslingo-morph-out) var(--maslingo-ease),
     transform var(--maslingo-settle) var(--maslingo-ease);
 }
+/* Used when a stored state is applied on mount: no transition, no flash. */
+.maslingo-panel-instant,
+.maslingo-panel-instant .maslingo-sec { transition: none !important; }
+
 .maslingo-panel-expanding {
   transition:
     --maslingo-morph var(--maslingo-morph-in) var(--maslingo-ease),
@@ -71,7 +75,12 @@
   grid-template-rows: 1fr;
   transition:
     grid-template-rows var(--maslingo-morph-out) var(--maslingo-ease),
-    opacity 200ms ease;
+    opacity 200ms ease,
+    /* `visibility` is what actually takes a folded band out of the tab order;
+       opacity and a clipped height leave its controls focusable, so a keyboard
+       user tabbed through six invisible controls with the focus ring drawn
+       inside a zero-height row. It steps discretely, after the morph. */
+    visibility 0s linear;
 }
 .maslingo-sec-in { min-height: 0; overflow: hidden; }
 .maslingo-sec-widget { grid-template-rows: 0fr; opacity: 0; }
@@ -201,8 +210,19 @@
    pane changes shape around its contents rather than the contents being
    replaced. */
 .maslingo-panel-collapsed .maslingo-sec-bar,
-.maslingo-panel-collapsed .maslingo-sec-body { grid-template-rows: 0fr; opacity: 0; }
-.maslingo-panel-collapsed .maslingo-sec-widget { grid-template-rows: 1fr; opacity: 1; }
+.maslingo-panel-collapsed .maslingo-sec-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 60ms, 0ms, var(--maslingo-morph-out);
+}
+.maslingo-panel-collapsed .maslingo-sec-widget {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0ms, 0ms, 0ms;
+}
+.maslingo-sec-widget { visibility: hidden; transition-delay: 0ms, 0ms, var(--maslingo-morph-in); }
 
 .maslingo-panel-collapsed .maslingo-widget i { background: var(--maslingo-dot-ok); }
 .maslingo-panel-collapsed[data-busy="1"] .maslingo-widget i {

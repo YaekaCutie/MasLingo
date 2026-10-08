@@ -3,10 +3,10 @@
 # See deploy/README.md (appendix A) for the full walkthrough.
 #
 # Install:
-#   sudo cp deploy/mas-backend.service /etc/systemd/system/
+#   sudo cp deploy/maslingo-backend.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now mas-backend
-#   journalctl -u mas-backend -f
+#   sudo systemctl enable --now maslingo-backend
+#   journalctl -u maslingo-backend -f
 
 [Unit]
 Description=MasLingo shared OCR backend

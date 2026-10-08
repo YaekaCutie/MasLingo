@@ -43,7 +43,8 @@
 :root {
   /* --- A. base material ---------------------------------------------------- */
   --maslingo-tint: 20, 25, 40;          /* rgb triplet, so alpha stays tunable */
-  --maslingo-alpha: .52;
+  --maslingo-alpha-base: .52;
+  --maslingo-alpha: var(--maslingo-alpha-base);
   --maslingo-alpha-strong: .70;
   --maslingo-blur: 24px;                /* spec: 18–28px */
   --maslingo-sat: 128%;                 /* spec: 110–135% */
@@ -107,7 +108,8 @@
     /* The same material, deeper. Not a second design: dark glass already reads
        well on white manga paper, which is the common case, so the two schemes
        differ only in how much tint the pane needs. */
-    --maslingo-alpha: .60;
+    --maslingo-alpha-base: .60;
+    --maslingo-alpha: var(--maslingo-alpha-base);
     --maslingo-alpha-strong: .76;
     --maslingo-ink: #f2f5f8;
     --maslingo-muted: #b0b8c0;
@@ -233,7 +235,11 @@
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  opacity: calc(1 - .35 * var(--maslingo-morph));
+  /* .88 rather than 1: at full opacity there is no headroom, so the hover and
+     drag states computed to 1.12 and 1.0 and were both clamped back to 1 — the
+     rim did not react at all in the expanded panel, which is exactly where the
+     controls are. */
+  opacity: calc(.88 - .23 * var(--maslingo-morph));
   transition: opacity var(--maslingo-hover) ease;
 }
 
@@ -290,9 +296,11 @@
  *   dragging  rim and specular both lift, and the pane thickens
  *   settling  back to idle on the release curve
  */
-.maslingo-panel[data-state="hover"] .maslingo-glass__edge { opacity: calc(1 - .35 * var(--maslingo-morph) + .12); }
+.maslingo-panel[data-state="hover"] .maslingo-glass__edge { opacity: calc(.95 - .25 * var(--maslingo-morph)); }
 .maslingo-panel[data-state="dragging"] {
-  --maslingo-alpha: .58;
+  /* Relative, not absolute: the dark scheme starts at .60, so a hard .58 made a
+     drag thin the tint instead of thickening it. */
+  --maslingo-alpha: calc(var(--maslingo-alpha-base) + .06);
   --maslingo-spec-alpha: .16;
   --maslingo-edge-gain: 1.14;
 }
@@ -324,7 +332,9 @@
   border-radius: var(--maslingo-radius-sm);
   background: var(--maslingo-fill);
   color: var(--maslingo-ink);
-  font: 500 12px/1.2 inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
   transition:
@@ -354,7 +364,8 @@
   border-radius: var(--maslingo-radius-sm);
   background: var(--maslingo-fill);
   color: var(--maslingo-ink);
-  font: 12px/1.2 inherit;
+  font-size: 12px;
+  line-height: 1.2;
   font-family: inherit;
 }
 .maslingo-select option { color: #17191c; }
@@ -366,7 +377,8 @@
   border-radius: 8px;
   background: transparent;
   color: var(--maslingo-muted);
-  font: 12px/1.2 inherit;
+  font-size: 12px;
+  line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
   transition: background var(--maslingo-hover) ease, color var(--maslingo-hover) ease;
@@ -413,10 +425,11 @@
 }
 
 /* Focus: clearly visible, never a neon ring. */
+/* No border-radius here: this selector is (0,2,0) and would override the
+   controls' own 8/10px corners, so tabbing visibly re-rounded every button. */
 .maslingo-surface :focus-visible {
   outline: 2px solid rgba(255, 255, 255, .80);
   outline-offset: 2px;
-  border-radius: 6px;
 }
 .maslingo-surface .maslingo-select:focus-visible { outline-offset: -1px; }
 

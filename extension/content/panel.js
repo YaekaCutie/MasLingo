@@ -37,8 +37,14 @@ globalThis.MAS_panel = (() => {
   ];
 
   let root = null;
-  // The status line moved to its own glass surface (content/status.js), so the
-  // panel no longer owns a node or a dismiss timer for it.
+  // The status line moved to its own glass surface (content/status.js), but the
+  // panel still mirrors the message onto the collapsed widget — so it still owns
+  // a dismiss timer, for that mirror rather than for the line itself.
+  let statusTimer = null;
+  // Kept so the material engine can be told when the pane moves; its pointer
+  // mapping is measured, and a stale measurement puts the specular light
+  // outside the clipping layer entirely.
+  let tracker = null;
   let dragging = null;
   let typing = null;
   let resetTimer = null;
@@ -86,9 +92,31 @@ globalThis.MAS_panel = (() => {
       /* the popup could not mount in this frame */
     }
 
+    // Mirror onto the collapsed widget, and — this is the part that was missing —
+    // put it back when the message expires.
+    //
+    // The dwell timer used to live here and was deleted when the status line moved
+    // to its own surface; the mirroring stayed behind. Without a reset the widget
+    // showed the last progress line for the rest of the page's life, and because
+    // `[data-busy="1"]` runs an infinite pulse, its dot kept signalling "working"
+    // long after the work finished — including after the user switched auto
+    // translate off, whose own message sets busy to 1.
     const widgetText = root?.querySelector("#maslingo-widget-text");
     if (widgetText) widgetText.textContent = text || "自动翻译";
     if (root) root.dataset.busy = kind === "error" ? "2" : (text ? "1" : "0");
+
+    if (statusTimer) clearTimeout(statusTimer);
+    statusTimer = null;
+    if (!text) return;
+    // Slightly longer than the status surface's own dwell, so the widget is the
+    // last thing to go quiet rather than the first.
+    const dwell = kind === "error" ? 9000 : 4200;
+    statusTimer = setTimeout(() => {
+      statusTimer = null;
+      const back = root?.querySelector("#maslingo-widget-text");
+      if (back) back.textContent = "自动翻译";
+      if (root) root.dataset.busy = "0";
+    }, dwell);
   }
 
   // --- typing ---------------------------------------------------------------
@@ -272,38 +300,39 @@ globalThis.MAS_panel = (() => {
     // Any in-flight drag offset is meaningless once an absolute position is
     // committed; left/top now carries it.
     root.style.transform = "";
+    tracker?.refresh?.();
+  }
+
+  /**
+   * The panel's resting inset from the window edge.
+   *
+   * One number, deliberately, because the stylesheet anchors the panel with
+   * `right: 16px; bottom: calc(16px + --maslingo-status-reserve)` and `clamp`
+   * has to arrive at the same place. The first version added its own 8px margin
+   * on top of that formula, so a corner-anchored panel sat at 16/64 and the same
+   * panel after any edge-reaching drag sat at 8/72 — an 8px jump on both axes for
+   * no reason the user could see.
+   */
+  const EDGE = 16;
+
+  /** Clear space under the panel, so the status surface keeps its corner. */
+  function bottomGap() {
+    const property = getComputedStyle(document.documentElement)
+      .getPropertyValue("--maslingo-status-reserve").trim();
+    const reserve = Number.parseFloat(property);
+    return EDGE + (Number.isFinite(reserve) ? reserve : 48);
   }
 
   /**
    * Keep the panel fully on screen, whatever the page or window does.
    */
   function clamp(left, top) {
-    const margin = 8;
     const width = root.offsetWidth || 268;
     const height = root.offsetHeight || 220;
-    const gap = bottomGap();
     return {
-      left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
-      top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - gap)),
+      left: Math.min(Math.max(EDGE, left), Math.max(EDGE, window.innerWidth - width - EDGE)),
+      top: Math.min(Math.max(EDGE, top), Math.max(EDGE, window.innerHeight - height - bottomGap())),
     };
-  }
-
-  /**
-   * How much clear space the panel leaves under itself.
-   *
-   * Read from the stylesheet rather than hard-coded, because the same strip has
-   * to be respected in two places: the CSS `bottom` offset (which applies while
-   * the panel is corner-anchored) and `clamp` (which applies once a drag has
-   * given it an absolute position). Two constants would drift, and the status
-   * surface would end up sitting on the panel's footer again.
-   */
-  function bottomGap() {
-    const margin = 8;
-    const edge = 16;
-    const property = getComputedStyle(document.documentElement)
-      .getPropertyValue("--maslingo-status-reserve").trim();
-    const reserve = Number.parseFloat(property);
-    return margin + edge + (Number.isFinite(reserve) ? reserve : 48);
   }
 
   function startDrag(event) {
@@ -367,14 +396,32 @@ globalThis.MAS_panel = (() => {
     // does not visibly move as the two swap over.
     root.style.transform = "";
     applyPosition({ left: Math.round(originLeft + x), top: Math.round(originTop + y) });
+    // Store the committed numbers, not a fresh rect. The settle animation is
+    // about to start at `transform: scale(.986)` with `transform-origin: 100%
+    // 100%`, and reading getBoundingClientRect here forces the style flush that
+    // applies that keyframe — so the saved position would be the *scaled* box,
+    // roughly 4px right and 5px down, and the panel would reappear offset after
+    // the next reload.
+    writeStore({
+      [POSITION_KEY]: {
+        left: Math.round(originLeft + x),
+        top: Math.round(originTop + y),
+      },
+    });
     // Lifts back with a short overshoot instead of snapping straight.
     globalThis.MAS_glass?.settle?.(root);
-    const rect = root.getBoundingClientRect();
-    writeStore({ [POSITION_KEY]: { left: Math.round(rect.left), top: Math.round(rect.top) } });
   }
 
   window.addEventListener("resize", () => {
-    if (!root || root.classList.contains("maslingo-panel-collapsed")) return;
+    if (!root) return;
+    // A drag in flight is measured against an origin captured before the resize,
+    // so continuing it would move the pane by however far it had already
+    // travelled. Settle it where it stands and let the clamp below fix it up.
+    if (dragging) endDrag();
+    // No collapsed guard here. Narrowing the window while the panel is a widget
+    // used to leave it entirely off-screen: at that point the drag handle is
+    // folded to zero height, so it cannot be dragged back, and nothing else in
+    // the product can move it. Clamping the widget is the only way back.
     const rect = root.getBoundingClientRect();
     applyPosition(clamp(rect.left, rect.top));
   }, { passive: true });
@@ -488,7 +535,7 @@ globalThis.MAS_panel = (() => {
 
     // The material engine: specular position, hover/drag states, settle. Bound
     // once here; it schedules frames only while the pointer is actually moving.
-    globalThis.MAS_glass?.track?.(root);
+    tracker = globalThis.MAS_glass?.track?.(root);
 
     currentLine = pickLine();
     root.querySelector("#maslingo-line").textContent = `「${currentLine}」`;
@@ -505,7 +552,15 @@ globalThis.MAS_panel = (() => {
     // Through MAS_glass so the restored state arrives with the same class the
     // transition expects; setting it directly would skip the longer expand curve
     // and, on a restored collapse, run the collapse animation on first paint.
-    if (cfg.panelCollapsed) globalThis.MAS_glass?.setMorph?.(root, true);
+    if (cfg.panelCollapsed) {
+      // The node was appended before storage resolved, so at least one frame
+      // has already been painted expanded. Replaying the collapse transition
+      // here is a visible flash, so the state is applied with transitions off
+      // and handed back on the next frame.
+      root.classList.add("maslingo-panel-instant");
+      globalThis.MAS_glass?.setMorph?.(root, true);
+      requestAnimationFrame(() => root.classList.remove("maslingo-panel-instant"));
+    }
     // Clamped on restore, not applied raw.
     //
     // A saved position is only meaningful for the window it was saved in. Drag
@@ -542,6 +597,13 @@ globalThis.MAS_panel = (() => {
     bar.addEventListener("pointerdown", startDrag);
     window.addEventListener("pointermove", moveDrag, { passive: true });
     window.addEventListener("pointerup", endDrag, { passive: true });
+    // A drag can end without a pointerup: a touch or pen can be cancelled by the
+    // browser, a gesture can take over, or focus can be lost mid-drag (Alt+Tab
+    // with the button held). Without these the pane kept `dragging` set, so every
+    // later mouse move — button down or not — went on writing translate3d, the
+    // grabbing cursor stayed applied, and the position was never stored.
+    window.addEventListener("pointercancel", endDrag, { passive: true });
+    window.addEventListener("blur", () => { if (dragging) endDrag(); });
 
     // Follow changes made elsewhere. Without this, toggling auto translate in the
     // popup left this panel's switch showing the old state, so the user would

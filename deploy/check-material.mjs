@@ -378,8 +378,12 @@ try {
       if (panel.style.left !== leftBefore) sawInlineLeft = true;
       if (panel.style.transform.includes("translate3d")) sawTransform = true;
       if (panel.dataset.state === "dragging") sawDraggingState = true;
-      const alpha = getComputedStyle(panel).getPropertyValue("--maslingo-alpha").trim();
-      if (alpha && parseFloat(alpha) > 0.55) sawMaterialLift = true;
+      // Read the alpha that is actually painted, not the custom property: the
+      // property now holds a calc() expression, so parseFloat on it is NaN. The
+      // base layer's computed gradient has every var() and calc() resolved.
+      const painted = getComputedStyle(panel.querySelector(".maslingo-glass__base")).backgroundImage;
+      const alphas = [...painted.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\s*\)/g)].map((m) => Number(m[1]));
+      if (alphas.some((value) => value > 0.55)) sawMaterialLift = true;
     }
     window.dispatchEvent(new PointerEvent("pointerup", {
       bubbles: true, clientX: x - 96, clientY: y + 32, pointerId: 9,

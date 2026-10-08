@@ -25,6 +25,15 @@ globalThis.MAS_status = (() => {
   let root = null;
   let timer = null;
 
+  /** Whether this is the frame the user is looking at. */
+  function isTopFrame() {
+    try {
+      return window.top === window;
+    } catch {
+      return false;   // cross-origin parent: a subframe by definition
+    }
+  }
+
   function build() {
     const node = document.createElement("div");
     node.id = "maslingo-status";
@@ -48,6 +57,10 @@ globalThis.MAS_status = (() => {
   }
 
   function ensure() {
+    // Top frame only. Auto translate runs in every frame, so without this gate
+    // any iframe holding a large image grew its own status pane clipped inside
+    // itself — two status surfaces for one run, and one per ad frame.
+    if (!isTopFrame()) return null;
     if (root && root.isConnected) return root;
     root = build();
     // documentElement, not body: a page that replaces its body keeps the panel.
@@ -68,7 +81,9 @@ globalThis.MAS_status = (() => {
     } catch {
       return;                       // extension APIs unreachable in this frame
     }
+    if (!node) return;              // a subframe: nothing to show here
 
+    if (!node) return;
     const line = node.querySelector(".maslingo-status-text");
     if (line.textContent !== text) line.textContent = text;
 

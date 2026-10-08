@@ -123,14 +123,52 @@ for (const file of jsFiles) {
     fail(`${relative(file)} does not parse: ${error.message}`);
     continue;
   }
-  const pattern = /importScripts\(\s*["']([^"']+)["']\s*\)/g;
-  for (const [, target] of source.matchAll(pattern)) {
-    const resolved = resolve(dirname(file), target);
-    if (!existsSync(resolved)) {
-      fail(`${relative(file)} importScripts() a missing file: ${target}`);
+  // The argument list is captured whole and split afterwards. The previous
+  // pattern required `)` straight after one string, so the service worker's
+  // two-argument call — the one that loads config.js and providers.js, and whose
+  // failure takes the whole worker down — was never scanned at all.
+  const pattern = /importScripts\(([^)]*)\)/g;
+  for (const [, args] of source.matchAll(pattern)) {
+    for (const [, target] of args.matchAll(/["']([^"']+)["']/g)) {
+      const resolved = resolve(dirname(file), target);
+      if (!existsSync(resolved)) {
+        fail(`${relative(file)} importScripts() a missing file: ${target}`);
+      } else {
+        referenced.push(relative(resolved).replace(/^extension\//, ""));
+        note(`${relative(file)} imports ${relative(resolved)}`);
+      }
+    }
+  }
+}
+
+// --- every CSS custom property that is read must be defined ---------------
+//
+// Nothing checked these, which is how `var(--maslingo-glass-tint-strong)` — a
+// token whose definition was dropped while its two uses were renamed — shipped:
+// an undefined `var()` without a fallback is invalid at computed-value time, so
+// the busy overlay and the selection size chip silently lost their background and
+// rendered light text straight onto the artwork.
+//
+// A definition is any `--maslingo-x:` anywhere in the shipped stylesheets.
+// Tokens a page might set, and tokens JS writes inline, are listed as known.
+const cssFiles = walk(extensionDir).filter((file) => file.endsWith(".css"));
+const cssText = cssFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+const definedTokens = new Set(
+  [...cssText.matchAll(/(--maslingo-[a-z0-9-]+)\s*:/g)].map((match) => match[1]),
+);
+// Written by glass.js at runtime rather than declared.
+const RUNTIME_TOKENS = new Set(["--maslingo-mx", "--maslingo-my"]);
+for (const file of cssFiles) {
+  const source = readFileSync(file, "utf8");
+  for (const [, token] of source.matchAll(/var\(\s*(--maslingo-[a-z0-9-]+)/g)) {
+    if (RUNTIME_TOKENS.has(token) || definedTokens.has(token)) continue;
+    // A `var(--x, fallback)` degrades to the fallback instead of to nothing, so
+    // it is only worth a note.
+    const withFallback = new RegExp(`var\\(\\s*${token}\\s*,`).test(source);
+    if (withFallback) {
+      note(`${relative(file)} reads ${token} with a fallback`);
     } else {
-      referenced.push(relative(resolved).replace(/^extension\//, ""));
-      note(`${relative(file)} imports ${relative(resolved)}`);
+      fail(`${relative(file)} reads ${token}, which no stylesheet defines`);
     }
   }
 }
@@ -188,16 +226,41 @@ for (const file of jsFiles) {
 
 // The repair injection has to match what the manifest declares, or a repaired
 // page behaves differently from a freshly loaded one.
+//
+// Both halves are compared, and in order. Only the `.js` list used to be checked,
+// so `insertCSS({files: CONTENT_STYLES})` could lose a stylesheet and leave a
+// repaired page with an unstyled, effectively invisible panel while every check
+// stayed green — and order matters independently, because the tokens live in
+// glass.css and the rules that read them are in the sheets after it.
 const declaredScripts = (manifest.content_scripts || []).flatMap((entry) => entry.js || []);
+const declaredStyles = (manifest.content_scripts || []).flatMap((entry) => entry.css || []);
 for (const [file, names] of injectedByFile) {
   const scripts = names.filter((name) => name.endsWith(".js"));
-  if (!scripts.length) continue;
-  const missing = declaredScripts.filter((name) => !scripts.includes(name));
-  if (missing.length) {
-    fail(`${file} injects ${scripts.length} scripts but the manifest declares `
-      + `${declaredScripts.length}; missing: ${missing.join(", ")}`);
-  } else {
-    note(`${file} injects the full content-script set`);
+  if (scripts.length) {
+    const missing = declaredScripts.filter((name) => !scripts.includes(name));
+    const extra = scripts.filter((name) => !declaredScripts.includes(name));
+    if (missing.length || extra.length) {
+      fail(`${file} injects ${scripts.length} scripts but the manifest declares `
+        + `${declaredScripts.length}; missing: [${missing.join(", ")}] extra: [${extra.join(", ")}]`);
+    } else if (scripts.join() !== declaredScripts.join()) {
+      fail(`${file} injects the right scripts in a different order than the manifest`);
+    } else {
+      note(`${file} injects the full content-script set, in manifest order`);
+    }
+  }
+
+  const styles = names.filter((name) => name.endsWith(".css"));
+  if (styles.length) {
+    const missing = declaredStyles.filter((name) => !styles.includes(name));
+    const extra = styles.filter((name) => !declaredStyles.includes(name));
+    if (missing.length || extra.length) {
+      fail(`${file} injects ${styles.length} stylesheets but the manifest declares `
+        + `${declaredStyles.length}; missing: [${missing.join(", ")}] extra: [${extra.join(", ")}]`);
+    } else if (styles.join() !== declaredStyles.join()) {
+      fail(`${file} injects the right stylesheets in a different order than the manifest`);
+    } else {
+      note(`${file} injects the full stylesheet set, in manifest order`);
+    }
   }
 }
 

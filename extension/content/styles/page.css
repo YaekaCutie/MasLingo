@@ -31,7 +31,7 @@
   margin-top: 6px;
   padding: 3px 8px;
   border-radius: 6px;
-  background: var(--maslingo-glass-tint-strong);
+  background: rgba(var(--maslingo-tint), var(--maslingo-alpha-strong));
   -webkit-backdrop-filter: blur(10px) saturate(130%);
   backdrop-filter: blur(10px) saturate(130%);
   color: var(--maslingo-ink);
@@ -52,7 +52,7 @@
   overflow: hidden;
   border: 1px solid var(--maslingo-glass-edge);
   border-radius: 8px;
-  background: var(--maslingo-glass-tint-strong);
+  background: rgba(var(--maslingo-tint), var(--maslingo-alpha-strong));
   -webkit-backdrop-filter: blur(8px) saturate(120%);
   backdrop-filter: blur(8px) saturate(120%);
   color: var(--maslingo-ink);

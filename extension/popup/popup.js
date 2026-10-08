@@ -51,7 +51,7 @@ async function fetchBackend(path, options = {}) {
 async function diagnoseFrame(tabId) {
   if (!tabId) return "restricted";
   try {
-    await chrome.tabs.sendMessage(tabId, { type: "PING" });
+    await chrome.tabs.sendMessage(tabId, { type: "PING" }, { frameId: 0 });
     return "ok";
   } catch {
     /* fall through to the probe */
@@ -97,8 +97,18 @@ const CONTENT_STYLES = [
 ];
 
 async function injectContentScript(tabId) {
-  await chrome.scripting.insertCSS({ target: { tabId }, files: CONTENT_STYLES });
-  await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
+  // `allFrames` matches the manifest, which declares all_frames: true. Without it
+  // the repair path fixes only the top frame — measured: executeScript without
+  // allFrames reaches frame 0 alone, while the manifest injects into frame 0 and
+  // every subframe. A reader embedded in an iframe would then get scripts in the
+  // parent and nothing in the frame that actually holds the manga, which is the
+  // exact divergence this list exists to prevent.
+  await chrome.scripting.insertCSS({
+    target: { tabId, allFrames: true }, files: CONTENT_STYLES,
+  });
+  await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true }, files: CONTENT_SCRIPTS,
+  });
 }
 
 /**
@@ -128,7 +138,7 @@ async function refreshAutoStatus({ allowInject = true } = {}) {
   }
 
   try {
-    const stats = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_STATUS" });
+    const stats = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_STATUS" }, { frameId: 0 });
     if (!stats || !stats.enabled) {
       setStatusText("未开启", "idle");
       return;
@@ -180,7 +190,7 @@ async function refreshDiagnostics() {
     return;
   }
   try {
-    const diag = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_DIAG" });
+    const diag = await chrome.tabs.sendMessage(activeTabId, { type: "AUTO_DIAG" }, { frameId: 0 });
     if (!diag || !diag.enabled) {
       node.textContent = "自动翻译：未开启";
       return;
@@ -272,7 +282,7 @@ document.getElementById("select").onclick = async () => {
   try {
     if (!activeTabId) throw new Error("无法获取当前页面");
     await prepareContentScript(activeTabId);
-    await chrome.tabs.sendMessage(activeTabId, { type: "START_SELECT" });
+    await chrome.tabs.sendMessage(activeTabId, { type: "START_SELECT" }, { frameId: 0 });
     window.close();
   } catch (error) {
     reportStartFailure("框选", error);
@@ -283,7 +293,7 @@ document.getElementById("autoPage").onclick = async () => {
   try {
     if (!activeTabId) throw new Error("无法获取当前页面");
     await prepareContentScript(activeTabId);
-    await chrome.tabs.sendMessage(activeTabId, { type: "START_AUTO" });
+    await chrome.tabs.sendMessage(activeTabId, { type: "START_AUTO" }, { frameId: 0 });
     window.close();
   } catch (error) {
     reportStartFailure("整页识别", error);

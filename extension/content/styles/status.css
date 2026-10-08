@@ -39,6 +39,11 @@
   --maslingo-radius: 14px;
   --maslingo-spec-size: 200px;
   --maslingo-spec-alpha: .09;
+  /* This surface never tracks the pointer, so the fallback transform IS its
+     light. Percentages resolve against the spot's own 200px box, not the pane,
+     which pooled it on the bottom edge of a 33px-tall strip. Pixels instead. */
+  --maslingo-mx: 70px;
+  --maslingo-my: 14px;
 
   box-shadow: var(--maslingo-shadow-contact), 0 12px 32px rgba(8, 12, 22, .26);
 

@@ -60,12 +60,25 @@
   transition: opacity var(--maslingo-box-solidify) ease;
 }
 
-/* While the region is being read and translated the dashed edge fades up
-   slightly: movement without motion, enough that a slow provider looks busy
-   rather than stuck. */
-.maslingo-box-working .maslingo-box-dashed { opacity: .5; transition: opacity 1.6s ease-out; }
-.maslingo-box-solid-on .maslingo-box-solid { opacity: 1; transition: opacity var(--maslingo-box-solidify) ease; }
-.maslingo-box-solid-on .maslingo-box-dashed { opacity: 0; }
+/* Phase 3. While the region is being read and translated the solid edge rises
+   underneath the dashed one, so the border completing *is* the progress cue — no
+   separate spinner, and a slow provider reads as "still working" rather than
+   stuck. The rise takes 350–550ms, which is why §12 puts phase 3 before the
+   translation result rather than after it: if the border only started turning
+   solid once the translation landed, the hold in phase 5 would be spent almost
+   entirely on the transition and the solid edge would barely be seen. */
+.maslingo-box-working .maslingo-box-solid {
+  opacity: 1;
+  transition: opacity var(--maslingo-box-solidify) ease;
+}
+/* Phase 4. Translation is in: the solid edge holds and the dashed one steps
+   aside. Both borders are stacked, so cross-fading them is the only way to
+   change the edge style — `border-style` is not an interpolable property. */
+.maslingo-box-solid-on .maslingo-box-solid { opacity: 1; }
+.maslingo-box-solid-on .maslingo-box-dashed {
+  opacity: 0;
+  transition: opacity var(--maslingo-box-solidify) ease;
+}
 
 .maslingo-box-failed .maslingo-box-dashed,
 .maslingo-box-failed .maslingo-box-solid { border-color: var(--maslingo-dot-bad); }

@@ -27,9 +27,18 @@ CONTENT = ROOT / "extension" / "content"
 
 # Keyframe names and custom properties: referenced by JS, owned by CSS, and not
 # classes at all.
+#
+# `maslingo-status-in` / `maslingo-status-out` used to be listed here as
+# keyframes. They are classes (status.css), and the surface's default state is
+# `opacity: 0; visibility: hidden` — so excluding them from the comparison meant
+# that deleting either rule left the whole status module permanently invisible
+# while every script, including this one, still passed. Only genuine non-classes
+# belong in this set.
 IGNORE = {
-    "maslingo-gx", "maslingo-gy", "maslingo-drift", "maslingo-pulse", "maslingo-settle",
-    "maslingo-status-in", "maslingo-status-out", "maslingo-loading-spin",
+    "maslingo-gx", "maslingo-gy", "maslingo-mx", "maslingo-my",
+    "maslingo-drift", "maslingo-pulse", "maslingo-settle",
+    "maslingo-breathe", "maslingo-brighten", "maslingo-attend",
+    "maslingo-loading-spin", "maslingo-drift",
 }
 
 ID_PATTERNS = [

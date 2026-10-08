@@ -167,8 +167,18 @@ const MAS_overlay = (() => {
  * interpolated: switching it on one element snaps, cross-fading two blends.
  */
 const MAS_detectionBox = (() => {
+  // §12's sequence, in milliseconds. Mirrored from marker.css, which owns the
+  // transition durations — these exist so the *hold* can be scheduled after the
+  // transition finishes rather than on top of it. A comment here and a token
+  // there would drift, so check-material asserts the observed hold is at least
+  // 400ms: if the two ever disagree, that assertion is what notices.
+  const SOLIDIFY_MS = 440;
   const HOLD_MS = 500;
   const FADE_MS = 420;
+
+  // When the current box's edge started turning solid, so `finish` can wait out
+  // the remainder instead of starting the hold on top of it.
+  let processingSince = 0;
 
   function create() {
     const node = document.createElement("div");
@@ -192,22 +202,39 @@ const MAS_detectionBox = (() => {
 
     return {
       node,
-      /** Work has started: let the dashed edge begin turning solid. */
+      /**
+       * Work has started: the dashed edge begins drifting towards solid.
+       *
+       * The class goes on the container, not on the border element. The stylesheet
+       * reaches the two stacked borders with descendant selectors — that is how a
+       * cross-fade between them is expressed, since `border-style` cannot be
+       * interpolated — and a class on `solid` itself can never be its own
+       * ancestor. Putting it there made both rules dead, which is why the box
+       * stayed dashed and simply faded out: §12 phases 3 and 4 never happened.
+       */
       markProcessing() {
-        solid.classList.add("maslingo-box-working");
+        processingSince = performance.now();
+        node.classList.add("maslingo-box-working");
       },
-      /** Translation is in. Complete the border, hold, then disappear. */
+      /** Translation is in. Let the border finish, hold it, then disappear. */
       finish() {
-        solid.classList.remove("maslingo-box-working");
-        solid.classList.add("maslingo-box-solid-on");
+        node.classList.remove("maslingo-box-working");
+        node.classList.add("maslingo-box-solid-on");
+        // §12 puts phase 3 (the edge completing, 350–550ms) *before* phase 5 (a
+        // ~500ms hold), so the hold has to start once the edge is actually solid.
+        // Counting it from here instead would spend almost all of it on the
+        // transition: with a fast provider the border would be solid for about
+        // 60ms before it began to fade.
+        const elapsed = processingSince ? performance.now() - processingSince : SOLIDIFY_MS;
+        const remaining = Math.max(0, SOLIDIFY_MS - elapsed);
         setTimeout(() => {
           node.classList.add("maslingo-box-fading");
           setTimeout(() => MAS_overlay.release(entry), FADE_MS);
-        }, HOLD_MS);
+        }, remaining + HOLD_MS);
       },
       /** Something went wrong: same exit, different colour. */
       fail() {
-        solid.classList.remove("maslingo-box-working");
+        node.classList.remove("maslingo-box-working");
         node.classList.add("maslingo-box-failed");
         setTimeout(() => {
           node.classList.add("maslingo-box-fading");

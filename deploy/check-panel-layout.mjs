@@ -69,11 +69,20 @@ try {
     // Only direct children of a band are positioned by the gutter. Anything
     // nested inside them is laid out relative to its own parent — measuring the
     // switch's thumb against the panel edge would prove nothing.
-    const bands = [
-      panel.querySelector(".maslingo-panel-bar"),
-      panel.querySelector(".maslingo-panel-body"),
-      panel.querySelector(".maslingo-statusbar"),
-    ].filter(Boolean);
+    //
+    // `.maslingo-statusbar` used to be in this list and no longer exists: the
+    // status line moved out of the panel into its own surface. Because the list
+    // was filtered with `Boolean`, the stale selector was dropped in silence and
+    // the rules below were measured over fewer bands than intended. The expected
+    // count is returned so the caller can fail loudly instead.
+    //
+    // `.maslingo-widget` is deliberately NOT a measured band: its children are
+    // laid out by flex inside it, so they are not gutter-positioned and including
+    // it reported a second, meaningless inset.
+    const BAND_SELECTORS = [".maslingo-panel-bar", ".maslingo-panel-body"];
+    const bands = BAND_SELECTORS
+      .map((selector) => panel.querySelector(selector))
+      .filter(Boolean);
 
     const content = [];
     const rules = [];
@@ -98,6 +107,9 @@ try {
     }
     return {
       panel: { width: Math.round(panelRect.width), radius: getComputedStyle(panel).borderRadius },
+      // Reported so a missing band is a failure rather than a smaller measurement.
+      bandCount: bands.length,
+      expectedBands: BAND_SELECTORS.length,
       content,
       rules,
     };
@@ -109,6 +121,11 @@ try {
   }
 
   console.log(`面板 ${report.panel.width}px  圆角 ${report.panel.radius}\n`);
+
+  // A stale band selector used to be swallowed by filter(Boolean), which made
+  // the rules below pass over fewer bands. Now a missing band is the failure.
+  check("所有预期的内容带都存在", report.bandCount === report.expectedBands,
+    `找到 ${report.bandCount} 个，预期 ${report.expectedBands} 个`);
 
   console.log("统一内缩");
   const insets = report.content.map((item) => Math.min(item.left, item.right));

@@ -44,13 +44,18 @@ globalThis.MAS_glass = (() => {
    * Drive the specular spot from the pointer.
    *
    * Writes two custom properties per frame on one decorative element. Nothing
-   * here reads layout per frame: the element's box is measured on pointer entry,
-   * not on every move, so the page scrolling underneath the panel costs nothing.
+   * here reads layout per frame: the element's box is measured on pointer entry
+   * and whenever the caller says it moved, so the page scrolling underneath the
+   * panel costs nothing.
    *
-   * Returns a disposer.
+   * Returns `{ refresh, dispose }`. `refresh` matters: the panel is dragged and
+   * re-clamped without ever re-entering the pointer, so a rect captured at
+   * `pointerenter` goes stale the moment the pane moves, and every later move
+   * computes the light's target from the wrong origin — far enough off that the
+   * spot lands outside the clipping layer and simply disappears.
    */
   function track(element) {
-    if (!element) return () => {};
+    if (!element) return { refresh() {}, dispose() {} };
 
     let rect = element.getBoundingClientRect();
     const start = rest(element);
@@ -81,11 +86,24 @@ globalThis.MAS_glass = (() => {
       if (!state.raf) state.raf = requestAnimationFrame(frame);
     };
 
-    const onEnter = () => {
+    const measure = () => {
       rect = element.getBoundingClientRect();
+    };
+
+    const onEnter = () => {
+      measure();
       setState(element, "hover");
     };
     const onMove = (event) => {
+      // §21: under reduced motion the specular does not chase the pointer at all.
+      // It still answers hover and drag through setState, which are colour and
+      // opacity changes rather than movement.
+      if (reduced()) return;
+      // Re-asserted on every move, not only on enter. A drag leaves the pointer
+      // over the pane the whole time, so `pointerenter` never fires again, and
+      // without this the material stayed on the idle lighting after a release
+      // until the user moved the cursor away and back.
+      setState(element, "hover");
       state.tx = event.clientX - rect.left;
       state.ty = event.clientY - rect.top;
       kick();
@@ -100,17 +118,22 @@ globalThis.MAS_glass = (() => {
     };
 
     write();
+    if (reduced()) onLeave();
     element.addEventListener("pointerenter", onEnter, { passive: true });
     element.addEventListener("pointermove", onMove, { passive: true });
     element.addEventListener("pointerleave", onLeave, { passive: true });
     element.addEventListener("pointercancel", onLeave, { passive: true });
 
-    return () => {
-      element.removeEventListener("pointerenter", onEnter);
-      element.removeEventListener("pointermove", onMove);
-      element.removeEventListener("pointerleave", onLeave);
-      element.removeEventListener("pointercancel", onLeave);
-      if (state.raf) cancelAnimationFrame(state.raf);
+    return {
+      /** Re-measure after the caller moves or resizes the surface. */
+      refresh: measure,
+      dispose() {
+        element.removeEventListener("pointerenter", onEnter);
+        element.removeEventListener("pointermove", onMove);
+        element.removeEventListener("pointerleave", onLeave);
+        element.removeEventListener("pointercancel", onLeave);
+        if (state.raf) cancelAnimationFrame(state.raf);
+      },
     };
   }
 
@@ -143,9 +166,17 @@ globalThis.MAS_glass = (() => {
     element.classList.remove("maslingo-panel-settling");
     void element.offsetWidth;
     element.classList.add("maslingo-panel-settling");
-    setTimeout(() => {
+    // The timer is stored on the element so a fresh settle can cancel the
+    // previous one. Left alone, re-grabbing the pane within the settle window let
+    // the old timer fire mid-drag: it stripped the settling class the new release
+    // had just added, and — worse — pushed the material to "idle" while the pane
+    // was still being moved, killing the rim lift and the thickening.
+    if (element.__maslingoSettle) clearTimeout(element.__maslingoSettle);
+    element.__maslingoSettle = setTimeout(() => {
+      element.__maslingoSettle = 0;
       element.classList.remove("maslingo-panel-settling");
-      setState(element, "idle");
+      // Only if no drag has started in the meantime.
+      if (element.dataset.state !== "dragging") setState(element, "idle");
     }, 420);
   }
 
@@ -155,7 +186,14 @@ globalThis.MAS_glass = (() => {
     // Expanding runs longer than collapsing, per the timing table in §20.
     element.classList.toggle("maslingo-panel-expanding", !collapsed);
     element.classList.toggle("maslingo-panel-collapsed", collapsed);
-    setTimeout(() => element.classList.remove("maslingo-panel-expanding"), 700);
+    // Cleared before re-arming: an uncleared timer from an earlier toggle would
+    // strip this class mid-transition, silently retiming the running morph from
+    // the 460ms expand curve back to the 320ms collapse one.
+    if (element.__maslingoExpand) clearTimeout(element.__maslingoExpand);
+    element.__maslingoExpand = setTimeout(() => {
+      element.__maslingoExpand = 0;
+      element.classList.remove("maslingo-panel-expanding");
+    }, 700);
   }
 
   return { reduced, track, setState, settle, setMorph };
