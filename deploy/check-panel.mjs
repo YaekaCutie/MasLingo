@@ -174,9 +174,10 @@ try {
   });
 
   check("悬浮窗已挂载", Boolean(layout), "找不到 #maslingo-panel");
-  // Sitting in the lower right; nothing is reserved below it any more, since the
-  // status line moved inside the panel.
-  check("停在右下角", layout.right < 40 && layout.bottom < 40,
+  // Lower right, but not flush to the bottom: the status surface occupies the
+  // last 48px of that corner, so the panel sits above it. Asserting `bottom < 40`
+  // here was pinning the panel on top of the status pane.
+  check("停在右下角、并让开状态窗", layout.right < 40 && layout.bottom >= 48 && layout.bottom < 100,
     JSON.stringify({ right: layout.right, bottom: layout.bottom }));
   check("玻璃质感在材质层上（base 有 backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
   check("边缘层是独立的光学层（自带 backdrop-filter）", /blur/.test(layout.edgeGlass || ""),

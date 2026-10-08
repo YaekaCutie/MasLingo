@@ -134,6 +134,66 @@ try {
   const insetRules = report.rules.filter((rule) => rule.left > 1 || rule.right > 1);
   check("每条分割线都通栏到边缘", insetRules.length === 0,
     insetRules.map((rule) => `${rule.label} 左${rule.left} 右${rule.right}`).join("; "));
+
+  // --- a stored position from another window must not hide the panel --------
+  //
+  // A saved `left`/`top` is only meaningful for the window it was saved in. Drag
+  // the panel to the far right of a wide monitor, reopen on a laptop, and the raw
+  // value puts it past the right edge: mounted, running, invisible. That reads as
+  // "the panel disappeared" — and it did, off the screen.
+  console.log("\n恢复的位置必须落在可视区内");
+  const workerTarget = await browser.waitForTarget(
+    (t) => t.type() === "service_worker" && t.url().includes("service-worker.js"),
+    { timeout: 30000 },
+  );
+  const sw = await workerTarget.worker();
+  await sw.evaluate(() => chrome.storage.local.set({ panelPosition: { left: 4000, top: 3000 } }));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const restored = await page.evaluate(() => {
+    const panel = document.getElementById("maslingo-panel");
+    if (!panel) return { mounted: false };
+    const rect = panel.getBoundingClientRect();
+    return {
+      mounted: true,
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      visible: rect.right > 0 && rect.bottom > 0
+        && rect.left < window.innerWidth && rect.top < window.innerHeight,
+      viewport: [window.innerWidth, window.innerHeight],
+    };
+  });
+  console.log(`      存了 (4000,3000)，恢复后落在 (${restored.x},${restored.y})，`
+    + `视口 ${JSON.stringify(restored.viewport)}`);
+  check("存档位置越界时被拉回可视区", restored.mounted && restored.visible === true,
+    JSON.stringify(restored));
+
+  // --- the status surface must not cover the panel -------------------------
+  //
+  // Both live in the lower right corner on purpose, and the status pane outranks
+  // the panel so it stays readable while the panel is collapsed. Without a
+  // reserved strip the two overlap by ~4400px², which buries the panel's footer.
+  console.log("\n状态窗不覆盖面板");
+  await sw.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
+  await new Promise((r) => setTimeout(r, 4000));
+  const stacked = await page.evaluate(() => {
+    const panel = document.getElementById("maslingo-panel");
+    const status = document.getElementById("maslingo-status");
+    if (!panel || !status) return { present: Boolean(panel) && Boolean(status) };
+    const a = panel.getBoundingClientRect();
+    const b = status.getBoundingClientRect();
+    const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    return {
+      present: true,
+      overlap: width > 0 && height > 0 ? Math.round(width * height) : 0,
+      panelBottom: Math.round(window.innerHeight - a.bottom),
+      statusTop: Math.round(b.top),
+    };
+  });
+  console.log(`      面板下沿距底 ${stacked.panelBottom}px，状态窗顶边 y=${stacked.statusTop}`);
+  check("状态窗与面板零重叠", stacked.overlap === 0, JSON.stringify(stacked));
 } finally {
   await browser.close();
   rmSync(workDir, { recursive: true, force: true });

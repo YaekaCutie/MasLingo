@@ -281,10 +281,29 @@ globalThis.MAS_panel = (() => {
     const margin = 8;
     const width = root.offsetWidth || 268;
     const height = root.offsetHeight || 220;
+    const gap = bottomGap();
     return {
       left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
-      top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin)),
+      top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - gap)),
     };
+  }
+
+  /**
+   * How much clear space the panel leaves under itself.
+   *
+   * Read from the stylesheet rather than hard-coded, because the same strip has
+   * to be respected in two places: the CSS `bottom` offset (which applies while
+   * the panel is corner-anchored) and `clamp` (which applies once a drag has
+   * given it an absolute position). Two constants would drift, and the status
+   * surface would end up sitting on the panel's footer again.
+   */
+  function bottomGap() {
+    const margin = 8;
+    const edge = 16;
+    const property = getComputedStyle(document.documentElement)
+      .getPropertyValue("--maslingo-status-reserve").trim();
+    const reserve = Number.parseFloat(property);
+    return margin + edge + (Number.isFinite(reserve) ? reserve : 48);
   }
 
   function startDrag(event) {
@@ -487,7 +506,13 @@ globalThis.MAS_panel = (() => {
     // transition expects; setting it directly would skip the longer expand curve
     // and, on a restored collapse, run the collapse animation on first paint.
     if (cfg.panelCollapsed) globalThis.MAS_glass?.setMorph?.(root, true);
-    applyPosition(cfg.panelPosition);
+    // Clamped on restore, not applied raw.
+    //
+    // A saved position is only meaningful for the window it was saved in. Drag
+    // the panel to the far right on a wide monitor, reopen on a laptop, and the
+    // stored `left` puts it past the right edge — the panel is mounted, running,
+    // and completely invisible, which reads as "it disappeared".
+    applyPosition(cfg.panelPosition ? clamp(cfg.panelPosition.left, cfg.panelPosition.top) : null);
 
     root.querySelector("#maslingo-auto").addEventListener("change", (event) => {
       writeStore({ autoTranslate: event.target.checked });

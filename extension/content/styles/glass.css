@@ -84,6 +84,10 @@
   --maslingo-radius-sm: 10px;
   --maslingo-w-panel: 268px;
   --maslingo-w-widget: 150px;
+  /* Room kept clear under the panel for the status surface. Both live in the
+     lower right corner by design, so without this the status pane sits directly
+     on top of the panel's footer — measured at 4400px² of overlap. */
+  --maslingo-status-reserve: 48px;
 
   /* --- motion -------------------------------------------------------------- */
   --maslingo-ease: cubic-bezier(.22, 1, .36, 1);

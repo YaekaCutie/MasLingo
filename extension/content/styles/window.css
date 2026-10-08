@@ -29,7 +29,11 @@
 .maslingo-panel {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  /* Sits above the status surface rather than under it. Both occupy the lower
+     right corner by design, and the status pane outranks the panel in z-order
+     because it has to stay readable when the panel is collapsed — so the space
+     is reserved here instead of fought over at paint time. */
+  bottom: calc(16px + var(--maslingo-status-reserve));
   z-index: 2147483645;
 
   width: calc(var(--maslingo-w-panel) - (var(--maslingo-w-panel) - var(--maslingo-w-widget)) * var(--maslingo-morph));
