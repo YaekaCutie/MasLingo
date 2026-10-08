@@ -1,0 +1,207 @@
+/* MasLingo — glass material and tokens.
+ *
+ * The material, in one place. Every surface in this extension that floats over
+ * the page (the panel, the notice, the toast) is cut from these tokens, so
+ * "liquid glass" means one thing rather than four similar things.
+ *
+ * The recipe, per the specification:
+ *   - a translucent, low-saturation dark grey-blue body at 45–60% opacity
+ *   - backdrop blur 18–24px with 120–150% saturation, plus the -webkit- prefix
+ *   - a very weak white border and a soft inner highlight — never a glow
+ *   - one shallow shadow to lift the pane off the artwork, and no second one
+ *
+ * Colour discipline: status is the only thing allowed to be coloured, and it is
+ * limited to four values — grey, yellow, green, red. Nothing here paints a theme
+ * colour across the UI; the accent exists solely for focus rings.
+ */
+
+:root {
+  /* --- glass body ------------------------------------------------------- */
+  --mas-glass-tint: rgba(20, 25, 40, .52);
+  --mas-glass-tint-strong: rgba(20, 25, 40, .68);
+  --mas-glass-blur: 22px;
+  --mas-glass-sat: 135%;
+
+  /* --- glass edges ------------------------------------------------------ */
+  --mas-glass-edge: rgba(255, 255, 255, .14);
+  --mas-glass-inner: rgba(255, 255, 255, .09);
+  --mas-glass-line: rgba(255, 255, 255, .10);
+  --mas-glass-shadow: 0 10px 34px rgba(6, 10, 18, .30);
+
+  /* --- ink on glass ----------------------------------------------------- */
+  --mas-ink: #eef1f4;
+  --mas-muted: #a4adb6;
+
+  /* --- control fills (flat: separation by fill, not by outline) ---------- */
+  --mas-fill: rgba(255, 255, 255, .07);
+  --mas-fill-strong: rgba(255, 255, 255, .13);
+
+  /* --- status: the only colours in the UI ------------------------------- */
+  --mas-dot-idle: #98a1a8;      /* not run / not checked */
+  --mas-dot-working: #e0b357;   /* in progress */
+  --mas-dot-ok: #57c08a;        /* success */
+  --mas-dot-bad: #e8776a;       /* failure / unavailable */
+  --mas-err-text: #f0938a;
+
+  /* --- geometry --------------------------------------------------------- */
+  /* One horizontal inset for every child of a glass surface. Divider lines are
+     the deliberate exception: they run edge to edge, because a line that stops
+     short of the edge reads as a mistake rather than as a rule. */
+  --mas-gutter: 14px;
+  --mas-radius: 16px;
+  --mas-radius-sm: 10px;
+
+  /* --- motion ----------------------------------------------------------- */
+  /* The specification names this curve. Used for every state change that is
+     more than a fade, so the whole product moves with one accent. */
+  --mas-ease: cubic-bezier(.22, 1, .36, 1);
+  --mas-fast: .18s;
+  --mas-slow: .52s;
+}
+
+/* Dark scheme: the same material, a little deeper. Not a different design —
+   the dark glass already reads well on white manga paper, which is the common
+   case, so light and dark differ only in how much tint is needed. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mas-glass-tint: rgba(12, 16, 28, .60);
+    --mas-glass-tint-strong: rgba(12, 16, 28, .74);
+    --mas-ink: #f2f5f8;
+    --mas-muted: #b0b8c0;
+    --mas-glass-edge: rgba(255, 255, 255, .16);
+    --mas-glass-line: rgba(255, 255, 255, .12);
+    --mas-glass-shadow: 0 12px 38px rgba(0, 0, 0, .44);
+    --mas-fill: rgba(255, 255, 255, .08);
+    --mas-fill-strong: rgba(255, 255, 255, .15);
+  }
+}
+
+/* --- the material ------------------------------------------------------- */
+
+/* Applied to every floating surface. `position: fixed` pages are responsible
+   for their own placement; this only describes the pane. */
+.mas-glass {
+  box-sizing: border-box;
+  border: 1px solid var(--mas-glass-edge);
+  background: var(--mas-glass-tint);
+  -webkit-backdrop-filter: blur(var(--mas-glass-blur)) saturate(var(--mas-glass-sat));
+  backdrop-filter: blur(var(--mas-glass-blur)) saturate(var(--mas-glass-sat));
+  /* Inner highlight and the single lift shadow, in one declaration so no
+     surface can accidentally add a third. */
+  box-shadow: inset 0 1px 0 var(--mas-glass-inner), var(--mas-glass-shadow);
+  color: var(--mas-ink);
+  font: 13px/1.45 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+/* Browsers without backdrop-filter get an opaque-enough pane instead of an
+   unreadable one: the blur is the effect, but legibility is the requirement. */
+@supports not (backdrop-filter: blur(1px)) {
+  .mas-glass { background: var(--mas-glass-tint-strong); }
+}
+
+/* Flat switch: a filled track, no shadow under the thumb.
+ *
+ * No accent colour: the specification allows colour only for status, and an
+ * "on" toggle is a control state, not a status. A light track with a dark thumb
+ * reads as on/off on its own and keeps the pane free of a theme colour. */
+.mas-switch { position: relative; display: inline-flex; cursor: pointer; }
+.mas-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.mas-switch-track {
+  box-sizing: border-box;
+  width: 40px;
+  height: 23px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--mas-fill-strong);
+  display: flex;
+  align-items: center;
+  transition: background .2s var(--mas-ease);
+}
+.mas-switch-thumb {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .22s var(--mas-ease), background .22s ease;
+}
+.mas-switch input:checked + .mas-switch-track { background: rgba(255, 255, 255, .82); }
+.mas-switch input:checked + .mas-switch-track .mas-switch-thumb {
+  /* 40 - 2*2 padding - 19 thumb = 17 */
+  transform: translateX(17px);
+  background: #1b2029;
+}
+
+/* --- shared primitives -------------------------------------------------- */
+/* Fills separate controls; outlines are reserved for focus. */
+
+.mas-btn {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px var(--mas-gutter);
+  border: 0;
+  border-radius: var(--mas-radius-sm);
+  background: var(--mas-fill);
+  color: var(--mas-ink);
+  font: 500 12px/1.2 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  /* Only compositor-friendly properties animate: no layout, no repaint of the
+     pane behind it. */
+  transition: background var(--mas-fast) ease, transform var(--mas-fast) var(--mas-ease);
+}
+.mas-btn:hover:not(:disabled) { background: var(--mas-fill-strong); }
+.mas-btn:active:not(:disabled) { transform: scale(.985); }
+.mas-btn:disabled { opacity: .55; cursor: default; }
+.mas-btn-small { width: auto; margin: 0; padding: 8px 12px; white-space: nowrap; }
+
+.mas-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--mas-radius-sm);
+  background: var(--mas-fill);
+  color: var(--mas-ink);
+  font: 12px/1.2 inherit;
+  font-family: inherit;
+}
+.mas-select option { color: #17191c; }
+
+.mas-link {
+  padding: 5px 8px;
+  margin-left: -8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mas-muted);
+  font: 12px/1.2 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--mas-fast) ease, color var(--mas-fast) ease;
+}
+.mas-link:hover { background: var(--mas-fill); color: var(--mas-ink); }
+
+/* A rule between bands. Edge to edge by design — see --mas-gutter. */
+.mas-rule {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--mas-glass-line);
+}
+
+/* Focus. The panel is injected into arbitrary pages, any of which may reset
+   outlines, so every control draws its own. */
+.mas-glass :focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .78);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.mas-glass .mas-select:focus-visible { outline-offset: -1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mas-btn { transition: none; }
+  .mas-btn:active:not(:disabled) { transform: none; }
+  .mas-switch-track,
+  .mas-switch-thumb { transition-duration: .01ms; }
+}

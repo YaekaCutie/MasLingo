@@ -77,14 +77,26 @@ async function diagnoseFrame(tabId) {
 const CONTENT_SCRIPTS = [
   "config.js",
   "translation/providers.js",
+  "content/glass.js",
   "content/overlay.js",
   "content/auto.js",
   "content/panel.js",
   "content/content.js",
 ];
 
+// Order matters: the tokens and the material come first, then the surfaces that
+// use them. Same list as the manifest, and check-extension.mjs compares the two
+// so a repaired page cannot end up styled differently from a freshly loaded one.
+const CONTENT_STYLES = [
+  "content/styles/glass.css",
+  "content/styles/window.css",
+  "content/styles/status.css",
+  "content/styles/marker.css",
+  "content/styles/page.css",
+];
+
 async function injectContentScript(tabId) {
-  await chrome.scripting.insertCSS({ target: { tabId }, files: ["content/styles.css"] });
+  await chrome.scripting.insertCSS({ target: { tabId }, files: CONTENT_STYLES });
   await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
 }
 

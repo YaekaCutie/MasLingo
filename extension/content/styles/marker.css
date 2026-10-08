@@ -1,0 +1,133 @@
+/* MasLingo — detection marker and painted results.
+ *
+ * Two objects, deliberately separate, because they have different lifetimes:
+ *
+ *   .mas-box   the marker. Appears the instant a region is known, at its final
+ *              size — never grown from a dot — then reads as progress while the
+ *              translation is in flight, holds solid briefly, and fades out.
+ *   .mas-result  the painted translation. It outlives the marker by design: the
+ *              marker's whole job is to say "this region, right now", and once
+ *              the translation is on the artwork the box has nothing left to
+ *              say.
+ *
+ * The marker is a sibling of the result, never its parent, so removing it can
+ * never take the translation with it.
+ *
+ * pointer-events is none on both: a manga page has to stay clickable through
+ * every overlay this extension draws.
+ */
+
+:root {
+  --mas-box-dash: 2px;
+  --mas-box-hold: .5s;      /* the solid edge stays this long, per spec */
+  --mas-box-fade: .42s;
+  --mas-box-in: .18s;
+}
+
+/* --- marker -------------------------------------------------------------- */
+.mas-box {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  opacity: 0;
+  will-change: opacity;
+  transition: opacity var(--mas-box-in) ease;
+}
+.mas-box-visible { opacity: 1; }
+.mas-box-fading { opacity: 0; transition: opacity var(--mas-box-fade) ease; }
+
+.mas-box-border {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: 6px;
+}
+
+/* Two stacked borders, cross-faded. `border-style` cannot be interpolated, so a
+   single element asked to go dashed -> solid would snap; two elements that fade
+   into each other read as one continuous change. */
+.mas-box-dashed {
+  border: var(--mas-box-dash) dashed var(--mas-dot-ok);
+  transition: opacity .3s ease;
+}
+.mas-box-solid {
+  border: var(--mas-box-dash) solid var(--mas-dot-ok);
+  opacity: 0;
+  transition: opacity .3s ease;
+}
+
+/* While the region is being read and translated the dashed edge fades up
+   slightly: movement without motion, enough that a slow provider looks busy
+   rather than stuck. */
+.mas-box-working .mas-box-dashed { opacity: .5; transition: opacity 1.6s ease-out; }
+.mas-box-solid-on .mas-box-solid { opacity: 1; transition: opacity .3s ease; }
+.mas-box-solid-on .mas-box-dashed { opacity: 0; }
+
+.mas-box-failed .mas-box-dashed,
+.mas-box-failed .mas-box-solid { border-color: var(--mas-dot-bad); }
+
+/* --- painted result ------------------------------------------------------ */
+/*
+ * Non-negotiable positioning: the caller places these in document coordinates,
+ * so a hostile page rule cannot move them relative to the artwork. Kept in
+ * one !important block with #mas-layer for the same reason.
+ */
+#mas-layer {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: none !important;
+  pointer-events: none !important;
+  /* Below the panel: painted artwork must never draw over the controls. */
+  z-index: 2147483640 !important;
+}
+#mas-layer canvas.mas-result {
+  position: absolute !important;
+  display: block !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  transform: none !important;
+  pointer-events: none !important;
+  opacity: 1;
+  z-index: 2147483641 !important;
+}
+
+/* Manual-mode results are appended to <body>, not to the layer, so they need
+   their own copy of the rules. Absolute with a document-coordinate `left`/`top`
+   — as `fixed` they detached from the artwork the moment the page scrolled. */
+canvas.mas-overlay-text-canvas {
+  position: absolute !important;
+  display: block !important;
+  max-width: none !important;
+  max-height: none !important;
+  box-sizing: content-box !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transform: none !important;
+  object-fit: fill !important;
+  pointer-events: none !important;
+  z-index: 2147483641 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mas-box,
+  .mas-box-fading,
+  .mas-box-dashed,
+  .mas-box-solid,
+  .mas-box-working .mas-box-dashed,
+  .mas-box-solid-on .mas-box-solid { transition-duration: .01ms; }
+}

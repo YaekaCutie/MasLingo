@@ -47,13 +47,18 @@
       "js": [
         "config.js",
         "translation/providers.js",
+        "content/glass.js",
         "content/overlay.js",
         "content/auto.js",
         "content/panel.js",
         "content/content.js"
       ],
       "css": [
-        "content/styles.css"
+        "content/styles/glass.css",
+        "content/styles/window.css",
+        "content/styles/status.css",
+        "content/styles/marker.css",
+        "content/styles/page.css"
       ],
       "run_at": "document_idle",
       "all_frames": true

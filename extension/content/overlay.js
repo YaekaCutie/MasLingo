@@ -240,7 +240,7 @@ const MAS_notice = (() => {
       node.setAttribute("aria-live", "polite");
       document.documentElement.appendChild(node);
     }
-    node.className = `mas-notice mas-notice-${kind}`;
+    node.className = `mas-notice mas-glass mas-notice-${kind}`;
     node.textContent = text;
     requestAnimationFrame(() => node.classList.add("mas-notice-in"));
     if (timer) clearTimeout(timer);

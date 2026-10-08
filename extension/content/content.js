@@ -425,7 +425,7 @@ function showToast(text, kind = "info") {
     toast.setAttribute("aria-live", "polite");
     document.body.appendChild(toast);
   }
-  toast.className = `mas-toast mas-toast-${kind} mas-toast-visible`;
+  toast.className = `mas-toast mas-glass mas-toast-${kind} mas-toast-visible`;
   toast.textContent = text;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {

@@ -141,8 +141,15 @@ try {
       // The status line now lives inside the panel, so what matters is that it
       // is a child of it and single-line — not where it sits on the page.
       statusInsidePanel: Boolean(panel.querySelector("#mas-status")),
-      statusLines: strip ? strip.textContent.split("\n").length : 0,
-      statusWhiteSpace: strip ? getComputedStyle(strip).whiteSpace : null,
+      statusLines: (() => {
+        // The line itself is the inner span; the band around it is a container.
+        const line = strip?.querySelector(".mas-status-text") || strip;
+        return line ? line.textContent.split("\n").length : 0;
+      })(),
+      statusWhiteSpace: (() => {
+        const line = strip?.querySelector(".mas-status-text") || strip;
+        return line ? getComputedStyle(line).whiteSpace : null;
+      })(),
       statusText: strip?.textContent?.trim() || "",
       floatingSurfaces: [...document.documentElement.children]
         .filter((node) => node.id?.startsWith("mas-"))
@@ -272,28 +279,46 @@ try {
   const collapsed = await page.evaluate(() => {
     const panel = document.getElementById("mas-panel");
     const widget = document.getElementById("mas-widget");
+    const body = panel.querySelector(".mas-panel-body");
+    // Collapse is a continuous shape change now, not a swap between two
+    // layouts: every band is a grid row that animates to 0fr, so what shrinks is
+    // the band's clipping box. The body inside keeps its natural height and is
+    // simply clipped away — measuring the body itself reports 323px and looks
+    // like a failure when the collapse worked perfectly.
+    const clip = panel.querySelector(".mas-sec-body .mas-sec-in");
+    let hiddenByDisplay = false;
+    for (const node of panel.querySelectorAll("*")) {
+      if (getComputedStyle(node).display === "none") { hiddenByDisplay = true; break; }
+    }
     return {
-      bodyVisible: getComputedStyle(panel.querySelector(".mas-panel-body")).display !== "none",
+      bodyHeight: Math.round(clip ? clip.getBoundingClientRect().height : -1),
+      panelHeight: Math.round(panel.getBoundingClientRect().height),
+      hiddenByDisplay,
       widgetVisible: getComputedStyle(widget).display !== "none",
       text: widget.textContent.trim(),
       width: panel.getBoundingClientRect().width,
     };
   });
-  check("点击收起按钮能收起", collapsed.bodyVisible === false,
-    `主体仍可见（display 不是 none）`);
-  check("收起后显示挂件", collapsed.widgetVisible === true);
+  check("点击收起按钮能收起", collapsed.bodyHeight < 2,
+    `主体还有 ${collapsed.bodyHeight}px 高`);
+  check("收起不使用 display:none 硬切换", collapsed.hiddenByDisplay === false,
+    "面板里出现了 display:none 的元素");
+  check("收起后显示挂件", collapsed.widgetVisible === true && collapsed.bodyHeight < 2);
   check("挂件只保留核心状态", collapsed.text.includes("自动翻译") && collapsed.width < 200,
     `${collapsed.text} / ${collapsed.width}px`);
+  console.log(`      收起后 面板高 ${collapsed.panelHeight}px  宽 ${Math.round(collapsed.width)}px`);
 
   const widgetBox = await page.evaluate(() => {
     const box = document.getElementById("mas-widget").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(widgetBox.x, widgetBox.y);
-  await new Promise((r) => setTimeout(r, 400));
-  const expandedAgain = await page.evaluate(() =>
-    getComputedStyle(document.getElementById("mas-panel").querySelector(".mas-panel-body")).display !== "none");
-  check("点击挂件能再次展开", expandedAgain === true);
+  await new Promise((r) => setTimeout(r, 800));
+  const expandedAgain = await page.evaluate(() => {
+    const clip = document.querySelector("#mas-panel .mas-sec-body .mas-sec-in");
+    return Math.round(clip.getBoundingClientRect().height);
+  });
+  check("点击挂件能再次展开", expandedAgain > 100, `主体只有 ${expandedAgain}px 高`);
 
   // The drag handle must still drag: the fix for the button cannot cost that.
   const stillDrags = await page.evaluate(async () => {

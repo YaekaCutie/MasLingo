@@ -23,13 +23,17 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // MAS_panel undefined.
 const contentScripts = [
   "extension/config.js", "extension/translation/providers.js",
-  "extension/content/overlay.js", "extension/content/auto.js",
-  "extension/content/panel.js", "extension/content/content.js",
+  "extension/content/glass.js", "extension/content/overlay.js",
+  "extension/content/auto.js", "extension/content/panel.js",
+  "extension/content/content.js",
 ].map((name) => readFileSync(join(repoRoot, name), "utf8"));
-// The stylesheet has to come along too, otherwise class-based assertions test
+// The stylesheets have to come along too, otherwise class-based assertions test
 // nothing: an earlier run of this check passed the element into existence and
-// then found it had no positioning at all.
-const contentStyles = readFileSync(join(repoRoot, "extension", "content", "styles.css"), "utf8");
+// then found it had no positioning at all. Same list and same order as the
+// manifest, since window.css reads tokens defined in glass.css.
+const contentStyles = [
+  "glass", "window", "status", "marker", "page",
+].map((name) => readFileSync(join(repoRoot, "extension", "content", "styles", `${name}.css`), "utf8")).join("\n");
 
 const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const failures = [];
@@ -171,10 +175,13 @@ try {
     showToast("测试提示", "info");
     const panel = document.getElementById("mas-panel");
     const strip = document.getElementById("mas-status");
+    // The message lives on the inner line element; the band around it is a
+    // container and its textContent carries the markup's whitespace.
+    const line = strip?.querySelector(".mas-status-text");
     out.stripCreated = Boolean(strip);
-    out.stripText = strip ? strip.textContent : null;
+    out.stripText = line ? line.textContent : null;
     out.stripInsidePanel = Boolean(panel && strip && panel.contains(strip));
-    out.stripSingleLine = strip ? getComputedStyle(strip).whiteSpace === "nowrap" : false;
+    out.stripSingleLine = line ? getComputedStyle(line).whiteSpace === "nowrap" : false;
     out.floatingSurfaces = [...document.documentElement.children]
       .filter((node) => node.id?.startsWith("mas-")).map((node) => node.id);
 

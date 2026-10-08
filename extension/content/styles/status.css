@@ -1,0 +1,98 @@
+/* MasLingo — status line and status dots.
+ *
+ * One line, inside the panel's bottom edge. It reports what is happening right
+ * now and nothing else: a new message replaces the old one, and the line settles
+ * back to an idle word rather than keeping a log. Colour is the only thing that
+ * distinguishes the four states, and there are exactly four.
+ *
+ * The line is a band of the pane, so it carries no material of its own — a
+ * second glass surface stacked on the first would double the blur cost for no
+ * visual gain. What animates is the text: it slides up into place on arrival and
+ * fades out when the message expires.
+ */
+
+.mas-statusbar {
+  padding-top: 8px;
+  padding-bottom: 10px;
+  /* Edge to edge, matching the title bar. */
+  border-top: 1px solid var(--mas-glass-line);
+  font: 11px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--mas-muted);
+  overflow: hidden;
+}
+
+.mas-status-text {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--mas-fast) ease;
+}
+
+/* Slide and fade on every new message. The class is removed on animation end so
+   the same message arriving twice animates twice. */
+.mas-statusbar-updating .mas-status-text {
+  animation: mas-status-in .34s var(--mas-ease);
+}
+@keyframes mas-status-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* Settling back to idle is quieter than a new message — no movement, just a
+   fade, so the line does not keep drawing the eye after the work is done. */
+.mas-statusbar-idle .mas-status-text { animation: mas-status-out .5s ease; }
+@keyframes mas-status-out {
+  from { opacity: .35; }
+  to   { opacity: 1; }
+}
+
+.mas-statusbar-active .mas-status-text { color: var(--mas-ink); }
+.mas-statusbar[data-kind="error"] .mas-status-text { color: var(--mas-err-text); }
+.mas-statusbar[data-kind="ok"] .mas-status-text { color: var(--mas-dot-ok); }
+
+/* --- status dots --------------------------------------------------------- */
+/* Colour lives here and nowhere else in the panel. */
+.mas-dots {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+}
+.mas-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--mas-muted);
+  white-space: nowrap;
+}
+.mas-dot i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--mas-dot-idle);
+  transition: background .2s ease;
+}
+.mas-dot[data-state="working"] i {
+  background: var(--mas-dot-working);
+  animation: mas-pulse 1.2s ease-in-out infinite;
+}
+.mas-dot[data-state="ok"] i { background: var(--mas-dot-ok); }
+.mas-dot[data-state="bad"] i { background: var(--mas-dot-bad); }
+.mas-dot[data-state="ok"] .mas-dot-text,
+.mas-dot[data-state="bad"] .mas-dot-text { color: var(--mas-ink); }
+
+/* Focus forwards to the track, because the input itself is 0x0 and invisible. */
+.mas-switch input:focus-visible + .mas-switch-track {
+  outline: 2px solid rgba(255, 255, 255, .78);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mas-statusbar-updating .mas-status-text,
+  .mas-statusbar-idle .mas-status-text { animation-duration: .01ms; }
+  .mas-dot i { animation: none !important; }
+}

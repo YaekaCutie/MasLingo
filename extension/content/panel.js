@@ -80,26 +80,50 @@ globalThis.MAS_panel = (() => {
 
   let idleText = "";
 
+  /**
+   * Replay the arrival animation on the status line.
+   *
+   * A class is re-added rather than a new node being created, so the line keeps
+   * its measured width and nothing reflows around it. Removing and re-adding in
+   * the same frame would not restart a CSS animation — reading offsetWidth
+   * between the two forces a style flush, which is what makes it restart.
+   */
+  function pulseStatus() {
+    const bar = statusNode;
+    if (!bar) return;
+    bar.classList.remove("mas-statusbar-updating");
+    void bar.offsetWidth;
+    bar.classList.add("mas-statusbar-updating");
+  }
+
   function status(text, kind = "info") {
-    const node = statusNode;
-    if (!node) return;
-    node.textContent = text;
-    node.dataset.kind = kind;
-    node.classList.toggle("mas-statusbar-active", kind !== "info" || Boolean(text));
+    const bar = statusNode;
+    if (!bar) return;
+    const line = bar.querySelector(".mas-status-text") || bar;
+
+    line.textContent = text;
+    bar.dataset.kind = kind;
+    bar.classList.toggle("mas-statusbar-active", kind !== "info" || Boolean(text));
+    bar.classList.toggle("mas-statusbar-idle", !text);
+    if (text) pulseStatus();
+
     // The collapsed widget carries the same message, because a status the user
     // cannot see while collapsed is not a status. Its dot mirrors the kind.
     const widgetText = root?.querySelector("#mas-widget-text");
     if (widgetText) widgetText.textContent = text || "自动翻译";
     if (root) root.dataset.busy = kind === "error" ? "2" : (text ? "1" : "0");
+
     if (statusTimer) clearTimeout(statusTimer);
     if (!text) return;
     // Errors stay put long enough to be read and acted on; progress does not
     // need to linger.
     const dwell = kind === "error" ? 9000 : 4000;
     statusTimer = setTimeout(() => {
-      node.textContent = idleText;
-      node.dataset.kind = "info";
-      node.classList.remove("mas-statusbar-active");
+      line.textContent = idleText;
+      bar.dataset.kind = "info";
+      bar.classList.remove("mas-statusbar-active", "mas-statusbar-updating");
+      bar.classList.add("mas-statusbar-idle");
+      void bar.offsetWidth;
       const back = root?.querySelector("#mas-widget-text");
       if (back) back.textContent = "自动翻译";
       if (root) root.dataset.busy = "0";
@@ -313,6 +337,9 @@ globalThis.MAS_panel = (() => {
 
     const rect = root.getBoundingClientRect();
     dragging = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    // The settle animation would otherwise fight the drag; it is re-added on
+    // release, which is the whole point of it.
+    root.classList.remove("mas-panel-settling");
     root.classList.add("mas-panel-dragging");
     try {
       root.setPointerCapture?.(event.pointerId);
@@ -336,6 +363,8 @@ globalThis.MAS_panel = (() => {
     if (!dragging) return;
     dragging = null;
     root.classList.remove("mas-panel-dragging");
+    // Lifts back with a short overshoot instead of snapping straight.
+    globalThis.MAS_glass?.settle?.(root);
     const rect = root.getBoundingClientRect();
     writeStore({ [POSITION_KEY]: { left: Math.round(rect.left), top: Math.round(rect.top) } });
   }
@@ -360,50 +389,68 @@ globalThis.MAS_panel = (() => {
   function build() {
     const node = document.createElement("div");
     node.id = "mas-panel";
-    node.className = "mas-panel";
+    node.className = "mas-panel mas-glass";
+    // Each band is wrapped in a grid row so collapsing can animate the height.
+    // There is no `display:none` anywhere in the collapsed state: the panel
+    // changes shape continuously instead of swapping between two layouts.
     node.innerHTML = `
-      <div class="mas-panel-bar" id="mas-panel-bar">
-        <span class="mas-brand">MasLingo</span>
-        <button class="mas-panel-btn" id="mas-collapse" title="收起为挂件" aria-label="收起">–</button>
-      </div>
-      <div class="mas-panel-body">
-        <div class="mas-dots">
-          <span class="mas-dot" id="mas-dot-backend" data-state="unknown">
-            <i></i><span class="mas-dot-text">后端未检测</span>
-          </span>
-          <span class="mas-dot" id="mas-dot-translation" data-state="unknown">
-            <i></i><span class="mas-dot-text">翻译未检测</span>
-          </span>
-        </div>
+      <div class="mas-glow" aria-hidden="true"></div>
 
-        <div class="mas-row">
-          <span class="mas-label" id="mas-auto-label">自动识别</span>
-          <label class="mas-switch" aria-labelledby="mas-auto-label">
-            <input id="mas-auto" type="checkbox" aria-labelledby="mas-auto-label">
-            <span class="mas-switch-track"><span class="mas-switch-thumb"></span></span>
-          </label>
+      <div class="mas-sec mas-sec-bar"><div class="mas-sec-in">
+        <div class="mas-panel-bar" id="mas-panel-bar">
+          <span class="mas-brand">MasLingo</span>
+          <button class="mas-panel-btn" id="mas-collapse" title="收起为挂件" aria-label="收起">–</button>
         </div>
-        <button class="mas-btn" id="mas-select">框选翻译</button>
+      </div></div>
 
-        <div class="mas-sep"></div>
+      <div class="mas-sec mas-sec-body"><div class="mas-sec-in">
+        <div class="mas-panel-body">
+          <div class="mas-dots">
+            <span class="mas-dot" id="mas-dot-backend" data-state="unknown">
+              <i></i><span class="mas-dot-text">后端未检测</span>
+            </span>
+            <span class="mas-dot" id="mas-dot-translation" data-state="unknown">
+              <i></i><span class="mas-dot-text">翻译未检测</span>
+            </span>
+          </div>
 
-        <div class="mas-label" id="mas-provider-label">翻译类型</div>
-        <div class="mas-row mas-row-tight">
-          <select id="mas-provider" class="mas-select" aria-labelledby="mas-provider-label"></select>
-          <button class="mas-btn mas-btn-small" id="mas-connect">连通检测</button>
+          <div class="mas-row">
+            <span class="mas-label" id="mas-auto-label">自动识别</span>
+            <label class="mas-switch" aria-labelledby="mas-auto-label">
+              <input id="mas-auto" type="checkbox" aria-labelledby="mas-auto-label">
+              <span class="mas-switch-track"><span class="mas-switch-thumb"></span></span>
+            </label>
+          </div>
+          <button class="mas-btn" id="mas-select">框选翻译</button>
+
+          <div class="mas-rule"></div>
+
+          <div class="mas-label" id="mas-provider-label">翻译类型</div>
+          <div class="mas-row mas-row-tight">
+            <select id="mas-provider" class="mas-select" aria-labelledby="mas-provider-label"></select>
+            <button class="mas-btn mas-btn-small" id="mas-connect">连通检测</button>
+          </div>
+          <div class="mas-line" id="mas-line"></div>
+
+          <div class="mas-rule"></div>
+          <div class="mas-foot">
+            <button class="mas-link" id="mas-settings">⚙ 设置</button>
+            <span class="mas-version" id="mas-version"></span>
+          </div>
         </div>
-        <div class="mas-line" id="mas-line"></div>
+      </div></div>
 
-        <div class="mas-sep"></div>
-        <div class="mas-foot">
-          <button class="mas-link" id="mas-settings">⚙ 设置</button>
-          <span class="mas-version" id="mas-version"></span>
+      <div class="mas-sec mas-sec-status"><div class="mas-sec-in">
+        <div class="mas-statusbar" id="mas-status" role="status" aria-live="polite">
+          <span class="mas-status-text" id="mas-status-text"></span>
         </div>
-      </div>
-      <div class="mas-statusbar" id="mas-status" role="status" aria-live="polite"></div>
-      <button class="mas-widget" id="mas-widget" title="展开">
-        <i></i><span id="mas-widget-text">自动翻译</span>
-      </button>
+      </div></div>
+
+      <div class="mas-sec mas-sec-widget"><div class="mas-sec-in">
+        <button class="mas-widget" id="mas-widget" title="展开">
+          <i></i><span id="mas-widget-text">自动翻译</span>
+        </button>
+      </div></div>
     `;
     return node;
   }
@@ -434,7 +481,11 @@ globalThis.MAS_panel = (() => {
     // mount and nothing pinned to the corner of the page.
     statusNode = root.querySelector("#mas-status");
     idleText = "就绪";
-    statusNode.textContent = idleText;
+    statusNode.querySelector(".mas-status-text").textContent = idleText;
+
+    // Pointer-follow highlight. Bound once, on mount, and coalesced to one
+    // custom-property write per frame by MAS_glass.
+    globalThis.MAS_glass?.follow?.(root);
 
     currentLine = pickLine();
     root.querySelector("#mas-line").textContent = `「${currentLine}」`;
