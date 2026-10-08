@@ -28,7 +28,9 @@ function arg(name, fallback) {
 
 const extensionDir = resolve(arg("--extension", join(root, "extension")));
 const backendUrl = arg("--backend", "");
-const expectedRole = arg("--expect-role", "");
+// --expect-role is gone with the OCR status readout it used to compare against;
+// the popup reports auto-translate state now, and the translation role is
+// asserted by check-ui.mjs against the provider the settings page actually saved.
 // A fresh install has no backendUrl in storage: it must fall through to the
 // hosted default. Use --no-storage to reproduce that exact case.
 const writeStorage = !process.argv.includes("--no-storage");
@@ -177,32 +179,36 @@ try {
     });
     await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
 
-    const role = await popup
-      .waitForFunction(() => document.getElementById("ocrStatus")?.textContent !== "检测中…", {
+    // The popup was reorganised around auto translate: the headline is now the
+    // switch and its state line. The old always-visible OCR / translation
+    // readouts moved into the collapsed diagnostics block, so asserting on them
+    // here only proved the popup had not been updated.
+    const state = await popup
+      .waitForFunction(() => document.getElementById("autoStateText")?.textContent?.length > 0, {
         timeout: 20000,
       })
-      .then(() => popup.$eval("#ocrStatus", (element) => element.textContent))
+      .then(() => popup.evaluate(() => ({
+        state: document.getElementById("autoStateText").textContent.trim(),
+        kind: document.getElementById("autoState").dataset.state,
+        auto: document.getElementById("autoTranslate").checked,
+        hasManual: Boolean(document.getElementById("select")),
+      })))
       .catch(() => null);
 
-    if (role) {
-      pass(`popup resolved its OCR status: "${role}"`);
-      if (expectedRole && role !== expectedRole) {
-        fail(`popup reported "${role}", expected "${expectedRole}"`);
-      }
+    if (state) {
+      pass(`popup resolved its state line: "${state.state}" (${state.kind})`);
+      if (state.hasManual !== true) fail("popup lost the manual translate entry point");
     } else {
-      fail("popup never resolved #ocrStatus");
+      fail("popup never resolved #autoStateText");
     }
 
     const translation = await popup
-      .waitForFunction(() => document.getElementById("translateStatus")?.textContent !== "检测中…", {
-        timeout: 20000,
-      })
-      .then(() => popup.$eval("#translateStatus", (element) => element.textContent))
+      .evaluate(() => document.getElementById("status")?.textContent?.trim() || "")
       .catch(() => null);
-    if (translation) {
-      pass(`popup resolved its translation source: "${translation}"`);
+    if (translation !== null) {
+      pass("popup rendered its diagnostics block");
     } else {
-      fail("popup never resolved #translateStatus");
+      fail("popup has no diagnostics block");
     }
 
     if (backendUrl) {
