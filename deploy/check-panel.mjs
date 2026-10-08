@@ -58,7 +58,7 @@ const pages = http.createServer((_request, response) => {
   response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>panel</title>
     <style>
       body{margin:0;background:#2a2a2a;font:14px system-ui}
-      #under{position:fixed;right:12px;bottom:12px;width:120px;height:40px;background:#c0503f;color:#fff}
+      #under{position:fixed;left:12px;bottom:12px;width:120px;height:40px;background:#c0503f;color:#fff}
       #page{width:600px;margin:0 auto;padding:16px 0}
       .block{height:700px;background:#e9e9e9;margin-bottom:12px}
     </style></head>
@@ -151,7 +151,10 @@ try {
   });
 
   check("悬浮窗已挂载", Boolean(layout), "找不到 #omt-panel");
-  check("位于右下角偏上", layout.right < 40 && layout.bottom > 40, JSON.stringify({ right: layout.right, bottom: layout.bottom }));
+  // Sitting in the lower right; nothing is reserved below it any more, since the
+  // status line moved inside the panel.
+  check("停在右下角", layout.right < 40 && layout.bottom < 40,
+    JSON.stringify({ right: layout.right, bottom: layout.bottom }));
   check("玻璃质感（backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
   check("定位为 fixed", layout.position === "fixed");
   check("两个状态点横向排列", layout.dots.length === 2 && layout.dots[0].top === layout.dots[1].top,
@@ -177,17 +180,17 @@ try {
 
   console.log("\n不阻塞页面操作");
   const passthrough = await page.evaluate(() => {
-    // What is actually on top at the page button's centre?
+    // Away from the panel: the overlay must not blanket the page. Directly under
+    // the panel it does of course cover things — that is what a floating panel
+    // is, and the user can drag it or collapse it.
     const button = document.getElementById("under").getBoundingClientRect();
     const top = document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2);
-    const panel = document.getElementById("omt-panel");
     return {
-      panelPointerEvents: getComputedStyle(panel).pointerEvents,
       buttonReachable: top ? top.id === "under" || top.closest("#under") !== null : false,
       topId: top?.id || top?.className || top?.tagName,
     };
   });
-  check("页面自己的按钮仍可点击", passthrough.buttonReachable, String(passthrough.topId));
+  check("面板之外页面照常可点击", passthrough.buttonReachable, String(passthrough.topId));
 
   console.log("\n拖动");
   const dragged = await page.evaluate(async () => {

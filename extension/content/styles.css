@@ -117,7 +117,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
  * the only one.
  */
 .omt-panel{
-  position:fixed;right:16px;bottom:60px;z-index:2147483645;
+  position:fixed;right:16px;bottom:16px;z-index:2147483645;
   width:264px;box-sizing:border-box;
   border-radius:16px;
   border:1px solid var(--omt-glass-line);
