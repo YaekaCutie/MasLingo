@@ -165,16 +165,18 @@ try {
     const out = {};
     out.noticeFunctionRemoved = typeof showTranslationNotice === "undefined";
 
-    // Status goes to the panel's single-line strip; there is no second toast any
-    // more, so that is what must behave.
+    // Status goes to the panel's own bottom line; there is no second toast and
+    // no floating strip any more, so that is what must behave.
     out.noToastElement = document.getElementById("mt-toast") === null;
     showToast("测试提示", "info");
+    const panel = document.getElementById("omt-panel");
     const strip = document.getElementById("omt-status");
     out.stripCreated = Boolean(strip);
     out.stripText = strip ? strip.textContent : null;
-    out.stripFixed = strip ? getComputedStyle(strip).position === "fixed" : false;
-    out.stripPassive = strip ? getComputedStyle(strip).pointerEvents === "none" : false;
+    out.stripInsidePanel = Boolean(panel && strip && panel.contains(strip));
     out.stripSingleLine = strip ? getComputedStyle(strip).whiteSpace === "nowrap" : false;
+    out.floatingSurfaces = [...document.documentElement.children]
+      .filter((node) => node.id?.startsWith("omt-")).map((node) => node.id);
 
     activeRequestId = "check-1";
     showTranslationResult({ requestId: "check-1", mode: "none", result: {} });
@@ -187,11 +189,12 @@ try {
 
   check("旧的居中结果面板函数已移除", overlay.noticeFunctionRemoved);
   check("不再存在第二个提示元素", overlay.noToastElement);
-  check("状态提示挂在状态条上", overlay.stripCreated && overlay.stripText === "测试提示",
+  check("状态提示写在悬浮窗状态栏上", overlay.stripCreated && overlay.stripText === "测试提示",
     JSON.stringify({ text: overlay.stripText }));
-  check("状态条固定在角落", overlay.stripFixed);
-  check("状态条不拦截鼠标", overlay.stripPassive);
-  check("状态条只有一行", overlay.stripSingleLine);
+  check("状态栏属于悬浮窗", overlay.stripInsidePanel);
+  check("状态栏只有一行", overlay.stripSingleLine);
+  check("页面上只有一个浮层", overlay.floatingSurfaces.length === 1,
+    JSON.stringify(overlay.floatingSurfaces));
   check("关闭翻译时不留下任何面板", overlay.panelsAfterNone === 0, `还有 ${overlay.panelsAfterNone} 个`);
   check("关闭翻译时不留下覆盖画布", overlay.canvasesAfterNone === 0, `还有 ${overlay.canvasesAfterNone} 个`);
 } finally {

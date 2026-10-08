@@ -219,38 +219,33 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 .omt-widget i{width:8px;height:8px;border-radius:50%;background:var(--omt-dot-idle);flex:0 0 auto}
 .omt-panel-collapsed{width:auto}
 .omt-panel-collapsed .omt-panel-body,
+.omt-panel-collapsed .omt-statusbar,
 .omt-panel-collapsed .omt-panel-bar{display:none}
 .omt-panel-collapsed .omt-widget{display:flex}
 .omt-panel-collapsed .omt-widget i{background:#3f9d63}
 .omt-panel-collapsed[data-busy="1"] .omt-widget i{background:#d9a53b;animation:omt-pulse 1.2s ease-in-out infinite}
+.omt-panel-collapsed[data-busy="2"] .omt-widget i{background:#c0503f}
 
-/* --- single-line status strip -------------------------------------------- */
+/* --- status bar ---------------------------------------------------------- */
 /*
- * Same material, same flatness: one line, replaced rather than appended. It is
- * the only place detailed progress appears, which is what keeps the panel above
- * it free of a log.
+ * One line, inside the panel. It replaced a separate strip pinned to the corner
+ * of the page: two surfaces made the eye choose between them, and the corner one
+ * covered the artwork for no reason, since everything it said belongs to the
+ * panel. It shares the panel's material, so it reads as that pane's bottom edge
+ * rather than as another floating thing.
  */
-.omt-status{
-  position:fixed;right:16px;bottom:16px;z-index:2147483646;
-  max-width:min(330px,calc(100vw - 32px));
-  box-sizing:border-box;padding:9px 14px;
-  border-radius:12px;
-  border:1px solid var(--omt-glass-line);
-  background:var(--omt-glass);
-  -webkit-backdrop-filter:blur(20px) saturate(160%);
-  backdrop-filter:blur(20px) saturate(160%);
-  box-shadow:0 2px 12px rgba(0,0,0,.10);
-  color:var(--omt-ink);
-  font:12px/1.35 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+.omt-statusbar{
+  padding:8px 14px 10px;
+  border-top:1px solid var(--omt-glass-line);
+  font:11px/1.4 system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+  color:var(--omt-muted);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  pointer-events:none;
-  opacity:0;transform:translateY(8px);
-  transition:opacity .2s ease,transform .2s ease;
+  transition:color .2s ease;
 }
-.omt-status-in{opacity:1;transform:translateY(0)}
-.omt-status-error{color:#c0503f}
+.omt-statusbar-active{color:var(--omt-ink)}
+.omt-statusbar[data-kind="error"]{color:#c0503f}
 
 @media(prefers-reduced-motion:reduce){
-  .omt-panel,.omt-status{transition:none}
+  .omt-panel,.omt-statusbar{transition:none}
   .omt-dot i{animation:none !important}
 }

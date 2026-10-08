@@ -67,22 +67,42 @@ globalThis.OMT_panel = (() => {
     node.querySelector(".omt-dot-text").textContent = text;
   }
 
-  // --- status strip ---------------------------------------------------------
+  // --- status bar -----------------------------------------------------------
   //
-  // One line, always. A new message replaces the old one rather than stacking,
-  // because a scrolling log is exactly what this is meant not to be.
+  // One line, inside the panel, showing only what is happening right now. A new
+  // message replaces the old one rather than stacking, because a scrolling log is
+  // exactly what this is meant not to be.
+  //
+  // It used to be a separate floating strip pinned to the bottom-right corner.
+  // Two surfaces meant the eye had to choose between them, and the corner one
+  // covered the page for no reason — everything it said belongs to the panel.
+
+  let idleText = "";
 
   function status(text, kind = "info") {
-    if (!statusNode) return;
-    statusNode.textContent = text;
-    statusNode.className = `omt-status omt-status-${kind}`;
-    void statusNode.offsetWidth;                 // restart the fade
-    statusNode.classList.add("omt-status-in");
+    const node = statusNode;
+    if (!node) return;
+    node.textContent = text;
+    node.dataset.kind = kind;
+    node.classList.toggle("omt-statusbar-active", kind !== "info" || Boolean(text));
+    // The collapsed widget carries the same message, because a status the user
+    // cannot see while collapsed is not a status. Its dot mirrors the kind.
+    const widgetText = root?.querySelector("#omt-widget-text");
+    if (widgetText) widgetText.textContent = text || "自动翻译";
+    if (root) root.dataset.busy = kind === "error" ? "2" : (text ? "1" : "0");
     if (statusTimer) clearTimeout(statusTimer);
+    if (!text) return;
     // Errors stay put long enough to be read and acted on; progress does not
     // need to linger.
-    const dwell = kind === "error" ? 6000 : 2600;
-    statusTimer = setTimeout(() => statusNode.classList.remove("omt-status-in"), dwell);
+    const dwell = kind === "error" ? 9000 : 4000;
+    statusTimer = setTimeout(() => {
+      node.textContent = idleText;
+      node.dataset.kind = "info";
+      node.classList.remove("omt-statusbar-active");
+      const back = root?.querySelector("#omt-widget-text");
+      if (back) back.textContent = "自动翻译";
+      if (root) root.dataset.busy = "0";
+    }, dwell);
   }
 
   // --- typing ---------------------------------------------------------------
@@ -255,31 +275,37 @@ globalThis.OMT_panel = (() => {
   /**
    * Keep the panel fully on screen, whatever the page or window does.
    *
-   * The bottom edge reserves room for the status strip. Without that, dragging
-   * to the lower right corner parks the panel straight on top of the one line of
-   * progress the user is meant to be reading.
+   * No corner is reserved any more: the status line moved inside the panel, so
+   * there is no second surface for it to collide with.
    */
   function clamp(left, top) {
     const margin = 8;
-    const width = root.offsetWidth || 260;
-    const height = root.offsetHeight || 180;
-    const strip = statusNode?.getBoundingClientRect();
-    const reserved = strip ? strip.height + 16 : 0;
+    const width = root.offsetWidth || 264;
+    const height = root.offsetHeight || 220;
     return {
       left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
-      top: Math.min(
-        Math.max(margin, top),
-        Math.max(margin, window.innerHeight - height - margin - reserved),
-      ),
+      top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - height - margin)),
     };
   }
 
   function startDrag(event) {
     if (event.button !== 0) return;
+    // The title bar doubles as the drag handle and holds the collapse button.
+    // Without this the pointerdown lands on the button too, and the
+    // preventDefault() below suppresses the click that would have followed — the
+    // button looked wired up but never fired, while the tests passed because they
+    // called .click() directly and skipped the pointer events entirely.
+    if (event.target.closest("button, input, select, a, textarea")) return;
+
     const rect = root.getBoundingClientRect();
     dragging = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
     root.classList.add("omt-panel-dragging");
-    root.setPointerCapture?.(event.pointerId);
+    try {
+      root.setPointerCapture?.(event.pointerId);
+    } catch {
+      // A pointer id the browser does not consider active. Dragging still works
+      // through the window listeners; capturing is only an optimisation.
+    }
     event.preventDefault();
   }
 
@@ -360,8 +386,9 @@ globalThis.OMT_panel = (() => {
           <span class="omt-version" id="omt-version"></span>
         </div>
       </div>
+      <div class="omt-statusbar" id="omt-status" role="status" aria-live="polite"></div>
       <button class="omt-widget" id="omt-widget" title="展开">
-        <i></i><span>自动翻译</span>
+        <i></i><span id="omt-widget-text">自动翻译</span>
       </button>
     `;
     return node;
@@ -389,12 +416,11 @@ globalThis.OMT_panel = (() => {
     root = build();
     document.documentElement.appendChild(root);
 
-    statusNode = document.createElement("div");
-    statusNode.id = "omt-status";
-    statusNode.className = "omt-status";
-    statusNode.setAttribute("role", "status");
-    statusNode.setAttribute("aria-live", "polite");
-    document.documentElement.appendChild(statusNode);
+    // The status bar lives inside the panel, so there is no second surface to
+    // mount and nothing pinned to the corner of the page.
+    statusNode = root.querySelector("#omt-status");
+    idleText = "就绪";
+    statusNode.textContent = idleText;
 
     currentLine = pickLine();
     root.querySelector("#omt-line").textContent = `「${currentLine}」`;

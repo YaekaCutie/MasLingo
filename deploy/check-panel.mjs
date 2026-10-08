@@ -108,10 +108,11 @@ try {
   console.log("\n悬浮窗结构与位置");
   const layout = await page.evaluate(() => {
     const panel = document.getElementById("omt-panel");
-    const strip = document.getElementById("omt-status");
     if (!panel) return null;
     const rect = panel.getBoundingClientRect();
+    const strip = document.getElementById("omt-status");
     const stripRect = strip?.getBoundingClientRect();
+    const panelRect = rect;
     const dots = [...panel.querySelectorAll(".omt-dot")].map((dot) => {
       const box = dot.getBoundingClientRect();
       return { text: dot.querySelector(".omt-dot-text").textContent.trim(), top: box.top, left: box.left };
@@ -137,9 +138,15 @@ try {
       hasSettings: Boolean(panel.querySelector("#omt-settings")),
       version: panel.querySelector("#omt-version")?.textContent || "",
       hasTerminal: Boolean(panel.querySelector("pre, .omt-terminal, .omt-log")),
-      stripBottom: stripRect ? window.innerHeight - stripRect.bottom : null,
-      stripLines: strip ? strip.textContent.split("\n").length : 0,
-      stripWhiteSpace: strip ? getComputedStyle(strip).whiteSpace : null,
+      // The status line now lives inside the panel, so what matters is that it
+      // is a child of it and single-line — not where it sits on the page.
+      statusInsidePanel: Boolean(panel.querySelector("#omt-status")),
+      statusLines: strip ? strip.textContent.split("\n").length : 0,
+      statusWhiteSpace: strip ? getComputedStyle(strip).whiteSpace : null,
+      statusText: strip?.textContent?.trim() || "",
+      floatingSurfaces: [...document.documentElement.children]
+        .filter((node) => node.id?.startsWith("omt-"))
+        .map((node) => node.id),
     };
   });
 
@@ -160,28 +167,26 @@ try {
   check("有设置入口", layout.hasSettings);
   check("显示版本号", /^v\d+\.\d+\.\d+$/.test(layout.version), layout.version);
   check("面板内没有终端", !layout.hasTerminal);
-  check("面板不与状态弹窗重叠", layout.bottom > layout.stripBottom + 8,
-    JSON.stringify({ panelBottom: layout.bottom, stripBottom: layout.stripBottom }));
 
-  console.log("\n状态弹窗");
-  check("状态弹窗存在且只有一行", layout.stripWhiteSpace === "nowrap" && layout.stripLines <= 1,
-    `${layout.stripLines} 行 / ${layout.stripWhiteSpace}`);
-  check("状态弹窗在最底部", layout.stripBottom !== null && layout.stripBottom < 40, String(layout.stripBottom));
+  console.log("\n状态栏在悬浮窗内（不再有角落弹窗）");
+  check("状态栏是悬浮窗的一部分", layout.statusInsidePanel);
+  check("状态栏只有一行", layout.statusWhiteSpace === "nowrap" && layout.statusLines <= 1,
+    `${layout.statusLines} 行 / ${layout.statusWhiteSpace}：「${layout.statusText}」`);
+  check("页面上只剩悬浮窗一个浮层", layout.floatingSurfaces.length === 1,
+    JSON.stringify(layout.floatingSurfaces));
 
   console.log("\n不阻塞页面操作");
   const passthrough = await page.evaluate(() => {
-    const panel = document.getElementById("omt-panel");
-    const strip = document.getElementById("omt-status");
     // What is actually on top at the page button's centre?
     const button = document.getElementById("under").getBoundingClientRect();
     const top = document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2);
+    const panel = document.getElementById("omt-panel");
     return {
-      stripPointerEvents: getComputedStyle(strip).pointerEvents,
+      panelPointerEvents: getComputedStyle(panel).pointerEvents,
       buttonReachable: top ? top.id === "under" || top.closest("#under") !== null : false,
       topId: top?.id || top?.className || top?.tagName,
     };
   });
-  check("状态弹窗不拦截鼠标", passthrough.stripPointerEvents === "none", passthrough.stripPointerEvents);
   check("页面自己的按钮仍可点击", passthrough.buttonReachable, String(passthrough.topId));
 
   console.log("\n拖动");
@@ -231,46 +236,106 @@ try {
     clamped.left >= 0 && clamped.top >= 0 && clamped.right <= clamped.vw && clamped.bottom <= clamped.vh,
     JSON.stringify(clamped));
 
-  // Dragging into the corner must not park the panel over the status strip.
-  const stripClear = await page.evaluate(() => {
-    const panel = document.getElementById("omt-panel").getBoundingClientRect();
-    const strip = document.getElementById("omt-status").getBoundingClientRect();
-    return { gap: Math.round(strip.top - panel.bottom), panelBottom: Math.round(panel.bottom), stripTop: Math.round(strip.top) };
+  // Dragging into the corner keeps the whole panel on screen; the status line
+  // travels with it, so there is nothing left to collide with.
+  const corner = await page.evaluate(() => {
+    const rect = document.getElementById("omt-panel").getBoundingClientRect();
+    return {
+      inside: rect.left >= 0 && rect.top >= 0
+        && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
+      right: Math.round(window.innerWidth - rect.right),
+      bottom: Math.round(window.innerHeight - rect.bottom),
+    };
   });
-  check("拖到角落也不遮住状态弹窗", stripClear.gap >= 8, JSON.stringify(stripClear));
+  check("拖到角落后整体仍在可视区内", corner.inside, JSON.stringify(corner));
 
-  console.log("\n收起为挂件");
-  const collapsed = await page.evaluate(async () => {
-    const panel = document.getElementById("omt-panel");
-    document.getElementById("omt-collapse").click();
-    await new Promise((r) => setTimeout(r, 350));
-    const widget = document.getElementById("omt-widget");
-    const bodyVisible = getComputedStyle(panel.querySelector(".omt-panel-body")).display !== "none";
-    const widgetVisible = getComputedStyle(widget).display !== "none";
-    const text = widget.textContent.trim();
-    const width = panel.getBoundingClientRect().width;
-    document.getElementById("omt-widget").click();
-    await new Promise((r) => setTimeout(r, 350));
-    const expandedAgain = getComputedStyle(panel.querySelector(".omt-panel-body")).display !== "none";
-    return { bodyVisible, widgetVisible, text, width, expandedAgain };
+  console.log("\n收起为挂件（真实点击）");
+  // A real mouse click, not element.click(). The collapse button sits inside the
+  // drag handle, and the drag handler calls preventDefault() on pointerdown —
+  // which suppresses the click that follows. element.click() dispatches straight
+  // to the listener and sails past that, so the first version of this check
+  // passed while the button did nothing for an actual user.
+  const collapseBox = await page.evaluate(() => {
+    const box = document.getElementById("omt-collapse").getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
-  check("收起后主体隐藏", collapsed.bodyVisible === false);
+  await page.mouse.click(collapseBox.x, collapseBox.y);
+  await new Promise((r) => setTimeout(r, 400));
+
+  const collapsed = await page.evaluate(() => {
+    const panel = document.getElementById("omt-panel");
+    const widget = document.getElementById("omt-widget");
+    return {
+      bodyVisible: getComputedStyle(panel.querySelector(".omt-panel-body")).display !== "none",
+      widgetVisible: getComputedStyle(widget).display !== "none",
+      text: widget.textContent.trim(),
+      width: panel.getBoundingClientRect().width,
+    };
+  });
+  check("点击收起按钮能收起", collapsed.bodyVisible === false,
+    `主体仍可见（display 不是 none）`);
   check("收起后显示挂件", collapsed.widgetVisible === true);
   check("挂件只保留核心状态", collapsed.text.includes("自动翻译") && collapsed.width < 200,
     `${collapsed.text} / ${collapsed.width}px`);
-  check("可以再次展开", collapsed.expandedAgain === true);
 
-  console.log("\n状态弹窗驱动自动识别的进度");
-  await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
-  await new Promise((r) => setTimeout(r, 4000));
-  const progress = await page.evaluate(() => {
-    const strip = document.getElementById("omt-status");
-    return { text: strip.textContent.trim(), visible: strip.classList.contains("omt-status-in") };
+  const widgetBox = await page.evaluate(() => {
+    const box = document.getElementById("omt-widget").getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
+  await page.mouse.click(widgetBox.x, widgetBox.y);
+  await new Promise((r) => setTimeout(r, 400));
+  const expandedAgain = await page.evaluate(() =>
+    getComputedStyle(document.getElementById("omt-panel").querySelector(".omt-panel-body")).display !== "none");
+  check("点击挂件能再次展开", expandedAgain === true);
+
+  // The drag handle must still drag: the fix for the button cannot cost that.
+  const stillDrags = await page.evaluate(async () => {
+    const bar = document.getElementById("omt-panel-bar");
+    const panel = document.getElementById("omt-panel");
+    const before = panel.getBoundingClientRect().left;
+    const box = bar.getBoundingClientRect();
+    const x = box.left + 20;
+    const y = box.top + box.height / 2;
+    bar.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 3 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: x - 120, clientY: y, button: 0, pointerId: 3 }));
+    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: x - 120, clientY: y, pointerId: 3 }));
+    await new Promise((r) => requestAnimationFrame(r));
+    return Math.round(before - panel.getBoundingClientRect().left);
+  });
+  check("拖拽仍然可用", stillDrags > 60, `只移动了 ${stillDrags}px`);
+
+  console.log("\n状态栏显示自动识别的进度");
+  await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
+  // Sampled early and then again later: the line is meant to show progress and
+  // then fall back to idle, so both halves of that are worth pinning down. The
+  // first version read it once at 4s, exactly when the dwell expires.
+  const sample = async () => page.evaluate(() => {
+    const strip = document.getElementById("omt-status");
+    const panel = document.getElementById("omt-panel");
+    return {
+      text: strip.textContent.trim(),
+      active: strip.classList.contains("omt-statusbar-active"),
+      insidePanel: panel.contains(strip),
+    };
+  });
+
+  let progress = await sample();
+  for (let attempt = 0; attempt < 15 && !progress.active; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 200));
+    progress = await sample();
+  }
   const afterToggle = ocrCalls.length;
   console.log(`      状态：「${progress.text}」`);
+
+  await new Promise((r) => setTimeout(r, 5000));
+  const settled = await sample();
+
   check("自动识别产生了状态文字", progress.text.length > 0, progress.text);
   check("状态文字只在一行", !progress.text.includes("\n"));
+  check("状态栏仍然属于悬浮窗", progress.insidePanel === true);
+  check("有进度时状态栏高亮", progress.active === true, `读到「${progress.text}」`);
+  check("进度结束后回到就绪", settled.active === false && settled.text === "就绪",
+    `停在「${settled.text}」`);
 
   console.log("\n状态点反映真实连通性");
   // The backend is reachable only through the service worker: a content script
