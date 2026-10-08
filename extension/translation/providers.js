@@ -298,9 +298,23 @@
     return joinResults(json?.translation || [], count);
   };
 
-  /** Fallback: the project's own backend, which still implements both modes. */
+  /**
+   * The project's own backend, doing the translating itself.
+   *
+   * The body used to say mode "openai-compatible" with an empty endpoint, model
+   * and key, and options.js pinned that mode for this provider. The backend then
+   * called translate_openai_compatible with three empty strings and answered 503
+   * "请配置 OpenAI-compatible 接口地址和模型" — for every request, always. The
+   * provider could not translate anything, and there was no field anywhere in the
+   * extension that could have filled those values in.
+   *
+   * "free-translate" is what this provider actually means: let the backend use
+   * whatever translator it is configured with. A deployment that has that turned
+   * off answers with a clear 400 instead of a 503 about missing settings the user
+   * was never asked for.
+   */
   function backend(request) {
-    const { endpoint, texts, target, mode } = request;
+    const { endpoint, texts, target } = request;
     return {
       url: `${endpoint}/api/translate-text`,
       init: {
@@ -308,10 +322,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           texts,
-          mode: mode || "openai-compatible",
-          endpoint: "",
-          model: "",
-          api_key: "",
+          mode: "free-translate",
           target_language: target,
         }),
       },

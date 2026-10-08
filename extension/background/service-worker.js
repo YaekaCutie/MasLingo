@@ -1,11 +1,69 @@
 importScripts("../config.js", "../translation/providers.js");
 
+/**
+ * Put a deadline on a fetch.
+ *
+ * Nothing in the extension had one. A half-open connection, or a backend still
+ * downloading the OCR model on its first run, parked the auto-translate queue
+ * forever at concurrency 1: the status line sat on "正在 OCR……", the detection
+ * boxes never resolved, and no error was ever reported — the user just waited.
+ *
+ * A timeout is reported as such so it can be told apart from a refusal.
+ */
+const REQUEST_TIMEOUT_MS = 120000;
+
+/**
+ * Fetch with a deadline, reporting a timeout as such.
+ *
+ * A caller that already supplied its own signal keeps it.
+ */
+async function timedFetch(url, init = {}, ms = REQUEST_TIMEOUT_MS) {
+  if (init.signal) return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`请求超时（${Math.round(ms / 1000)} 秒）`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read an error message out of a failed response without assuming JSON.
+ *
+ * The old shape was `const payload = await response.json(); if (!ok) throw
+ * payload.detail`, which parses before it checks. A captive portal or a wrong
+ * backendUrl answering 200 with HTML therefore surfaced as "Unexpected token '<'
+ * … is not valid JSON" — a message that describes the parser, not the problem.
+ */
+async function readError(response, fallback) {
+  let detail = "";
+  try {
+    const text = await response.text();
+    try {
+      const parsed = JSON.parse(text);
+      detail = parsed?.detail || parsed?.error?.message || parsed?.message || "";
+    } catch {
+      // Not JSON. If it looks like a page, say so rather than quoting markup.
+      detail = /^\s*</.test(text) ? "返回的不是 JSON，可能是地址填错或网络被劫持" : text.slice(0, 120);
+    }
+  } catch {
+    /* body already consumed or unreadable */
+  }
+  return detail ? `${fallback}：${detail}` : `${fallback}（HTTP ${response.status}）`;
+}
+
 async function fetchBackend(path,options={}){
   const backends=await globalThis.OMT_backendCandidates();
   let lastError=null;
   for(const base of backends){
     try{
-      const resp=await fetch(`${base}${path}`,options);
+      const resp=await timedFetch(`${base}${path}`,options);
       if(resp.ok || resp.status >= 400){
         return resp;
       }
@@ -29,8 +87,9 @@ async function autoRecognize(imageDataUrl) {
   const form = new FormData();
   form.append("image", blob, "region.png");
   const response = await fetchBackend("/api/recognize-page", { method: "POST", body: form });
-  const payload = await response.json();
-  if (!response.ok) throw new Error(payload.detail || "OCR 失败");
+  // Status first, body second — see readError.
+  if (!response.ok) throw new Error(await readError(response, "OCR 失败"));
+  const payload = await response.json().catch(() => ({}));
   return payload.items || [];
 }
 
@@ -54,7 +113,7 @@ async function fetchImageBytes(url, pageUrl) {
     options.referrer = pageUrl;
     options.referrerPolicy = "no-referrer-when-downgrade";
   }
-  const response = await fetch(url, options);
+  const response = await timedFetch(url, options);
   if (!response.ok) throw new Error(`图片读取失败 ${response.status}`);
   const buffer = new Uint8Array(await response.arrayBuffer());
   let binary = "";
@@ -101,6 +160,24 @@ async function captureElementCrop(tabId, message) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "START_SELECT") {
+    // Relayed, not handled. The in-page panel cannot reach content scripts:
+    // chrome.runtime.sendMessage only travels between extension contexts, so its
+    // 框选翻译 button used to arrive here and stop. Only tabs.sendMessage reaches
+    // a content script, and only the worker knows the tab id.
+    //
+    // frameId 0 because selection is the top frame's job — a subframe's
+    // coordinates do not correspond to the tab-level screenshot the worker crops.
+    const tabId = sender?.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ ok: false, error: "拿不到标签页" });
+      return true;
+    }
+    chrome.tabs.sendMessage(tabId, { type: "START_SELECT" }, { frameId: 0 })
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
   if (message?.type === "CHECK_BACKEND") {
     // Run here rather than in the panel. A content script's fetch is bound by
     // the page's origin, so a backend on any other host — including the user's
@@ -115,7 +192,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       for (const base of bases) {
         try {
-          const response = await fetch(`${base}/health`, { cache: "no-store" });
+          const response = await timedFetch(`${base}/health`, { cache: "no-store" }, 8000);
           if (!response.ok) continue;
           const payload = await response.json();
           if (payload?.ok) {
@@ -140,16 +217,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
           return;
         }
-        const built = provider.adapter({
+        // Awaited: 有道 is the one async adapter (its signature is a SHA-256), so
+        // calling it synchronously yielded a Promise and `fetch(undefined, …)`
+        // rejected — the connectivity check reported a failure for a perfectly
+        // good key. runTranslation always awaited it, which is why only this path
+        // was broken.
+        const built = await provider.adapter({
           endpoint: cfg.translationEndpoint || provider.endpoint || "",
           apiKey: cfg.translationApiKey || "",
           appId: cfg.translationAppId || "",
           model: cfg.translationModel || provider.model || "",
-          target: cfg.targetLanguage || provider.target || "简体中文",
+          target: provider.targetKind === "code"
+            ? (provider.target || cfg.targetLanguage || "简体中文")
+            : (cfg.targetLanguage || provider.target || "简体中文"),
           source: provider.source || "ja",
           texts: [message.text],
+          // Baidu signs with a random salt and a timestamp; without them the
+          // signature is built over the literal string "undefined" and the
+          // probe can never pass.
+          salt: String(Date.now()),
+          now: Date.now(),
         });
-        const response = await fetch(built.url, built.init);
+        const response = await timedFetch(built.url, built.init, 30000);
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
           sendResponse({
@@ -161,7 +250,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           return;
         }
-        const parsed = provider.parse(payload, 1);
+        const parsed = await provider.parse(payload, 1);
         sendResponse({ ok: true, translated: String(parsed?.[0] ?? "").trim() });
       } catch (error) {
         sendResponse({ ok: false, reason: String(error?.message || error).slice(0, 120) });
@@ -296,8 +385,8 @@ async function recognizeRegion(msg,tabId,port){
     const resp=await fetchBackend("/api/recognize-image",{
       method:"POST",body:fd
     });
-    const json=await resp.json();
-    if(!resp.ok) throw new Error(json.detail||"后端错误");
+    if(!resp.ok) throw new Error(await readError(resp,"后端错误"));
+    const json=await resp.json().catch(()=>({}));
     json.debug_mode=cfg.debugMode!==false;
     const patch = describeRegion(bmp,r,viewport);
     const recognizedText = (json.items||[])
@@ -419,8 +508,8 @@ async function recognizePage(msg,tabId,port){
     const fd=new FormData();
     fd.append("image",image,"manga-image.png");
     const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
-    const result=await resp.json();
-    if(!resp.ok)throw new Error(result.detail||"后端错误");
+    if(!resp.ok)throw new Error(await readError(resp,"后端错误"));
+    const result=await resp.json().catch(()=>({}));
     result.items=(result.items||[]).map(item=>({
       ...item,
       rect:{
@@ -470,7 +559,7 @@ async function providerFetch(url, init, provider) {
     response = null;
     for (const base of backends) {
       try {
-        const candidate = await fetch(`${base}${new URL(url).pathname}`, init);
+        const candidate = await timedFetch(`${base}${new URL(url).pathname}`, init);
         if (candidate.ok || candidate.status >= 400) { response = candidate; break; }
         lastError = new Error(`${base} 响应失败: ${candidate.status}`);
       } catch (error) {
@@ -480,7 +569,7 @@ async function providerFetch(url, init, provider) {
     if (!response) throw new Error(`后端连接失败（${lastError?.message || "未配置后端"}）`);
   } else {
     try {
-      response = await fetch(url, init);
+      response = await timedFetch(url, init);
     } catch (error) {
       // A bare "Failed to fetch" tells the user nothing about which service died.
       throw new Error(`无法连接翻译服务（${error.message}）。请检查网络、接口地址，以及该域名是否已授权。`);

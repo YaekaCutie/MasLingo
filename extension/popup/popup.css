@@ -134,7 +134,7 @@ button:not(.icon-btn) {
   border-radius: var(--r-sm);
   background: var(--fill-strong);
   color: var(--text);
-  font: 500 13px/1.2 inherit;
+  font-size:13px;font-weight:500;line-height:1.2;font-family:inherit;
   cursor: pointer;
   transition: background .15s ease;
 }

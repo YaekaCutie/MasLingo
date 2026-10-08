@@ -50,6 +50,8 @@ const OMT_auto = (() => {
   let sizeObserver = null;
   let mutationObserver = null;
   let mutationTimer = null;
+  /** Added nodes waiting for the debounce to fire; accumulated, not replaced. */
+  const pendingRoots = new Set();
   const pendingElements = new Set();
   /** Pictures already handed to the queue, by media key. */
   const processed = new WeakMap();
@@ -105,9 +107,26 @@ const OMT_auto = (() => {
 
   // --- discovery ------------------------------------------------------------
 
+  /**
+   * Is this element one of ours?
+   *
+   * The discovery selector matches `canvas` and `[role='img']`, which is exactly
+   * what the extension paints its own results into. Without this the pipeline
+   * eats its own output: every painted region gets observed again, the counters
+   * in the popup count them, and a manual patch big enough to look like a page
+   * would be OCR'd as if it were manga.
+   */
+  function isOurs(element) {
+    return Boolean(
+      element.closest?.("#omt-layer") ||
+      element.classList?.contains("omt-result") ||
+      element.classList?.contains("mt-overlay-text-canvas"),
+    );
+  }
+
   function isCandidate(element) {
     if (!element || !element.isConnected) return false;
-    if (element.closest("#omt-layer")) return false;
+    if (isOurs(element)) return false;
     const rect = element.getBoundingClientRect();
     if (rect.width < MIN_IMAGE_SIDE || rect.height < MIN_IMAGE_SIDE) return false;
     // A manga page is portrait-ish or at worst square-ish; wide banners are not.
@@ -123,9 +142,10 @@ const OMT_auto = (() => {
       // actual bug behind "detected the manga, then did nothing for nine
       // minutes": the picture was small at that instant, so it was never even
       // handed to the observers that would have noticed it grow.
+      if (isOurs(node)) return;
       if (node.matches?.(selector)) found.push(node);
       const nested = node.querySelectorAll?.(selector);
-      if (nested) for (const child of nested) found.push(child);
+      if (nested) for (const child of nested) if (!isOurs(child)) found.push(child);
     };
     if (root === document) {
       walk(document.documentElement);
@@ -175,6 +195,14 @@ const OMT_auto = (() => {
    */
   function consider(element) {
     if (!enabled || !element.isConnected) return;
+    if (isOurs(element)) {
+      // Nothing of ours is ever a candidate, and it must stop being watched too —
+      // otherwise every painted region is observed for the life of the tab.
+      visibilityObserver?.unobserve(element);
+      sizeObserver?.unobserve(element);
+      pendingElements.delete(element);
+      return;
+    }
     if (!isCandidate(element)) return;
     const media = mediaKey(element);
     if (processed.get(element) === media.key) return;
@@ -230,13 +258,21 @@ const OMT_auto = (() => {
     }
   }
 
-  /** Which kind of failure a thrown error represents. */
+  /**
+   * Which kind of failure a thrown error represents.
+   *
+   * Order matters and was wrong: "Failed to fetch" was matched by the *unreadable*
+   * pattern first, so a backend that is simply not running — the most common
+   * failure there is — was reported to the user as "N 张图片无法读取", sending them
+   * to look at the page instead of at the backend. Backend symptoms are tested
+   * first now.
+   */
   function classify(error) {
     const message = String(error?.message || error);
-    if (/图片|地址|bitmap|decode|decode|Failed to fetch|NetworkError/i.test(message)) {
-      return "unreadable";
+    if (/OCR|后端|backend|Failed to fetch|NetworkError|读取失败 \d|超时|timeout/i.test(message)) {
+      return "ocr";
     }
-    if (/OCR|后端|backend|fetch|Failed to fetch/i.test(message)) return "ocr";
+    if (/图片|地址|bitmap|decode/i.test(message)) return "unreadable";
     return "other";
   }
 
@@ -257,10 +293,16 @@ const OMT_auto = (() => {
 
   async function runTask(task) {
     const { element } = task;
-    if (!element.isConnected) return;
 
     let bitmap = null;
+    // Everything is inside the try, including the connectivity check. It used to
+    // sit before it, so a picture deleted while queued — routine on an
+    // infinite-scroll reader with a slow backend — returned early and never
+    // reached the finally, pinning a detached <img> and blocking that element
+    // from ever being queued again.
+    let boxes = [];
     try {
+      if (!element.isConnected) return;
       bitmap = await loadBitmap(element);
       if (!bitmap || bitmap.width < MIN_IMAGE_SIDE || bitmap.height < MIN_IMAGE_SIDE) return;
 
@@ -288,6 +330,7 @@ const OMT_auto = (() => {
         track(id, STATE.DETECTED);
         fresh.push({ id, area, item, box: OMT_detectionBox.show(element, area) });
       }
+      boxes = fresh.map((region) => region.box);
 
       if (!fresh.length) return;
       say(`检测到 ${fresh.length} 个文字区域，正在翻译……`);
@@ -318,7 +361,7 @@ const OMT_auto = (() => {
           paintRegion(element, bitmap, region, translated || region.item.text);
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
-          say("翻译完成");
+          if (enabled) say("翻译完成");
         } catch (error) {
           console.warn("[OMT] 绘制失败：", error.message);
           track(region.id, STATE.FAILED);
@@ -326,6 +369,13 @@ const OMT_auto = (() => {
         }
       });
     } catch (error) {
+      // Release this run's boxes. The retry below creates a fresh set, and
+      // without this the abandoned ones stayed dashed over the artwork for good,
+      // stacking one more layer per attempt.
+      for (const box of boxes) box.fail();
+      bitmap?.close?.();
+      bitmap = null;
+
       task.attempts += 1;
       if (task.attempts < MAX_ATTEMPTS) {
         // Retry once, then give up on this picture only. One bad image must not
@@ -339,16 +389,32 @@ const OMT_auto = (() => {
       } else {
         console.warn("[OMT] 放弃这张图片：", error.message);
         // Let it be considered again — the failure may have been transient, and
-        // the picture may also have changed since.
+        // the picture may also have changed since. Re-observing is what makes
+        // that true: nothing else watches an element after it was considered.
         processed.delete(element);
+        reobserve(element);
         imageFailures[classify(error)] += 1;
         lastError = { message: String(error.message || error), at: Date.now(), src: task.media.src };
       }
-      throw error;
     } finally {
       inFlight.delete(element);
       bitmap?.close?.();
     }
+  }
+
+  /**
+   * Put an element back under observation.
+   *
+   * `consider` unobserves an element the moment it is queued, and nothing else
+   * watches it afterwards — not a `src` swap, not a lazy loader filling in the
+   * real picture, not a failed attempt. Without this an element gets exactly one
+   * chance for the life of the page.
+   */
+  function reobserve(element) {
+    if (!enabled || !element?.isConnected || isOurs(element)) return;
+    pendingElements.delete(element);
+    visibilityObserver?.observe(element);
+    sizeObserver?.observe(element);
   }
 
   // --- pixels ---------------------------------------------------------------
@@ -540,21 +606,31 @@ const OMT_auto = (() => {
     }
     if (!mutationObserver) {
       mutationObserver = new MutationObserver((records) => {
-        // Coalesced: image galleries fire hundreds of mutations while loading.
+        // Coalesced, and *accumulated*. The first version returned early when a
+        // timer was already pending, which threw away that batch's records: a
+        // reader appending pages across several tasks within the 250 ms window
+        // contributed only its first node, and the rest stayed invisible until
+        // the switch was toggled.
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node.nodeType === 1) pendingRoots.add(node);
+          }
+        }
         if (mutationTimer) return;
         mutationTimer = setTimeout(() => {
           mutationTimer = null;
-          const roots = new Set();
-          for (const record of records.splice(0)) {
-            for (const node of record.addedNodes) {
-              if (node.nodeType === 1) roots.add(node);
-            }
-          }
+          const roots = [...pendingRoots];
+          pendingRoots.clear();
           for (const root of roots) scan(root);
         }, 250);
       });
     }
-    mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+    // Attributes too: a reader that swaps `src` on an existing <img> for the next
+    // page produces no childList record and no resize, so nothing else can
+    // notice it.
+    mutationObserver.observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "style"],
+    });
   }
 
   function detachObservers() {
@@ -564,6 +640,7 @@ const OMT_auto = (() => {
     if (mutationTimer) clearTimeout(mutationTimer);
     mutationTimer = null;
     pendingElements.clear();
+    pendingRoots.clear();
   }
 
   /**

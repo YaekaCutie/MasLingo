@@ -106,7 +106,7 @@ select {
   border-radius: var(--r-sm);
   background: var(--fill);
   color: var(--text);
-  font: 13px/1.4 inherit;
+  font-size:13px;line-height:1.4;font-family:inherit;
   transition: background .15s ease, box-shadow .15s ease;
 }
 input[type="text"]:focus,
@@ -166,7 +166,7 @@ button {
   border-radius: var(--r-sm);
   background: var(--fill-strong);
   color: var(--text);
-  font: 500 13px/1.2 inherit;
+  font-size:13px;font-weight:500;line-height:1.2;font-family:inherit;
   cursor: pointer;
   transition: background .15s ease, filter .15s ease;
 }
@@ -194,7 +194,13 @@ footer {
 
 .result { font-size: 13px; color: var(--muted); }
 .result[data-kind="ok"] { color: var(--ok); }
-.result[data-kind="err"] { color: var(--err); }
+.result[data-kind="error"] { color: var(--err); }
+
+/* The 测试翻译 outcome had no rule at all, so a rejected key and a working one
+   rendered identically. */
+#testResult[data-kind="pending"] { color: var(--muted); }
+#testResult[data-kind="ok"] { color: var(--ok); }
+#testResult[data-kind="error"] { color: var(--err); }
 
 .about .row { padding: 4px 0; }
 

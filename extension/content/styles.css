@@ -21,6 +21,10 @@
   --omt-fill: rgba(23, 25, 28, .06);
   --omt-fill-strong: rgba(23, 25, 28, .11);
   --omt-dot-idle: #9aa19e;
+  --omt-dot-working: #d9a53b;
+  --omt-dot-ok: #3f9d63;
+  --omt-dot-bad: #c0503f;
+  --omt-err-text: #c0503f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -36,7 +40,11 @@
     --omt-muted: #9aa19e;
     --omt-fill: rgba(236, 238, 240, .08);
     --omt-fill-strong: rgba(236, 238, 240, .14);
-    --omt-dot-idle: #7d8481;
+    --omt-dot-idle: #b4bbb8;
+    --omt-dot-working: #e8b955;
+    --omt-dot-ok: #5fc088;
+    --omt-dot-bad: #e8806f;
+    --omt-err-text: #e8806f;
   }
 }
 
@@ -64,17 +72,22 @@
 @media(prefers-reduced-motion:reduce){.mt-toast{transition:none}}
 
 /* The translated artwork itself. Only the recognised box is painted; the rest
-   stays transparent so the original page shows through untouched. */
-canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!important;display:block!important;max-width:none!important;max-height:none!important;box-sizing:content-box!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;filter:none!important;transform:none!important;object-fit:fill!important;pointer-events:none!important}
+   stays transparent so the original page shows through untouched.
+   Absolute, in document coordinates — the caller adds the scroll offset. As
+   `position: fixed` with viewport numbers these detached from the artwork the
+   moment the page scrolled, which is the one thing the overlay must not do. */
+canvas.mt-overlay-text-canvas{position:absolute!important;z-index:2147483641!important;display:block!important;max-width:none!important;max-height:none!important;box-sizing:content-box!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;filter:none!important;transform:none!important;object-fit:fill!important;pointer-events:none!important}
 
 /* --- overlay layer ------------------------------------------------------- */
 
 /* Zero-sized and absolutely positioned, so anchoring children in document
-   coordinates costs the page nothing and shifts no layout. */
-#omt-layer{position:absolute!important;top:0!important;left:0!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;background:none!important;pointer-events:none!important;z-index:2147483646!important}
+   coordinates costs the page nothing and shifts no layout.
+   z-index sits *below* the panel on purpose: everything in here is painted
+   artwork and must never draw over the panel's controls. */
+#omt-layer{position:absolute!important;top:0!important;left:0!important;width:0!important;height:0!important;margin:0!important;padding:0!important;border:0!important;background:none!important;pointer-events:none!important;z-index:2147483640!important}
 
 /* The same canvas rules, for canvases anchored inside the layer. */
-#omt-layer canvas.omt-result{position:absolute!important;display:block!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;transform:none!important;pointer-events:none!important}
+#omt-layer canvas.omt-result{position:absolute!important;display:block!important;max-width:none!important;max-height:none!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;transform:none!important;pointer-events:none!important;z-index:2147483641!important}
 
 /* --- detection box ------------------------------------------------------- */
 
@@ -152,9 +165,9 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 .omt-dots{display:flex;align-items:center;gap:16px;padding:0 0 12px}
 .omt-dot{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--omt-muted);white-space:nowrap}
 .omt-dot i{width:7px;height:7px;border-radius:50%;background:var(--omt-dot-idle);flex:0 0 auto;transition:background .2s ease}
-.omt-dot[data-state="working"] i{background:#d9a53b;animation:omt-pulse 1.2s ease-in-out infinite}
-.omt-dot[data-state="ok"] i{background:#3f9d63}
-.omt-dot[data-state="bad"] i{background:#c0503f}
+.omt-dot[data-state="working"] i{background:var(--omt-dot-working);animation:omt-pulse 1.2s ease-in-out infinite}
+.omt-dot[data-state="ok"] i{background:var(--omt-dot-ok)}
+.omt-dot[data-state="bad"] i{background:var(--omt-dot-bad)}
 .omt-dot[data-state="ok"] .omt-dot-text,
 .omt-dot[data-state="bad"] .omt-dot-text{color:var(--omt-ink)}
 @keyframes omt-pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -168,7 +181,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 /* Flat switch: a filled track, no shadow under the thumb. */
 .omt-switch{position:relative;display:inline-flex;cursor:pointer}
 .omt-switch input{position:absolute;opacity:0;width:0;height:0}
-.omt-switch-track{width:38px;height:22px;border-radius:999px;background:var(--omt-fill-strong);display:flex;align-items:center;padding:2px;transition:background .18s ease}
+.omt-switch-track{box-sizing:border-box;width:38px;height:22px;border-radius:999px;background:var(--omt-fill-strong);display:flex;align-items:center;padding:2px;transition:background .18s ease}
 .omt-switch-thumb{width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .18s cubic-bezier(.3,.7,.4,1)}
 .omt-switch input:checked + .omt-switch-track{background:var(--omt-accent)}
 .omt-switch input:checked + .omt-switch-track .omt-switch-thumb{transform:translateX(16px)}
@@ -178,7 +191,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
   width:100%;margin-top:10px;padding:8px 10px;
   border:0;border-radius:10px;
   background:var(--omt-fill);color:var(--omt-ink);
-  font:500 12px/1.2 inherit;cursor:pointer;
+  font-size:12px;font-weight:500;line-height:1.2;font-family:inherit;cursor:pointer;
   transition:background .15s ease;
 }
 .omt-btn:hover:not(:disabled){background:var(--omt-fill-strong)}
@@ -189,7 +202,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
   flex:1 1 auto;min-width:0;padding:7px 9px;
   border:0;border-radius:10px;
   background:var(--omt-fill);color:var(--omt-ink);
-  font:12px/1.2 inherit;
+  font-size:12px;line-height:1.2;font-family:inherit;
 }
 .omt-select:focus{outline:2px solid var(--omt-accent);outline-offset:-1px}
 
@@ -204,7 +217,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 .omt-link{
   border:0;border-radius:8px;background:transparent;
   color:var(--omt-muted);cursor:pointer;padding:4px 8px;margin-left:-8px;
-  font:12px inherit;
+  font-size:12px;font-family:inherit;
 }
 .omt-link:hover{background:var(--omt-fill);color:var(--omt-ink)}
 .omt-version{font-size:10px;color:var(--omt-muted)}
@@ -214,7 +227,7 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
   display:none;align-items:center;gap:8px;
   width:100%;padding:10px 14px;
   border:0;background:transparent;color:var(--omt-ink);
-  font:500 12px/1.2 inherit;cursor:pointer;
+  font-size:12px;font-weight:500;line-height:1.2;font-family:inherit;cursor:pointer;
 }
 .omt-widget i{width:8px;height:8px;border-radius:50%;background:var(--omt-dot-idle);flex:0 0 auto}
 .omt-panel-collapsed{width:auto}
@@ -222,9 +235,9 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
 .omt-panel-collapsed .omt-statusbar,
 .omt-panel-collapsed .omt-panel-bar{display:none}
 .omt-panel-collapsed .omt-widget{display:flex}
-.omt-panel-collapsed .omt-widget i{background:#3f9d63}
-.omt-panel-collapsed[data-busy="1"] .omt-widget i{background:#d9a53b;animation:omt-pulse 1.2s ease-in-out infinite}
-.omt-panel-collapsed[data-busy="2"] .omt-widget i{background:#c0503f}
+.omt-panel-collapsed .omt-widget i{background:var(--omt-dot-ok)}
+.omt-panel-collapsed[data-busy="1"] .omt-widget i{background:var(--omt-dot-working);animation:omt-pulse 1.2s ease-in-out infinite}
+.omt-panel-collapsed[data-busy="2"] .omt-widget i{background:var(--omt-dot-bad)}
 
 /* --- status bar ---------------------------------------------------------- */
 /*
@@ -243,9 +256,17 @@ canvas.mt-overlay-text-canvas{position:fixed!important;z-index:2147483646!import
   transition:color .2s ease;
 }
 .omt-statusbar-active{color:var(--omt-ink)}
-.omt-statusbar[data-kind="error"]{color:#c0503f}
+.omt-statusbar[data-kind="error"]{color:var(--omt-err-text)}
+
+/* Focus: the panel is injected into arbitrary pages, any of which may reset
+   outlines. Every control draws its own, and the switch forwards focus to its
+   track because the input itself is 0x0 and invisible. */
+.omt-panel :focus-visible{outline:2px solid var(--omt-accent);outline-offset:2px;border-radius:6px}
+.omt-switch input:focus-visible + .omt-switch-track{outline:2px solid var(--omt-accent);outline-offset:2px}
 
 @media(prefers-reduced-motion:reduce){
-  .omt-panel,.omt-statusbar{transition:none}
-  .omt-dot i{animation:none !important}
+  .omt-panel,.omt-statusbar,.omt-switch-thumb{transition:none}
+  /* The collapsed widget's dot is the only thing pulsing while collapsed, so it
+     has to be named here too — it was missed and kept animating. */
+  .omt-dot i,.omt-widget i{animation:none !important}
 }

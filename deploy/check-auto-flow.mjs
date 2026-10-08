@@ -53,10 +53,16 @@ const server = http.createServer((request, response) => {
     return;
   }
   response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  // The trailing spacer makes the document taller than the viewport, so the
+  // scroll-following check below can actually scroll. Without it the page fitted
+  // the window exactly and "follows the scroll" was asserted against 0px of
+  // scrolling.
   response.end(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>manga</title>
     <style>body{margin:0;background:#222}#view{width:${displayWidth}px;margin:0 auto}
-    img{display:block;width:${displayWidth}px;height:auto}</style></head>
-    <body><div id="view"><img id="manga" src="/manga.png"></div></body></html>`);
+    img{display:block;width:${displayWidth}px;height:auto}
+    #tail{height:1400px}</style></head>
+    <body><div id="view"><img id="manga" src="/manga.png"></div>
+    <div id="tail"></div></body></html>`);
 });
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
@@ -183,6 +189,54 @@ try {
     for (const text of seen.texts) console.log(`   ${JSON.stringify(text)}`);
   }
   if (tabErrors.length) console.log(`页面错误       : ${tabErrors.join(" | ")}`);
+
+  // "译文跟随滚动" is the product's headline promise and had no test at all: the
+  // counts above stay correct whether or not the overlay tracks the artwork.
+  // This measures the canvas against the image it was placed on, before and
+  // after scrolling.
+  if (seen.canvases > 0) {
+    console.log("\n滚动跟随");
+    const alignment = () => page.evaluate(() => {
+      const image = document.querySelector("img");
+      const canvas = document.querySelector("canvas.mt-overlay-text-canvas, #omt-layer canvas.omt-result");
+      if (!image || !canvas) return null;
+      const imageRect = image.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      return {
+        // Where the canvas sits relative to the image, in screen terms. If the
+        // overlay tracks the artwork, this does not move when scrolling.
+        dx: Math.round((canvasRect.left - imageRect.left) * 10) / 10,
+        dy: Math.round((canvasRect.top - imageRect.top) * 10) / 10,
+        position: getComputedStyle(canvas).position,
+        scrollY: Math.round(window.scrollY),
+      };
+    });
+
+    const before = await alignment();
+    await page.evaluate(() => window.scrollBy(0, 220));
+    await new Promise((done) => setTimeout(done, 600));
+    const after = await alignment();
+
+    if (before && after) {
+      const driftX = Math.abs(after.dx - before.dx);
+      const driftY = Math.abs(after.dy - before.dy);
+      console.log(`      滚动前相对图片 (${before.dx}, ${before.dy})，`
+        + `滚动 ${after.scrollY - before.scrollY}px 后 (${after.dx}, ${after.dy})`);
+      console.log(`      相对位移 ${driftX}px / ${driftY}px，定位方式 ${after.position}`);
+      if (driftX > 2 || driftY > 2) {
+        console.log("  FAIL 译文没有跟随滚动，与画面脱开了");
+        process.exitCode = 1;
+      } else {
+        console.log("  ok   译文跟随滚动");
+      }
+      if (after.position === "fixed") {
+        console.log("  FAIL 译文用的是视口定位（position: fixed），滚动必然脱开");
+        process.exitCode = 1;
+      }
+    } else {
+      console.log("      找不到可对照的图片或画布，跳过");
+    }
+  }
 
   if (!seen.busy && !seen.toast && !seen.canvases) {
     console.log("\n结论：点击后用户看不到任何反馈。");

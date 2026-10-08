@@ -397,6 +397,39 @@ class AppTests(unittest.TestCase):
 
     @patch(
         "backend.app.detect_text_regions",
+        return_value=[(10, 10, 60, 30), (80, 10, 130, 30), (150, 10, 220, 60)],
+    )
+    @patch(
+        "backend.app.recognize_detailed",
+        side_effect=[
+            detailed("え！？", confidence=1.0),
+            detailed("ん", confidence=0.76),
+            detailed("そして、", confidence=0.56),
+        ],
+    )
+    def test_page_ocr_keeps_genuine_short_lines(self, _recognize, _detect):
+        # A >=4-alphanumeric gate used to run before the reading filter and threw
+        # these away, which made the short-reading rule unreachable for exactly
+        # the readings it was written for. A single-word balloon stayed Japanese
+        # while everything around it was translated.
+        image = io.BytesIO()
+        Image.new("RGB", (240, 80), "white").save(image, format="PNG")
+
+        response = self.client.post(
+            "/api/recognize-page",
+            files={"image": ("manga.png", image.getvalue(), "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        # Right to left, which is how manga is read: the region at left=80 comes
+        # before the one at left=10.
+        self.assertEqual(
+            [item["text"] for item in response.json()["items"]],
+            ["ん", "え！？"],
+        )
+
+    @patch(
+        "backend.app.detect_text_regions",
         # Distinct, non-overlapping boxes: identical ones would now be merged by
         # the duplicate pass, which is a different behaviour from the limit this
         # test is about.

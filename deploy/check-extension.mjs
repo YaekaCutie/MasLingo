@@ -135,6 +135,72 @@ for (const file of jsFiles) {
   }
 }
 
+// --- programmatic injection lists must resolve -----------------------------
+//
+// manifest content_scripts are resolved above, but chrome.scripting.injections
+// are strings inside the code and nothing checked them. That is exactly how
+// popup.js came to inject a list missing panel.js: the repair path for a page
+// that was already open silently produced a page with auto translate and no
+// panel, and no test noticed because every browser check loads its page *after*
+// the extension, so the repair path never runs.
+
+const injectedByFile = new Map();
+// Bounded non-greedy rather than `[^}]*`: the options object nests
+// `target: { tabId }`, so a character class that excludes `}` stops before it
+// ever reaches `files:` — the first version of this check matched nothing at all
+// and passed everything.
+const injectionPattern =
+  /(?:executeScript|insertCSS)\(\s*\{[\s\S]{0,400}?files:\s*(\[[^\]]*\]|[A-Za-z_$][\w$]*)/g;
+for (const file of jsFiles) {
+  const source = readFileSync(file, "utf8");
+  // `files:` is often a named constant rather than an inline array — popup.js
+  // keeps its list in CONTENT_SCRIPTS. Resolving that is the whole point: a
+  // checker that only reads inline arrays silently skips the real call.
+  const constants = new Map();
+  for (const [, name, list] of source.matchAll(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*(\[[^\]]*\])\s*;/g,
+  )) {
+    constants.set(name, [...list.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]));
+  }
+
+  const names = [];
+  for (const [, token] of source.matchAll(injectionPattern)) {
+    const list = token.startsWith("[")
+      ? [...token.matchAll(/["']([^"']+)["']/g)].map((match) => match[1])
+      : (constants.get(token) || []);
+    if (!list.length) {
+      fail(`${relative(file)} injects files from "${token}" which could not be resolved `
+        + "to a list of paths");
+      continue;
+    }
+    for (const name of list) {
+      const target = join(extensionDir, name);
+      if (!existsSync(target)) {
+        fail(`${relative(file)} injects a missing file: ${name}`);
+      } else {
+        referenced.push(name);
+      }
+    }
+    names.push(...list);
+  }
+  if (names.length) injectedByFile.set(relative(file), names);
+}
+
+// The repair injection has to match what the manifest declares, or a repaired
+// page behaves differently from a freshly loaded one.
+const declaredScripts = (manifest.content_scripts || []).flatMap((entry) => entry.js || []);
+for (const [file, names] of injectedByFile) {
+  const scripts = names.filter((name) => name.endsWith(".js"));
+  if (!scripts.length) continue;
+  const missing = declaredScripts.filter((name) => !scripts.includes(name));
+  if (missing.length) {
+    fail(`${file} injects ${scripts.length} scripts but the manifest declares `
+      + `${declaredScripts.length}; missing: ${missing.join(", ")}`);
+  } else {
+    note(`${file} injects the full content-script set`);
+  }
+}
+
 // --- store-policy flags ----------------------------------------------------
 
 const matches = (manifest.content_scripts ?? []).flatMap((script) => script.matches ?? []);

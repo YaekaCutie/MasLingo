@@ -166,10 +166,12 @@ document.getElementById("save").onclick = async () => {
     debugMode: debugMode.checked,
     backendUrl: backendUrl.value.trim().replace(/\/+$/, ""),
     translationProvider: provider.id,
-    // Keep translationMode in step so older code paths and the backend
-    // provider still see a sensible value.
-    translationMode: provider.id === "google-free" ? "free-translate"
-      : provider.id === "backend" ? "openai-compatible"
+    // Kept in step for the code paths that still read it. Both branches used to
+    // return the same string, so this looked like a mapping while mapping
+    // nothing — and it pinned the "自建后端" provider to a mode that always
+    // failed, whatever the user did.
+    translationMode: (provider.id === "google-free" || provider.id === "backend")
+      ? "free-translate"
       : "openai-compatible",
     translationEndpoint: endpoint,
     translationModel: translationModel.value.trim(),

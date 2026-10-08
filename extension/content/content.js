@@ -5,6 +5,24 @@
 // need opposite advice: inject, or refresh the page.
 globalThis.__OMT_LOADED__ = true;
 
+/**
+ * Whether this is the frame the user is actually looking at.
+ *
+ * `all_frames` puts the scripts in every subframe, and auto translate wants that
+ * — it reads picture bytes, so it works from anywhere. The *interface* does not:
+ * every ad iframe would grow its own floating panel, and manual selection is
+ * wrong inside a subframe because the service worker crops a tab-level
+ * screenshot using frame-local coordinates. So the UI lives in the top frame
+ * only.
+ */
+const OMT_isTopFrame = (() => {
+  try {
+    return window.top === window;
+  } catch {
+    return false;   // cross-origin parent: a subframe by definition
+  }
+})();
+
 let selecting = false;
 let dragging = false;
 let startX = 0;
@@ -47,6 +65,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 function startSelect() {
   if (selecting) return;
+  if (!OMT_isTopFrame) {
+    // The service worker crops a tab-level screenshot for the selected rect, and
+    // a subframe's coordinates are relative to the frame, not the tab — so a
+    // selection made here would recognise a different part of the screen. Say so
+    // rather than doing it wrong.
+    showToast("请在最外层页面上框选（iframe 内的坐标无法对应到截图）。", "error");
+    return;
+  }
   selecting = true;
   dragging = false;
   selectionBox = document.createElement("div");
@@ -137,6 +163,10 @@ function finishSelection() {
 }
 
 function startAutoRecognition() {
+  if (!OMT_isTopFrame) {
+    showToast("请在最外层页面上使用整页识别。", "error");
+    return;
+  }
   const mediaRect = findPrimaryMediaRect();
   startRecognition(
     {left: 0, top: 0, width: window.innerWidth, height: window.innerHeight},
@@ -575,8 +605,13 @@ function renderResults(rect, result, pageMode) {
     canvas.className = "mt-overlay-text-canvas";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", item.text?.trim() || "未识别到文字");
+    // Document coordinates, not viewport ones. `displayRect` comes from a
+    // screenshot, so it is in viewport CSS pixels; the canvas is absolute, so
+    // the scroll offset has to be added or the translation stays pinned to the
+    // screen while the artwork scrolls away underneath it.
     Object.assign(canvas.style, {
-      left: `${displayRect.left}px`, top: `${displayRect.top}px`,
+      left: `${displayRect.left + window.scrollX}px`,
+      top: `${displayRect.top + window.scrollY}px`,
       width: `${displayRect.width}px`, height: `${displayRect.height}px`,
       visibility: "hidden"
     });
@@ -669,9 +704,23 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
 });
 
 loadDisplayPreferences();
-OMT_auto.sync();
 
-// The in-page panel is the primary surface now: the popup closes as soon as the
-// user touches the page, which makes it useless for controls you need while
-// reading. Mounting is cheap and does no work beyond one health check.
-globalThis.OMT_panel?.mount?.().catch(() => {});
+// The panel mounts before auto translate is switched on, and auto translate waits
+// for it. The other order loses the first status message: sync() starts the scan
+// immediately, and status() has nowhere to write until the panel exists — so the
+// user's first sight of the feature would be a panel sitting on "就绪" while the
+// scan is already running.
+//
+// The panel is the primary surface now: the popup closes as soon as the user
+// touches the page, which makes it useless for controls you need while reading.
+// The panel is the top frame's job. Auto translate still runs in every frame —
+// it reads picture bytes, so subframes are useful — but a second floating panel
+// inside every ad iframe is not.
+if (OMT_isTopFrame) {
+  globalThis.OMT_panel
+    ?.mount?.()
+    .catch(() => {})
+    .then(() => OMT_auto.sync());
+} else {
+  OMT_auto.sync();
+}

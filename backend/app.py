@@ -95,8 +95,41 @@ _rate_hits: dict[str, deque] = defaultdict(deque)
 _rate_lock = asyncio.Lock()
 
 
-def _has_readable_text(text: str) -> bool:
-    return sum(character.isalnum() for character in text) >= 4
+# There used to be a `_has_readable_text` gate here (>= 4 alphanumerics). It was
+# removed rather than reordered: it and is_confident_reading disagree about short
+# readings, and is_confident_reading is the one with the measured reasoning
+# behind it. Keeping the old helper around invited someone to wire it back in.
+
+
+def _check_endpoint_allowed(endpoint: str) -> None:
+    """Refuse the endpoints that turn this route into a credential stealer.
+
+    `/api/translate-text` lets the caller name a URL and the server posts to it,
+    which is a relay by design — it has to be, because the whole point of the
+    OpenAI-compatible mode is to reach whatever endpoint the user configured,
+    very often a backend on their own machine.
+
+    What is *not* by design is being used to reach cloud instance metadata. A
+    request to 169.254.169.254 with a controlled body and headers is the standard
+    way to convert an open relay into stolen credentials. Private and loopback
+    addresses stay allowed because local backends are the normal case; only
+    link-local and non-HTTP schemes are refused.
+    """
+    from urllib.parse import urlparse
+    import ipaddress
+
+    parsed = urlparse(endpoint or "")
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(400, "接口地址必须是 http 或 https。")
+    host = parsed.hostname or ""
+    if not host:
+        raise HTTPException(400, "接口地址缺少主机名。")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return  # a hostname; DNS resolution is left to the fetch
+    if address.is_link_local or address.is_multicast or address.is_reserved:
+        raise HTTPException(400, "不允许访问链路本地或保留地址。")
 
 
 class TranslationRequest(BaseModel):
@@ -125,6 +158,20 @@ def _client_ip(request) -> str:
 
 @app.middleware("http")
 async def limit_requests(request, call_next):
+    # Reject an oversized upload before it is read.
+    #
+    # The per-endpoint check in _read_image only runs after Starlette has parsed
+    # the multipart body, spooling anything over ~1 MB to a temp file first. A
+    # multi-gigabyte POST was therefore absorbed in full and only then answered
+    # with 413. Content-Length is a claim, not a guarantee, so the streaming
+    # check stays as well — this just refuses the obvious case cheaply.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_IMAGE_BYTES + 1024 * 1024:
+        return JSONResponse(
+            {"detail": f"请求体过大，不能超过 {MAX_IMAGE_BYTES // (1024 * 1024)} MB。"},
+            status_code=413,
+        )
+
     if RATE_LIMIT_REQUESTS <= 0 or request.url.path == "/health":
         return await call_next(request)
 
@@ -192,6 +239,7 @@ async def translate_text(request: TranslationRequest):
                 )
             translated = await run_in_threadpool(translate_texts, items)
         elif request.mode == "openai-compatible":
+            _check_endpoint_allowed(request.endpoint)
             translated = await run_in_threadpool(
                 translate_openai_compatible,
                 items,
@@ -307,13 +355,17 @@ def _recognize_page_sync(img) -> list[dict]:
         region = img.crop((left, top, right, bottom))
         detailed = recognize_detailed(region)
         text = "\n".join(detailed["texts"]).strip()
-        if not _has_readable_text(text):
-            continue
-        # The detector guessed at this region, so a low-confidence short reading
-        # is far more likely to be artwork than text.
+        # is_confident_reading decides, not the alphanumeric count.
+        #
+        # The count used to run first and it rejected anything under four
+        # alphanumerics, which made the short-reading rule unreachable for exactly
+        # the readings it was written for: 'え！？', 'ん', 'はい' and 'だめだ' all
+        # fail _has_readable_text but all pass is_confident_reading, which wants
+        # kana plus a high confidence for short answers. Single-word balloons
+        # stayed Japanese while everything around them was translated.
         if not is_confident_reading(text, detailed["confidence"]):
             logger.info(
-                "丢弃低置信区域 %s（置信度 %.3f）：%r",
+                "丢弃区域 %s（置信度 %.3f）：%r",
                 f"{left},{top},{right},{bottom}", detailed["confidence"], text,
             )
             continue

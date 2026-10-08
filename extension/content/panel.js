@@ -41,6 +41,7 @@ globalThis.OMT_panel = (() => {
   let statusTimer = null;
   let dragging = null;
   let typing = null;
+  let resetTimer = null;
 
   // --- storage --------------------------------------------------------------
 
@@ -112,19 +113,28 @@ globalThis.OMT_panel = (() => {
   // looks slow rather than broken.
 
   function typeInto(node, text, { speed = 42 } = {}) {
-    if (typing) clearInterval(typing);
+    // An interrupted run must settle its promise. The first version cleared the
+    // interval and left the caller awaiting forever, so a re-sample timer from a
+    // previous check could interrupt a second check's typing and leave the
+    // 连通检测 button disabled on "检测中…" until the page was reloaded.
+    if (typing) {
+      clearInterval(typing.interval);
+      typing.resolve();
+      typing = null;
+    }
     node.textContent = "";
     let index = 0;
     return new Promise((resolve) => {
-      typing = setInterval(() => {
+      const interval = setInterval(() => {
         index += 1;
         node.textContent = text.slice(0, index);
         if (index >= text.length) {
-          clearInterval(typing);
+          clearInterval(interval);
           typing = null;
           resolve();
         }
       }, speed);
+      typing = { interval, resolve };
     });
   }
 
@@ -248,7 +258,11 @@ globalThis.OMT_panel = (() => {
       if (result.ok) {
         await typeInto(line, result.translated);
         status("翻译连通正常");
-        setTimeout(() => {
+        // Tracked so it cannot fire into the middle of a later check and steal
+        // its typing — the reason the button could stick on "检测中…".
+        if (resetTimer) clearTimeout(resetTimer);
+        resetTimer = setTimeout(() => {
+          resetTimer = null;
           currentLine = pickLine();
           typeInto(root.querySelector("#omt-line"), `「${currentLine}」`, { speed: 24 });
         }, 4000);
@@ -363,9 +377,9 @@ globalThis.OMT_panel = (() => {
         </div>
 
         <div class="omt-row">
-          <span class="omt-label">自动识别</span>
-          <label class="omt-switch">
-            <input id="omt-auto" type="checkbox">
+          <span class="omt-label" id="omt-auto-label">自动识别</span>
+          <label class="omt-switch" aria-labelledby="omt-auto-label">
+            <input id="omt-auto" type="checkbox" aria-labelledby="omt-auto-label">
             <span class="omt-switch-track"><span class="omt-switch-thumb"></span></span>
           </label>
         </div>
@@ -373,9 +387,9 @@ globalThis.OMT_panel = (() => {
 
         <div class="omt-sep"></div>
 
-        <div class="omt-label">翻译类型</div>
+        <div class="omt-label" id="omt-provider-label">翻译类型</div>
         <div class="omt-row omt-row-tight">
-          <select id="omt-provider" class="omt-select"></select>
+          <select id="omt-provider" class="omt-select" aria-labelledby="omt-provider-label"></select>
           <button class="omt-btn omt-btn-small" id="omt-connect">连通检测</button>
         </div>
         <div class="omt-line" id="omt-line"></div>
@@ -447,8 +461,13 @@ globalThis.OMT_panel = (() => {
       setDot(root.querySelector("#omt-dot-translation"), STATE.UNKNOWN, "翻译未检测");
     });
     root.querySelector("#omt-connect").addEventListener("click", runConnectivityCheck);
-    root.querySelector("#omt-select").addEventListener("click", () => {
-      chrome.runtime.sendMessage({ type: "START_SELECT" }).catch(() => {});
+    root.querySelector("#omt-select").addEventListener("click", async () => {
+      // Via the service worker: runtime.sendMessage cannot reach content scripts,
+      // so sending START_SELECT directly from here went nowhere at all.
+      const result = await chrome.runtime
+        .sendMessage({ type: "START_SELECT" })
+        .catch((error) => ({ ok: false, error: error.message }));
+      if (!result?.ok) status(`无法开始框选：${result?.error || "未知原因"}`, "error");
     });
     root.querySelector("#omt-settings").addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "OPEN_OPTIONS" }).catch(() => {});
@@ -460,6 +479,30 @@ globalThis.OMT_panel = (() => {
     bar.addEventListener("pointerdown", startDrag);
     window.addEventListener("pointermove", moveDrag, { passive: true });
     window.addEventListener("pointerup", endDrag, { passive: true });
+
+    // Follow changes made elsewhere. Without this, toggling auto translate in the
+    // popup left this panel's switch showing the old state, so the user would
+    // "turn it on" while it was already on and nothing appeared to happen.
+    try {
+      chrome.storage?.onChanged?.addListener((changes, area) => {
+        if (area !== "local") return;
+        if (changes.autoTranslate) {
+          const box = root.querySelector("#omt-auto");
+          if (box && box.checked !== Boolean(changes.autoTranslate.newValue)) {
+            box.checked = Boolean(changes.autoTranslate.newValue);
+          }
+        }
+        if (changes.translationProvider) {
+          const select = root.querySelector("#omt-provider");
+          if (select && select.value !== changes.translationProvider.newValue) {
+            select.value = changes.translationProvider.newValue;
+            setDot(root.querySelector("#omt-dot-translation"), STATE.UNKNOWN, "翻译未检测");
+          }
+        }
+      });
+    } catch {
+      /* extension APIs unreachable in this frame */
+    }
 
     // Nothing here runs on scroll or on DOM changes: the checks are one-shot at
     // load and on demand, which is all they need to be.

@@ -344,6 +344,33 @@ try {
   check("进度结束后回到就绪", settled.active === false && settled.text === "就绪",
     `停在「${settled.text}」`);
 
+  console.log("\n面板按钮真的接线了");
+  // Clicked for real. The button existed in every earlier run and did nothing:
+  // it sent START_SELECT through runtime.sendMessage, which never reaches a
+  // content script, and the only assertion was that the element was present.
+  await page.evaluate(() => {
+    document.body.insertAdjacentHTML("afterbegin", '<div id="probe" style="height:10px"></div>');
+  });
+  const selectBox = await page.evaluate(() => {
+    const box = document.getElementById("omt-select").getBoundingClientRect();
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  });
+  await page.mouse.click(selectBox.x, selectBox.y);
+  await new Promise((r) => setTimeout(r, 600));
+  const selection = await page.evaluate(() => ({
+    overlay: document.querySelectorAll(".mt-selection").length,
+    status: document.getElementById("omt-status")?.textContent?.trim() || "",
+  }));
+  console.log(`      选择层 ${selection.overlay} 个，状态「${selection.status}」`);
+  check("点击框选翻译会进入选择模式", selection.overlay === 1,
+    `状态栏说「${selection.status}」`);
+  // Leave selection mode so the rest of the checks run against a clean page.
+  await page.keyboard.press("Escape");
+  await new Promise((r) => setTimeout(r, 300));
+  const escaped = await page.evaluate(() =>
+    document.querySelectorAll(".mt-selection").length);
+  check("Escape 能退出选择模式", escaped === 0, `还剩 ${escaped} 个`);
+
   console.log("\n状态点反映真实连通性");
   // The backend is reachable only through the service worker: a content script
   // is bound by the page's origin and cannot reach another host, so this also

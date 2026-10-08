@@ -69,12 +69,23 @@ async function diagnoseFrame(tabId) {
   }
 }
 
+// Kept in step with manifest.json's content_scripts list by check-extension.mjs.
+// It was missing panel.js, config.js and providers.js: the repair path then gave
+// a page auto translate but no panel at all — and because content.js still set
+// __OMT_LOADED__, the next popup open diagnosed "ok" and never retried, so the
+// panel was gone for the life of that page with no error anywhere.
+const CONTENT_SCRIPTS = [
+  "config.js",
+  "translation/providers.js",
+  "content/overlay.js",
+  "content/auto.js",
+  "content/panel.js",
+  "content/content.js",
+];
+
 async function injectContentScript(tabId) {
   await chrome.scripting.insertCSS({ target: { tabId }, files: ["content/styles.css"] });
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content/overlay.js", "content/auto.js", "content/content.js"],
-  });
+  await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
 }
 
 /**
