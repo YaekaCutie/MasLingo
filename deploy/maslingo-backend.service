@@ -3,14 +3,14 @@
 # See deploy/README.md (appendix A) for the full walkthrough.
 #
 # Install:
-#   sudo cp deploy/omt-backend.service /etc/systemd/system/
+#   sudo cp deploy/mas-backend.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now omt-backend
-#   journalctl -u omt-backend -f
+#   sudo systemctl enable --now mas-backend
+#   journalctl -u mas-backend -f
 
 [Unit]
-Description=OpenMangaTranslator shared OCR backend
-Documentation=https://github.com/YaekaCutie/OpenMangaTranslator/blob/main/deploy/README.md
+Description=MasLingo shared OCR backend
+Documentation=https://github.com/YaekaCutie/MasLingo/blob/main/deploy/README.md
 After=network-online.target
 Wants=network-online.target
 
@@ -18,25 +18,25 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/ubuntu/OpenMangaTranslator
+WorkingDirectory=/home/ubuntu/MasLingo
 
 # Keep the OCR model on disk outside the checkout if you prefer.
-Environment=HF_HOME=/home/ubuntu/OpenMangaTranslator/.hf
+Environment=HF_HOME=/home/ubuntu/MasLingo/.hf
 Environment=OMP_NUM_THREADS=2
 
 # Always Free ARM is 2 OCPUs: one torch thread per job, two jobs in flight.
-Environment=OMT_TORCH_THREADS=1
-Environment=OMT_OCR_CONCURRENCY=2
-Environment=OMT_RATE_LIMIT_REQUESTS=40
-Environment=OMT_RATE_LIMIT_WINDOW=60
-Environment=OMT_ALLOWED_ORIGINS=*
-Environment=OMT_ENABLE_FREE_TRANSLATE=1
+Environment=MAS_TORCH_THREADS=1
+Environment=MAS_OCR_CONCURRENCY=2
+Environment=MAS_RATE_LIMIT_REQUESTS=40
+Environment=MAS_RATE_LIMIT_WINDOW=60
+Environment=MAS_ALLOWED_ORIGINS=*
+Environment=MAS_ENABLE_FREE_TRANSLATE=1
 
 # Load the model at boot and keep it resident: it makes the first request fast
 # and keeps this instance above Oracle's 20% memory idle-reclamation threshold.
-Environment=OMT_PRELOAD_MODEL=1
+Environment=MAS_PRELOAD_MODEL=1
 
-ExecStart=/home/ubuntu/OpenMangaTranslator/.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8001 --no-access-log
+ExecStart=/home/ubuntu/MasLingo/.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8001 --no-access-log
 Restart=always
 RestartSec=5
 

@@ -7,7 +7,7 @@ is the only step needed to make new installs work with no local setup:
 
 It rewrites exactly two things:
 
-  extension/config.js       globalThis.OMT_BACKEND_URL
+  extension/config.js       globalThis.MAS_BACKEND_URL
   extension/manifest.json   the hosted entry in host_permissions
 
 and leaves the localhost fallbacks alone, so an existing user who runs their
@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_JS = REPO_ROOT / "extension" / "config.js"
 MANIFEST = REPO_ROOT / "extension" / "manifest.json"
 LOCAL_HOSTS = ["http://127.0.0.1:8001/*", "http://localhost:8001/*"]
-CONFIG_PATTERN = re.compile(r'^(globalThis\.OMT_BACKEND_URL\s*=\s*)".*?"(;.*)$', re.MULTILINE)
+CONFIG_PATTERN = re.compile(r'^(globalThis\.MAS_BACKEND_URL\s*=\s*)".*?"(;.*)$', re.MULTILINE)
 
 
 def normalize(raw: str) -> str:
@@ -42,7 +42,7 @@ def update_config(url: str) -> str:
     source = CONFIG_JS.read_text(encoding="utf-8")
     updated, count = CONFIG_PATTERN.subn(lambda m: f'{m.group(1)}"{url}"{m.group(2)}', source)
     if count != 1:
-        sys.exit(f"expected exactly one OMT_BACKEND_URL assignment in {CONFIG_JS}, found {count}")
+        sys.exit(f"expected exactly one MAS_BACKEND_URL assignment in {CONFIG_JS}, found {count}")
     CONFIG_JS.write_text(updated, encoding="utf-8")
     return url
 
@@ -86,7 +86,7 @@ def main() -> int:
         set_version(args.version)
 
     version = json.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
-    print(f"config.js   : OMT_BACKEND_URL = {url}")
+    print(f"config.js   : MAS_BACKEND_URL = {url}")
     print(f"manifest    : host_permissions = {hosts}")
     print(f"version     : {version}")
 
@@ -98,8 +98,8 @@ def main() -> int:
         outdir.mkdir(parents=True, exist_ok=True)
         zip_bytes = build_zip(REPO_ROOT / "extension")
         crx_bytes, extension_id = build_crx(zip_bytes, Path(args.pack))
-        zip_path = outdir / f"OpenMangaTranslator-{version}.zip"
-        crx_path = outdir / f"OpenMangaTranslator-{version}.crx"
+        zip_path = outdir / f"MasLingo-{version}.zip"
+        crx_path = outdir / f"MasLingo-{version}.crx"
         zip_path.write_bytes(zip_bytes)
         crx_path.write_bytes(crx_bytes)
         print(f"extension id: {extension_id}")

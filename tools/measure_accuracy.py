@@ -76,7 +76,7 @@ def iou(first: list[int], second: list[int]) -> float:
 
 
 def recognise(path: Path) -> list[dict]:
-    boundary = "----omt-measure"
+    boundary = "----mas-measure"
     body = (
         f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
         f'filename="{path.name}"\r\nContent-Type: image/png\r\n\r\n'

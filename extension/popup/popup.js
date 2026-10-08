@@ -17,7 +17,7 @@ function normalize(url) {
 }
 
 async function fetchBackend(path, options = {}) {
-  const backends = await globalThis.OMT_backendCandidates();
+  const backends = await globalThis.MAS_backendCandidates();
   let lastError = null;
   for (const base of backends) {
     try {
@@ -59,7 +59,7 @@ async function diagnoseFrame(tabId) {
   try {
     const [probe] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => Boolean(globalThis.__OMT_LOADED__),
+      func: () => Boolean(globalThis.__MAS_LOADED__),
     });
     return probe?.result ? "stale" : "missing";
   } catch (error) {
@@ -72,7 +72,7 @@ async function diagnoseFrame(tabId) {
 // Kept in step with manifest.json's content_scripts list by check-extension.mjs.
 // It was missing panel.js, config.js and providers.js: the repair path then gave
 // a page auto translate but no panel at all — and because content.js still set
-// __OMT_LOADED__, the next popup open diagnosed "ok" and never retried, so the
+// __MAS_LOADED__, the next popup open diagnosed "ok" and never retried, so the
 // panel was gone for the life of that page with no error anywhere.
 const CONTENT_SCRIPTS = [
   "config.js",

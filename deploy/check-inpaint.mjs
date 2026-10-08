@@ -19,8 +19,8 @@ import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Loaded in the same order as the manifest's content_scripts, because the files
-// depend on each other at load time. Loading content.js alone leaves OMT_auto and
-// OMT_panel undefined.
+// depend on each other at load time. Loading content.js alone leaves MAS_auto and
+// MAS_panel undefined.
 const contentScripts = [
   "extension/config.js", "extension/translation/providers.js",
   "extension/content/overlay.js", "extension/content/auto.js",
@@ -65,7 +65,7 @@ try {
   });
   await page.addStyleTag({ content: contentStyles });
   await page.addScriptTag({ content: contentScripts.join("\n;\n") });
-  await page.evaluate(() => globalThis.OMT_panel.mount());
+  await page.evaluate(() => globalThis.MAS_panel.mount());
   await new Promise((r) => setTimeout(r, 400));
 
   // --- the cover ------------------------------------------------------------
@@ -82,7 +82,7 @@ try {
     context.fillRect(0, 0, WIDTH, HEIGHT);
 
     const CORE = { left: 24, top: 16, right: 216, bottom: 124 };
-    OMT_render.drawTranslatedPatch({
+    MAS_render.drawTranslatedPatch({
       canvas,
       context,
       patch: {
@@ -167,21 +167,21 @@ try {
 
     // Status goes to the panel's own bottom line; there is no second toast and
     // no floating strip any more, so that is what must behave.
-    out.noToastElement = document.getElementById("mt-toast") === null;
+    out.noToastElement = document.getElementById("mas-toast") === null;
     showToast("测试提示", "info");
-    const panel = document.getElementById("omt-panel");
-    const strip = document.getElementById("omt-status");
+    const panel = document.getElementById("mas-panel");
+    const strip = document.getElementById("mas-status");
     out.stripCreated = Boolean(strip);
     out.stripText = strip ? strip.textContent : null;
     out.stripInsidePanel = Boolean(panel && strip && panel.contains(strip));
     out.stripSingleLine = strip ? getComputedStyle(strip).whiteSpace === "nowrap" : false;
     out.floatingSurfaces = [...document.documentElement.children]
-      .filter((node) => node.id?.startsWith("omt-")).map((node) => node.id);
+      .filter((node) => node.id?.startsWith("mas-")).map((node) => node.id);
 
     activeRequestId = "check-1";
     showTranslationResult({ requestId: "check-1", mode: "none", result: {} });
-    out.panelsAfterNone = document.querySelectorAll(".mt-overlay, .mt-overlay-status").length;
-    out.canvasesAfterNone = document.querySelectorAll("canvas.mt-overlay-text-canvas").length;
+    out.panelsAfterNone = document.querySelectorAll(".mas-overlay, .mas-overlay-status").length;
+    out.canvasesAfterNone = document.querySelectorAll("canvas.mas-overlay-text-canvas").length;
 
     hideToast();
     return out;

@@ -1,9 +1,9 @@
-# OpenMangaTranslator shared backend — one small VM, two containers.
+# MasLingo shared backend — one small VM, two containers.
 #
 #   api   : FastAPI + MangaOCR (CPU), only reachable from the caddy container
 #   caddy : terminates TLS with a Let's Encrypt certificate and proxies to api
 #
-# Copy .env.example to .env, set OMT_DOMAIN, then: docker compose up -d --build
+# Copy .env.example to .env, set MAS_DOMAIN, then: docker compose up -d --build
 
 services:
   api:
@@ -14,12 +14,12 @@ services:
     environment:
       # Always Free ARM is 2 OCPUs: one torch thread per OCR job and two jobs
       # keeps both cores busy without oversubscribing them.
-      OMT_TORCH_THREADS: ${OMT_TORCH_THREADS:-1}
-      OMT_OCR_CONCURRENCY: ${OMT_OCR_CONCURRENCY:-2}
-      OMT_RATE_LIMIT_REQUESTS: ${OMT_RATE_LIMIT_REQUESTS:-40}
-      OMT_RATE_LIMIT_WINDOW: ${OMT_RATE_LIMIT_WINDOW:-60}
-      OMT_ALLOWED_ORIGINS: ${OMT_ALLOWED_ORIGINS:-*}
-      OMT_ENABLE_FREE_TRANSLATE: ${OMT_ENABLE_FREE_TRANSLATE:-1}
+      MAS_TORCH_THREADS: ${MAS_TORCH_THREADS:-1}
+      MAS_OCR_CONCURRENCY: ${MAS_OCR_CONCURRENCY:-2}
+      MAS_RATE_LIMIT_REQUESTS: ${MAS_RATE_LIMIT_REQUESTS:-40}
+      MAS_RATE_LIMIT_WINDOW: ${MAS_RATE_LIMIT_WINDOW:-60}
+      MAS_ALLOWED_ORIGINS: ${MAS_ALLOWED_ORIGINS:-*}
+      MAS_ENABLE_FREE_TRANSLATE: ${MAS_ENABLE_FREE_TRANSLATE:-1}
     expose:
       - "8001"
     # A big page plus torch can reach ~3 GB; keep the container honest.
@@ -40,8 +40,8 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      OMT_DOMAIN: ${OMT_DOMAIN:?set OMT_DOMAIN in deploy/.env}
-      OMT_ACME_EMAIL: ${OMT_ACME_EMAIL:-}
+      MAS_DOMAIN: ${MAS_DOMAIN:?set MAS_DOMAIN in deploy/.env}
+      MAS_ACME_EMAIL: ${MAS_ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

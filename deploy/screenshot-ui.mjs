@@ -14,7 +14,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = resolve(process.argv[2] || join(repoRoot, "deploy", "screenshots"));
 mkdirSync(outDir, { recursive: true });
 
-const workDir = mkdtempSync(join(tmpdir(), "omt-shot-"));
+const workDir = mkdtempSync(join(tmpdir(), "mas-shot-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");

@@ -108,14 +108,14 @@ try {
     pass(`service worker registered (extension id ${extensionId})`);
 
     // --- importScripts actually worked ------------------------------------
-    const resolverType = await worker.evaluate(() => typeof self.OMT_backendCandidates);
+    const resolverType = await worker.evaluate(() => typeof self.MAS_backendCandidates);
     if (resolverType === "function") {
       pass("config.js was loaded into the service worker via importScripts()");
     } else {
-      fail(`self.OMT_backendCandidates is ${resolverType}, expected function`);
+      fail(`self.MAS_backendCandidates is ${resolverType}, expected function`);
     }
 
-    const candidates = await worker.evaluate(() => self.OMT_backendCandidates());
+    const candidates = await worker.evaluate(() => self.MAS_backendCandidates());
     if (Array.isArray(candidates) && candidates.length > 0) {
       pass(`backend candidates resolve to ${JSON.stringify(candidates)}`);
     } else {
@@ -153,13 +153,13 @@ try {
 
         await worker.evaluate((id) => chrome.tabs.sendMessage(id, { type: "START_SELECT" }), tabId);
         const overlay = await page
-          .waitForSelector(".mt-selection", { timeout: 10000 })
+          .waitForSelector(".mas-selection", { timeout: 10000 })
           .then(() => true)
           .catch(() => false);
         if (overlay) {
           pass("START_SELECT produced the selection overlay in the page");
         } else {
-          fail("START_SELECT did not create .mt-selection");
+          fail("START_SELECT did not create .mas-selection");
         }
       } else {
         fail(`content script never answered PING (${answered})`);

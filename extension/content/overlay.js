@@ -12,8 +12,8 @@
 //    is progress feedback and always goes away; the result is the deliverable
 //    and stays. Removing one must never remove the other.
 
-const OMT_overlay = (() => {
-  const LAYER_ID = "omt-layer";
+const MAS_overlay = (() => {
+  const LAYER_ID = "mas-layer";
   let layer = null;
   let repositionQueued = false;
   /** @type {Set<{node: HTMLElement, target: Element|null, place: Function}>} */
@@ -166,17 +166,17 @@ const OMT_overlay = (() => {
  * Dashed and solid are separate elements because `border-style` cannot be
  * interpolated: switching it on one element snaps, cross-fading two blends.
  */
-const OMT_detectionBox = (() => {
+const MAS_detectionBox = (() => {
   const HOLD_MS = 500;
   const FADE_MS = 420;
 
   function create() {
     const node = document.createElement("div");
-    node.className = "omt-box";
+    node.className = "mas-box";
     const dashed = document.createElement("div");
-    dashed.className = "omt-box-border omt-box-dashed";
+    dashed.className = "mas-box-border mas-box-dashed";
     const solid = document.createElement("div");
-    solid.className = "omt-box-border omt-box-solid";
+    solid.className = "mas-box-border mas-box-solid";
     node.append(dashed, solid);
     return { node, solid };
   }
@@ -187,31 +187,31 @@ const OMT_detectionBox = (() => {
    */
   function show(element, region) {
     const { node, solid } = create();
-    const entry = OMT_overlay.anchor(node, element, region);
-    node.classList.add("omt-box-visible");
+    const entry = MAS_overlay.anchor(node, element, region);
+    node.classList.add("mas-box-visible");
 
     return {
       node,
       /** Work has started: let the dashed edge begin turning solid. */
       markProcessing() {
-        solid.classList.add("omt-box-working");
+        solid.classList.add("mas-box-working");
       },
       /** Translation is in. Complete the border, hold, then disappear. */
       finish() {
-        solid.classList.remove("omt-box-working");
-        solid.classList.add("omt-box-solid-on");
+        solid.classList.remove("mas-box-working");
+        solid.classList.add("mas-box-solid-on");
         setTimeout(() => {
-          node.classList.add("omt-box-fading");
-          setTimeout(() => OMT_overlay.release(entry), FADE_MS);
+          node.classList.add("mas-box-fading");
+          setTimeout(() => MAS_overlay.release(entry), FADE_MS);
         }, HOLD_MS);
       },
       /** Something went wrong: same exit, different colour. */
       fail() {
-        solid.classList.remove("omt-box-working");
-        node.classList.add("omt-box-failed");
+        solid.classList.remove("mas-box-working");
+        node.classList.add("mas-box-failed");
         setTimeout(() => {
-          node.classList.add("omt-box-fading");
-          setTimeout(() => OMT_overlay.release(entry), FADE_MS);
+          node.classList.add("mas-box-fading");
+          setTimeout(() => MAS_overlay.release(entry), FADE_MS);
         }, HOLD_MS);
       },
     };
@@ -225,27 +225,27 @@ const OMT_detectionBox = (() => {
  * once per page, so it announces "auto translate is running" without becoming
  * noise on a long page.
  */
-const OMT_notice = (() => {
+const MAS_notice = (() => {
   let shown = false;
   let timer = null;
 
   function show(text, { once = true, kind = "info" } = {}) {
     if (once && shown) return;
     shown = true;
-    let node = document.getElementById("omt-notice");
+    let node = document.getElementById("mas-notice");
     if (!node) {
       node = document.createElement("div");
-      node.id = "omt-notice";
+      node.id = "mas-notice";
       node.setAttribute("role", "status");
       node.setAttribute("aria-live", "polite");
       document.documentElement.appendChild(node);
     }
-    node.className = `omt-notice omt-notice-${kind}`;
+    node.className = `mas-notice mas-notice-${kind}`;
     node.textContent = text;
-    requestAnimationFrame(() => node.classList.add("omt-notice-in"));
+    requestAnimationFrame(() => node.classList.add("mas-notice-in"));
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      node.classList.remove("omt-notice-in");
+      node.classList.remove("mas-notice-in");
       timer = null;
     }, 2600);
   }

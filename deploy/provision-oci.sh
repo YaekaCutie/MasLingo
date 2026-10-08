@@ -32,7 +32,7 @@ set -euo pipefail
 SHAPE="VM.Standard.A1.Flex"
 OCPUS=2
 MEMORY_GB=12
-DISPLAY_NAME="openmanga-ocr-backend"
+DISPLAY_NAME="maslingo-ocr-backend"
 SUBNET_ID=""
 SSH_KEY_FILE=""
 IMAGE_ID=""
@@ -58,7 +58,7 @@ Options:
                                      with a quota error, try --ocpus 4
                                      --memory-gb 24, and vice versa.
   --image-id OCID       Skip image lookup and use this image.
-  --display-name NAME   Default: openmanga-ocr-backend
+  --display-name NAME   Default: maslingo-ocr-backend
   --sleep SECONDS       Pause between rounds (default 60).
   --rounds N            Stop after N rounds (default 0 = never stop).
   --dry-run             Print what would run, change nothing.
@@ -237,8 +237,8 @@ Next:
        ssh -i <key> ubuntu@${public_ip:-<public-ip>}
 
   3. On the instance:
-       git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git
-       cd OpenMangaTranslator
+       git clone --depth 1 https://github.com/YaekaCutie/MasLingo.git
+       cd MasLingo
        bash deploy/bootstrap-vm.sh
 
   4. Then see deploy/README.md step 6 to point the extension at it.

@@ -58,7 +58,7 @@ HF Space 的 Docker SDK 要求 **`Dockerfile` 在仓库根目录**，所以不�
 
 ```bash
 # 拉项目
-git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git omt
+git clone --depth 1 https://github.com/YaekaCutie/MasLingo.git omt
 
 # 拉你的 Space
 git clone https://huggingface.co/spaces/<你的用户名>/<space 名> space
@@ -70,7 +70,7 @@ cp -r ../omt/backend ./backend
 cp ../omt/deploy/alt-huggingface-space/space-README.md ./README.md
 
 git add -A
-git commit -m "deploy OpenMangaTranslator OCR backend"
+git commit -m "deploy MasLingo OCR backend"
 git push
 ```
 
@@ -91,10 +91,10 @@ Space 是**公网无鉴权**的，而免费额度是共享的。在 Space 页面
 
 | 名称 | 值 | 作用 |
 | --- | --- | --- |
-| `OMT_RATE_LIMIT_REQUESTS` | `40` | 每 IP 每窗口请求上限 |
-| `OMT_RATE_LIMIT_WINDOW` | `60` | 窗口秒数 |
-| `OMT_OCR_CONCURRENCY` | `2` | 同时处理的任务数 |
-| `OMT_TORCH_THREADS` | `1` | 每个任务用的线程数 |
+| `MAS_RATE_LIMIT_REQUESTS` | `40` | 每 IP 每窗口请求上限 |
+| `MAS_RATE_LIMIT_WINDOW` | `60` | 窗口秒数 |
+| `MAS_OCR_CONCURRENCY` | `2` | 同时处理的任务数 |
+| `MAS_TORCH_THREADS` | `1` | 每个任务用的线程数 |
 
 加完变量需要 **Restart Space** 才生效。
 

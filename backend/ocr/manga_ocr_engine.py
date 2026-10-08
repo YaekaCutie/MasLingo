@@ -15,7 +15,7 @@ MODEL_ID = "kha-white/manga-ocr-base"
 
 # Below this, the reading is treated as the model answering noise rather than
 # text — but only when the reading is also short. See is_confident_reading.
-MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
+MIN_CONFIDENCE = float(os.getenv("MAS_MIN_CONFIDENCE", "0.45"))
 # Measured on two real pages, one Japanese and one English, sorted by confidence,
 # true and false readings interleave: 0.419 true, 0.408 true, 0.391 false,
 # 0.381 true, 0.376 true, 0.364 false, 0.341 false. No threshold separates them
@@ -28,7 +28,7 @@ MIN_CONFIDENCE = float(os.getenv("OMT_MIN_CONFIDENCE", "0.45"))
 # It errs towards removing them because a wrong reading paints white over the
 # artwork, while a missing one leaves Japanese the user can still select by hand.
 # Both values are environment-tunable so this can be revisited without an edit.
-MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
+MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("MAS_MIN_CONFIDENCE_LENGTH", "8"))
 
 # Short readings carry almost no evidence, so the model has to be sure of them.
 #
@@ -38,8 +38,8 @@ MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("OMT_MIN_CONFIDENCE_LENGTH", "8"))
 # scored far higher: '楓ちゃんね♥' 1.00, 'え！？' 1.00, '魚' 0.77. A single
 # threshold cannot separate them because the fragments clear the ordinary bar;
 # a higher bar for short readings can.
-SHORT_READING_LENGTH = int(os.getenv("OMT_SHORT_READING_LENGTH", "5"))
-SHORT_READING_CONFIDENCE = float(os.getenv("OMT_SHORT_READING_CONFIDENCE", "0.75"))
+SHORT_READING_LENGTH = int(os.getenv("MAS_SHORT_READING_LENGTH", "5"))
+SHORT_READING_CONFIDENCE = float(os.getenv("MAS_SHORT_READING_CONFIDENCE", "0.75"))
 
 
 def _has_kana(text: str) -> bool:
@@ -63,7 +63,7 @@ def _has_kana(text: str) -> bool:
 # decorative box, a line mentioning VTuber) reached 0.38 and 0.27, while invented
 # full-width Latin reached 0.74 and 0.85. 0.45 sits in that gap. An earlier sweep
 # without those two genuine cases picked 0.20 and quietly killed the move name.
-MIN_LATIN_RATIO = float(os.getenv("OMT_MIN_LATIN_RATIO", "0.45"))
+MIN_LATIN_RATIO = float(os.getenv("MAS_MIN_LATIN_RATIO", "0.45"))
 
 _FULLWIDTH_LATIN = set(
     "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"

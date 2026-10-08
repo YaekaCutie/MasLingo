@@ -19,7 +19,7 @@ const source = readFileSync(join(repoRoot, "extension", "translation", "provider
 const sandbox = { crypto, TextEncoder, URLSearchParams, console, Math, Date, JSON };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox);
-const providers = sandbox.OMT_providers;
+const providers = sandbox.MAS_providers;
 
 const failures = [];
 const check = (name, condition, detail = "") => {

@@ -1,4 +1,4 @@
-const registry = globalThis.OMT_providers;
+const registry = globalThis.MAS_providers;
 
 const debugMode = document.getElementById("debugMode");
 const result = document.getElementById("result");

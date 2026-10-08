@@ -114,14 +114,14 @@ h1 { font-size: 12px; margin: 0; font-weight: 600; letter-spacing: .02em; color:
 
 .state { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .state-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa19e; flex: 0 0 auto; }
-.state[data-state="scanning"] .state-dot { background: #d9a53b; animation: omt-pulse 1.6s ease-in-out infinite; }
-.state[data-state="working"] .state-dot { background: #d9a53b; animation: omt-pulse 1s ease-in-out infinite; }
+.state[data-state="scanning"] .state-dot { background: #d9a53b; animation: mas-pulse 1.6s ease-in-out infinite; }
+.state[data-state="working"] .state-dot { background: #d9a53b; animation: mas-pulse 1s ease-in-out infinite; }
 .state[data-state="done"] .state-dot { background: #3f9d63; }
 .state[data-state="error"] .state-dot { background: #c0503f; }
 .state[data-state="scanning"] #autoStateText,
 .state[data-state="working"] #autoStateText,
 .state[data-state="done"] #autoStateText { color: var(--text); }
-@keyframes omt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes mas-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .state-dot { animation: none !important; } }
 
 .hint { margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--muted); }

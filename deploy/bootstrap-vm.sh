@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Bootstrap an Oracle Cloud "Always Free" Ubuntu instance (arm64 or amd64) as
-# the shared OpenMangaTranslator OCR backend.
+# the shared MasLingo OCR backend.
 #
 # Usage, on the fresh instance:
 #   bash deploy/bootstrap-vm.sh            # derives <public-ip>.sslip.io
@@ -11,8 +11,8 @@
 
 set -euo pipefail
 
-REPO_URL="${OMT_REPO_URL:-https://github.com/YaekaCutie/OpenMangaTranslator.git}"
-TARGET_DIR="${OMT_TARGET_DIR:-$HOME/OpenMangaTranslator}"
+REPO_URL="${MAS_REPO_URL:-https://github.com/YaekaCutie/MasLingo.git}"
+TARGET_DIR="${MAS_TARGET_DIR:-$HOME/MasLingo}"
 
 log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[1;31m!! %s\033[0m\n' "$*" >&2; exit 1; }
@@ -66,11 +66,11 @@ cd "$TARGET_DIR/deploy"
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
-# Keep an existing OMT_DOMAIN if one was set, otherwise write the resolved one.
-if grep -q '^OMT_DOMAIN=CHANGE_ME' .env; then
-  sed -i "s|^OMT_DOMAIN=.*|OMT_DOMAIN=${DOMAIN}|" .env
+# Keep an existing MAS_DOMAIN if one was set, otherwise write the resolved one.
+if grep -q '^MAS_DOMAIN=CHANGE_ME' .env; then
+  sed -i "s|^MAS_DOMAIN=.*|MAS_DOMAIN=${DOMAIN}|" .env
 else
-  echo "keeping existing OMT_DOMAIN=$(grep '^OMT_DOMAIN=' .env | cut -d= -f2-)"
+  echo "keeping existing MAS_DOMAIN=$(grep '^MAS_DOMAIN=' .env | cut -d= -f2-)"
 fi
 
 log "6/6 Building and starting the stack (first build downloads torch: 5-15 min)"
@@ -88,7 +88,7 @@ Check it from your own machine (must be reachable from the internet):
   curl -s https://${DOMAIN}/health
 
 Then point the extension at it:
-  set OMT_BACKEND_URL in extension/config.js to https://${DOMAIN}
+  set MAS_BACKEND_URL in extension/config.js to https://${DOMAIN}
   and add the same host to host_permissions in extension/manifest.json
 
 Useful commands:

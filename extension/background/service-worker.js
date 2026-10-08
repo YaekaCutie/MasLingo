@@ -59,7 +59,7 @@ async function readError(response, fallback) {
 }
 
 async function fetchBackend(path,options={}){
-  const backends=await globalThis.OMT_backendCandidates();
+  const backends=await globalThis.MAS_backendCandidates();
   let lastError=null;
   for(const base of backends){
     try{
@@ -186,7 +186,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       let bases = [];
       try {
-        bases = await globalThis.OMT_backendCandidates();
+        bases = await globalThis.MAS_backendCandidates();
       } catch {
         bases = [];
       }
@@ -212,7 +212,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       try {
         const cfg = message.cfg || {};
-        const provider = globalThis.OMT_providers.byId(cfg.translationProvider);
+        const provider = globalThis.MAS_providers.byId(cfg.translationProvider);
         if (!provider || provider.id === "none" || !provider.adapter) {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
           return;
@@ -538,7 +538,7 @@ async function recognizePage(msg,tabId,port){
 // Map the pre-provider settings onto the registry so an existing install keeps
 // working: `translationMode` used to be the only choice the user had.
 function resolveProvider(cfg) {
-  const registry = globalThis.OMT_providers;
+  const registry = globalThis.MAS_providers;
   const explicit = cfg.translationProvider;
   // "none" is a real entry so the settings dropdown can offer it, but it has no
   // adapter and must resolve to "translation is off".
@@ -554,7 +554,7 @@ function resolveProvider(cfg) {
 async function providerFetch(url, init, provider) {
   let response;
   if (provider?.id === "backend") {
-    const backends = await globalThis.OMT_backendCandidates();
+    const backends = await globalThis.MAS_backendCandidates();
     let lastError = null;
     response = null;
     for (const base of backends) {
@@ -603,7 +603,7 @@ async function providerFetch(url, init, provider) {
 async function runTranslation(texts, cfg) {
   const provider = resolveProvider(cfg);
   if (!provider) throw new Error("未启用翻译");
-  const registry = globalThis.OMT_providers;
+  const registry = globalThis.MAS_providers;
 
   const common = {
     endpoint: (cfg.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),

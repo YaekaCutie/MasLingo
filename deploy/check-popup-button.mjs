@@ -105,7 +105,7 @@ try {
   await popup.evaluate(() => document.getElementById("select").click());
   await new Promise((done) => setTimeout(done, 2500));
 
-  const overlay = await tab.$(".mt-selection").then((handle) => Boolean(handle)).catch(() => false);
+  const overlay = await tab.$(".mas-selection").then((handle) => Boolean(handle)).catch(() => false);
   const popupAfter = await popup.evaluate(() => ({
     status: document.getElementById("status")?.textContent,
     detailsOpen: document.getElementById("details")?.open,

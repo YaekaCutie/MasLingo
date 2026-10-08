@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "OpenMangaTranslator",
+  "name": "MasLingo",
   "version": "1.1.4",
   "description": "日文漫画 OCR 翻译：识别画面文字并把译文嵌回原图。默认使用官方托管后端，无需本机环境。",
   "permissions": [

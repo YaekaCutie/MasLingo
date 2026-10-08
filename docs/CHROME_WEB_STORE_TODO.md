@@ -133,7 +133,7 @@
 
 ### P1-4 元数据与文案
 
-- [ ] manifest `name` ≤ 75 字符（当前 `OpenMangaTranslator` 没问题）
+- [ ] manifest `name` ≤ 75 字符（当前 `MasLingo` 没问题）
 - [ ] manifest `description` ≤ 132 字符（当前中文描述没问题，但要在详情页里说明需要联网访问你的服务器）
 - [ ] 版本号格式：1–4 段点分整数，每段 0–65535（`1.0.2` 合规），每次上传必须比上一版大
 - [ ] 商店分类：建议 `Tools` 或 `Workflow & Planning`（`Art & Design` 也涵盖截图类工具）

@@ -11,10 +11,10 @@
 // a wall of scrolling text next to the artwork the user is trying to read.
 
 // Assigned onto globalThis rather than declared with const: other content
-// scripts reach it as `globalThis.OMT_panel`, and a top-level const lives in the
+// scripts reach it as `globalThis.MAS_panel`, and a top-level const lives in the
 // global lexical scope without ever becoming a property of globalThis — so the
 // status calls silently did nothing.
-globalThis.OMT_panel = (() => {
+globalThis.MAS_panel = (() => {
   const STATE = { UNKNOWN: "unknown", WORKING: "working", OK: "ok", BAD: "bad" };
   const POSITION_KEY = "panelPosition";
   const COLLAPSED_KEY = "panelCollapsed";
@@ -65,7 +65,7 @@ globalThis.OMT_panel = (() => {
 
   function setDot(node, state, text) {
     node.dataset.state = state;
-    node.querySelector(".omt-dot-text").textContent = text;
+    node.querySelector(".mas-dot-text").textContent = text;
   }
 
   // --- status bar -----------------------------------------------------------
@@ -85,10 +85,10 @@ globalThis.OMT_panel = (() => {
     if (!node) return;
     node.textContent = text;
     node.dataset.kind = kind;
-    node.classList.toggle("omt-statusbar-active", kind !== "info" || Boolean(text));
+    node.classList.toggle("mas-statusbar-active", kind !== "info" || Boolean(text));
     // The collapsed widget carries the same message, because a status the user
     // cannot see while collapsed is not a status. Its dot mirrors the kind.
-    const widgetText = root?.querySelector("#omt-widget-text");
+    const widgetText = root?.querySelector("#mas-widget-text");
     if (widgetText) widgetText.textContent = text || "自动翻译";
     if (root) root.dataset.busy = kind === "error" ? "2" : (text ? "1" : "0");
     if (statusTimer) clearTimeout(statusTimer);
@@ -99,8 +99,8 @@ globalThis.OMT_panel = (() => {
     statusTimer = setTimeout(() => {
       node.textContent = idleText;
       node.dataset.kind = "info";
-      node.classList.remove("omt-statusbar-active");
-      const back = root?.querySelector("#omt-widget-text");
+      node.classList.remove("mas-statusbar-active");
+      const back = root?.querySelector("#mas-widget-text");
       if (back) back.textContent = "自动翻译";
       if (root) root.dataset.busy = "0";
     }, dwell);
@@ -154,7 +154,7 @@ globalThis.OMT_panel = (() => {
    * reading manga.
    */
   async function checkBackend({ quiet = false } = {}) {
-    const dot = root.querySelector("#omt-dot-backend");
+    const dot = root.querySelector("#mas-dot-backend");
     setDot(dot, STATE.WORKING, "后端检测中");
     if (!quiet) status("正在检测后端……");
 
@@ -188,7 +188,7 @@ globalThis.OMT_panel = (() => {
    * @returns {Promise<{ok: boolean, translated?: string, reason?: string}>}
    */
   async function checkTranslation(text) {
-    const dot = root.querySelector("#omt-dot-translation");
+    const dot = root.querySelector("#mas-dot-translation");
     setDot(dot, STATE.WORKING, "翻译检测中");
 
     const cfg = await readStore([
@@ -220,7 +220,7 @@ globalThis.OMT_panel = (() => {
 
   /** The provider currently chosen in the panel's own select. */
   function currentProviderId() {
-    return root?.querySelector("#omt-provider")?.value || "";
+    return root?.querySelector("#mas-provider")?.value || "";
   }
 
   /** A short, human reason — never the raw body. */
@@ -237,8 +237,8 @@ globalThis.OMT_panel = (() => {
   // --- the connectivity button ---------------------------------------------
 
   async function runConnectivityCheck() {
-    const button = root.querySelector("#omt-connect");
-    const line = root.querySelector("#omt-line");
+    const button = root.querySelector("#mas-connect");
+    const line = root.querySelector("#mas-line");
     if (button.disabled) return;
     button.disabled = true;
     const original = button.textContent;
@@ -264,7 +264,7 @@ globalThis.OMT_panel = (() => {
         resetTimer = setTimeout(() => {
           resetTimer = null;
           currentLine = pickLine();
-          typeInto(root.querySelector("#omt-line"), `「${currentLine}」`, { speed: 24 });
+          typeInto(root.querySelector("#mas-line"), `「${currentLine}」`, { speed: 24 });
         }, 4000);
       } else {
         await typeInto(line, "翻译连接失败");
@@ -313,7 +313,7 @@ globalThis.OMT_panel = (() => {
 
     const rect = root.getBoundingClientRect();
     dragging = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
-    root.classList.add("omt-panel-dragging");
+    root.classList.add("mas-panel-dragging");
     try {
       root.setPointerCapture?.(event.pointerId);
     } catch {
@@ -335,13 +335,13 @@ globalThis.OMT_panel = (() => {
   function endDrag() {
     if (!dragging) return;
     dragging = null;
-    root.classList.remove("omt-panel-dragging");
+    root.classList.remove("mas-panel-dragging");
     const rect = root.getBoundingClientRect();
     writeStore({ [POSITION_KEY]: { left: Math.round(rect.left), top: Math.round(rect.top) } });
   }
 
   window.addEventListener("resize", () => {
-    if (!root || root.classList.contains("omt-panel-collapsed")) return;
+    if (!root || root.classList.contains("mas-panel-collapsed")) return;
     const rect = root.getBoundingClientRect();
     applyPosition(clamp(rect.left, rect.top));
   }, { passive: true });
@@ -349,7 +349,7 @@ globalThis.OMT_panel = (() => {
   // --- collapse -------------------------------------------------------------
 
   function setCollapsed(collapsed) {
-    root.classList.toggle("omt-panel-collapsed", collapsed);
+    root.classList.toggle("mas-panel-collapsed", collapsed);
     writeStore({ [COLLAPSED_KEY]: collapsed });
   }
 
@@ -359,58 +359,58 @@ globalThis.OMT_panel = (() => {
 
   function build() {
     const node = document.createElement("div");
-    node.id = "omt-panel";
-    node.className = "omt-panel";
+    node.id = "mas-panel";
+    node.className = "mas-panel";
     node.innerHTML = `
-      <div class="omt-panel-bar" id="omt-panel-bar">
-        <span class="omt-brand">OpenMangaTranslator</span>
-        <button class="omt-panel-btn" id="omt-collapse" title="收起为挂件" aria-label="收起">–</button>
+      <div class="mas-panel-bar" id="mas-panel-bar">
+        <span class="mas-brand">MasLingo</span>
+        <button class="mas-panel-btn" id="mas-collapse" title="收起为挂件" aria-label="收起">–</button>
       </div>
-      <div class="omt-panel-body">
-        <div class="omt-dots">
-          <span class="omt-dot" id="omt-dot-backend" data-state="unknown">
-            <i></i><span class="omt-dot-text">后端未检测</span>
+      <div class="mas-panel-body">
+        <div class="mas-dots">
+          <span class="mas-dot" id="mas-dot-backend" data-state="unknown">
+            <i></i><span class="mas-dot-text">后端未检测</span>
           </span>
-          <span class="omt-dot" id="omt-dot-translation" data-state="unknown">
-            <i></i><span class="omt-dot-text">翻译未检测</span>
+          <span class="mas-dot" id="mas-dot-translation" data-state="unknown">
+            <i></i><span class="mas-dot-text">翻译未检测</span>
           </span>
         </div>
 
-        <div class="omt-row">
-          <span class="omt-label" id="omt-auto-label">自动识别</span>
-          <label class="omt-switch" aria-labelledby="omt-auto-label">
-            <input id="omt-auto" type="checkbox" aria-labelledby="omt-auto-label">
-            <span class="omt-switch-track"><span class="omt-switch-thumb"></span></span>
+        <div class="mas-row">
+          <span class="mas-label" id="mas-auto-label">自动识别</span>
+          <label class="mas-switch" aria-labelledby="mas-auto-label">
+            <input id="mas-auto" type="checkbox" aria-labelledby="mas-auto-label">
+            <span class="mas-switch-track"><span class="mas-switch-thumb"></span></span>
           </label>
         </div>
-        <button class="omt-btn" id="omt-select">框选翻译</button>
+        <button class="mas-btn" id="mas-select">框选翻译</button>
 
-        <div class="omt-sep"></div>
+        <div class="mas-sep"></div>
 
-        <div class="omt-label" id="omt-provider-label">翻译类型</div>
-        <div class="omt-row omt-row-tight">
-          <select id="omt-provider" class="omt-select" aria-labelledby="omt-provider-label"></select>
-          <button class="omt-btn omt-btn-small" id="omt-connect">连通检测</button>
+        <div class="mas-label" id="mas-provider-label">翻译类型</div>
+        <div class="mas-row mas-row-tight">
+          <select id="mas-provider" class="mas-select" aria-labelledby="mas-provider-label"></select>
+          <button class="mas-btn mas-btn-small" id="mas-connect">连通检测</button>
         </div>
-        <div class="omt-line" id="omt-line"></div>
+        <div class="mas-line" id="mas-line"></div>
 
-        <div class="omt-sep"></div>
-        <div class="omt-foot">
-          <button class="omt-link" id="omt-settings">⚙ 设置</button>
-          <span class="omt-version" id="omt-version"></span>
+        <div class="mas-sep"></div>
+        <div class="mas-foot">
+          <button class="mas-link" id="mas-settings">⚙ 设置</button>
+          <span class="mas-version" id="mas-version"></span>
         </div>
       </div>
-      <div class="omt-statusbar" id="omt-status" role="status" aria-live="polite"></div>
-      <button class="omt-widget" id="omt-widget" title="展开">
-        <i></i><span id="omt-widget-text">自动翻译</span>
+      <div class="mas-statusbar" id="mas-status" role="status" aria-live="polite"></div>
+      <button class="mas-widget" id="mas-widget" title="展开">
+        <i></i><span id="mas-widget-text">自动翻译</span>
       </button>
     `;
     return node;
   }
 
   function fillProviders() {
-    const select = root.querySelector("#omt-provider");
-    const registry = globalThis.OMT_providers;
+    const select = root.querySelector("#mas-provider");
+    const registry = globalThis.MAS_providers;
     if (!registry) return;
     select.textContent = "";
     for (const provider of registry.list) {
@@ -432,13 +432,13 @@ globalThis.OMT_panel = (() => {
 
     // The status bar lives inside the panel, so there is no second surface to
     // mount and nothing pinned to the corner of the page.
-    statusNode = root.querySelector("#omt-status");
+    statusNode = root.querySelector("#mas-status");
     idleText = "就绪";
     statusNode.textContent = idleText;
 
     currentLine = pickLine();
-    root.querySelector("#omt-line").textContent = `「${currentLine}」`;
-    root.querySelector("#omt-version").textContent =
+    root.querySelector("#mas-line").textContent = `「${currentLine}」`;
+    root.querySelector("#mas-version").textContent =
       `v${chrome.runtime?.getManifest?.().version || ""}`;
 
     fillProviders();
@@ -446,22 +446,22 @@ globalThis.OMT_panel = (() => {
     const cfg = await readStore([
       "autoTranslate", "translationProvider", "panelPosition", "panelCollapsed",
     ]);
-    root.querySelector("#omt-auto").checked = Boolean(cfg.autoTranslate);
-    if (cfg.translationProvider) root.querySelector("#omt-provider").value = cfg.translationProvider;
-    if (cfg.panelCollapsed) root.classList.add("omt-panel-collapsed");
+    root.querySelector("#mas-auto").checked = Boolean(cfg.autoTranslate);
+    if (cfg.translationProvider) root.querySelector("#mas-provider").value = cfg.translationProvider;
+    if (cfg.panelCollapsed) root.classList.add("mas-panel-collapsed");
     applyPosition(cfg.panelPosition);
 
-    root.querySelector("#omt-auto").addEventListener("change", (event) => {
+    root.querySelector("#mas-auto").addEventListener("change", (event) => {
       writeStore({ autoTranslate: event.target.checked });
       status(event.target.checked ? "正在扫描漫画……" : "自动识别已关闭");
     });
-    root.querySelector("#omt-provider").addEventListener("change", (event) => {
+    root.querySelector("#mas-provider").addEventListener("change", (event) => {
       writeStore({ translationProvider: event.target.value });
-      root.querySelector("#omt-dot-translation").dataset.state = STATE.UNKNOWN;
-      setDot(root.querySelector("#omt-dot-translation"), STATE.UNKNOWN, "翻译未检测");
+      root.querySelector("#mas-dot-translation").dataset.state = STATE.UNKNOWN;
+      setDot(root.querySelector("#mas-dot-translation"), STATE.UNKNOWN, "翻译未检测");
     });
-    root.querySelector("#omt-connect").addEventListener("click", runConnectivityCheck);
-    root.querySelector("#omt-select").addEventListener("click", async () => {
+    root.querySelector("#mas-connect").addEventListener("click", runConnectivityCheck);
+    root.querySelector("#mas-select").addEventListener("click", async () => {
       // Via the service worker: runtime.sendMessage cannot reach content scripts,
       // so sending START_SELECT directly from here went nowhere at all.
       const result = await chrome.runtime
@@ -469,13 +469,13 @@ globalThis.OMT_panel = (() => {
         .catch((error) => ({ ok: false, error: error.message }));
       if (!result?.ok) status(`无法开始框选：${result?.error || "未知原因"}`, "error");
     });
-    root.querySelector("#omt-settings").addEventListener("click", () => {
+    root.querySelector("#mas-settings").addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "OPEN_OPTIONS" }).catch(() => {});
     });
-    root.querySelector("#omt-collapse").addEventListener("click", () => setCollapsed(true));
-    root.querySelector("#omt-widget").addEventListener("click", () => setCollapsed(false));
+    root.querySelector("#mas-collapse").addEventListener("click", () => setCollapsed(true));
+    root.querySelector("#mas-widget").addEventListener("click", () => setCollapsed(false));
 
-    const bar = root.querySelector("#omt-panel-bar");
+    const bar = root.querySelector("#mas-panel-bar");
     bar.addEventListener("pointerdown", startDrag);
     window.addEventListener("pointermove", moveDrag, { passive: true });
     window.addEventListener("pointerup", endDrag, { passive: true });
@@ -487,16 +487,16 @@ globalThis.OMT_panel = (() => {
       chrome.storage?.onChanged?.addListener((changes, area) => {
         if (area !== "local") return;
         if (changes.autoTranslate) {
-          const box = root.querySelector("#omt-auto");
+          const box = root.querySelector("#mas-auto");
           if (box && box.checked !== Boolean(changes.autoTranslate.newValue)) {
             box.checked = Boolean(changes.autoTranslate.newValue);
           }
         }
         if (changes.translationProvider) {
-          const select = root.querySelector("#omt-provider");
+          const select = root.querySelector("#mas-provider");
           if (select && select.value !== changes.translationProvider.newValue) {
             select.value = changes.translationProvider.newValue;
-            setDot(root.querySelector("#omt-dot-translation"), STATE.UNKNOWN, "翻译未检测");
+            setDot(root.querySelector("#mas-dot-translation"), STATE.UNKNOWN, "翻译未检测");
           }
         }
       });

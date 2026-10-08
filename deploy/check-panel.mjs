@@ -70,7 +70,7 @@ const pages = http.createServer((_request, response) => {
 await new Promise((done) => pages.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${pages.address().port}/`;
 
-const workDir = mkdtempSync(join(tmpdir(), "omt-panel-"));
+const workDir = mkdtempSync(join(tmpdir(), "mas-panel-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -107,15 +107,15 @@ try {
 
   console.log("\n悬浮窗结构与位置");
   const layout = await page.evaluate(() => {
-    const panel = document.getElementById("omt-panel");
+    const panel = document.getElementById("mas-panel");
     if (!panel) return null;
     const rect = panel.getBoundingClientRect();
-    const strip = document.getElementById("omt-status");
+    const strip = document.getElementById("mas-status");
     const stripRect = strip?.getBoundingClientRect();
     const panelRect = rect;
-    const dots = [...panel.querySelectorAll(".omt-dot")].map((dot) => {
+    const dots = [...panel.querySelectorAll(".mas-dot")].map((dot) => {
       const box = dot.getBoundingClientRect();
-      return { text: dot.querySelector(".omt-dot-text").textContent.trim(), top: box.top, left: box.left };
+      return { text: dot.querySelector(".mas-dot-text").textContent.trim(), top: box.top, left: box.left };
     });
     return {
       right: window.innerWidth - rect.right,
@@ -125,32 +125,32 @@ try {
       position: getComputedStyle(panel).position,
       pointerEvents: getComputedStyle(panel).pointerEvents,
       dots,
-      hasAuto: Boolean(panel.querySelector("#omt-auto")),
-      hasSelect: Boolean(panel.querySelector("#omt-select")),
-      hasProvider: Boolean(panel.querySelector("#omt-provider")),
-      hasConnect: Boolean(panel.querySelector("#omt-connect")),
+      hasAuto: Boolean(panel.querySelector("#mas-auto")),
+      hasSelect: Boolean(panel.querySelector("#mas-select")),
+      hasProvider: Boolean(panel.querySelector("#mas-provider")),
+      hasConnect: Boolean(panel.querySelector("#mas-connect")),
       connectAfterSelect: (() => {
-        const select = panel.querySelector("#omt-provider");
-        const button = panel.querySelector("#omt-connect");
+        const select = panel.querySelector("#mas-provider");
+        const button = panel.querySelector("#mas-connect");
         return Boolean(select && button && select.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
       })(),
-      line: panel.querySelector("#omt-line")?.textContent || "",
-      hasSettings: Boolean(panel.querySelector("#omt-settings")),
-      version: panel.querySelector("#omt-version")?.textContent || "",
-      hasTerminal: Boolean(panel.querySelector("pre, .omt-terminal, .omt-log")),
+      line: panel.querySelector("#mas-line")?.textContent || "",
+      hasSettings: Boolean(panel.querySelector("#mas-settings")),
+      version: panel.querySelector("#mas-version")?.textContent || "",
+      hasTerminal: Boolean(panel.querySelector("pre, .mas-terminal, .mas-log")),
       // The status line now lives inside the panel, so what matters is that it
       // is a child of it and single-line — not where it sits on the page.
-      statusInsidePanel: Boolean(panel.querySelector("#omt-status")),
+      statusInsidePanel: Boolean(panel.querySelector("#mas-status")),
       statusLines: strip ? strip.textContent.split("\n").length : 0,
       statusWhiteSpace: strip ? getComputedStyle(strip).whiteSpace : null,
       statusText: strip?.textContent?.trim() || "",
       floatingSurfaces: [...document.documentElement.children]
-        .filter((node) => node.id?.startsWith("omt-"))
+        .filter((node) => node.id?.startsWith("mas-"))
         .map((node) => node.id),
     };
   });
 
-  check("悬浮窗已挂载", Boolean(layout), "找不到 #omt-panel");
+  check("悬浮窗已挂载", Boolean(layout), "找不到 #mas-panel");
   // Sitting in the lower right; nothing is reserved below it any more, since the
   // status line moved inside the panel.
   check("停在右下角", layout.right < 40 && layout.bottom < 40,
@@ -198,8 +198,8 @@ try {
 
   console.log("\n拖动");
   const dragged = await page.evaluate(async () => {
-    const panel = document.getElementById("omt-panel");
-    const bar = document.getElementById("omt-panel-bar");
+    const panel = document.getElementById("mas-panel");
+    const bar = document.getElementById("mas-panel-bar");
     const before = panel.getBoundingClientRect();
     const startX = bar.getBoundingClientRect().left + 40;
     const startY = bar.getBoundingClientRect().top + 8;
@@ -219,7 +219,7 @@ try {
   check("可以拖动", dragged.movedX > 100 && dragged.movedY > 80, JSON.stringify(dragged));
 
   const clamped = await page.evaluate(async () => {
-    const bar = document.getElementById("omt-panel-bar");
+    const bar = document.getElementById("mas-panel-bar");
     const startX = bar.getBoundingClientRect().left + 10;
     const startY = bar.getBoundingClientRect().top + 8;
     bar.dispatchEvent(new PointerEvent("pointerdown", {
@@ -232,7 +232,7 @@ try {
     }
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 5000, clientY: 5000, pointerId: 1 }));
     await new Promise((r) => requestAnimationFrame(r));
-    const rect = document.getElementById("omt-panel").getBoundingClientRect();
+    const rect = document.getElementById("mas-panel").getBoundingClientRect();
     return {
       left: Math.round(rect.left), top: Math.round(rect.top),
       right: Math.round(rect.right), bottom: Math.round(rect.bottom),
@@ -246,7 +246,7 @@ try {
   // Dragging into the corner keeps the whole panel on screen; the status line
   // travels with it, so there is nothing left to collide with.
   const corner = await page.evaluate(() => {
-    const rect = document.getElementById("omt-panel").getBoundingClientRect();
+    const rect = document.getElementById("mas-panel").getBoundingClientRect();
     return {
       inside: rect.left >= 0 && rect.top >= 0
         && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
@@ -263,17 +263,17 @@ try {
   // to the listener and sails past that, so the first version of this check
   // passed while the button did nothing for an actual user.
   const collapseBox = await page.evaluate(() => {
-    const box = document.getElementById("omt-collapse").getBoundingClientRect();
+    const box = document.getElementById("mas-collapse").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(collapseBox.x, collapseBox.y);
   await new Promise((r) => setTimeout(r, 400));
 
   const collapsed = await page.evaluate(() => {
-    const panel = document.getElementById("omt-panel");
-    const widget = document.getElementById("omt-widget");
+    const panel = document.getElementById("mas-panel");
+    const widget = document.getElementById("mas-widget");
     return {
-      bodyVisible: getComputedStyle(panel.querySelector(".omt-panel-body")).display !== "none",
+      bodyVisible: getComputedStyle(panel.querySelector(".mas-panel-body")).display !== "none",
       widgetVisible: getComputedStyle(widget).display !== "none",
       text: widget.textContent.trim(),
       width: panel.getBoundingClientRect().width,
@@ -286,19 +286,19 @@ try {
     `${collapsed.text} / ${collapsed.width}px`);
 
   const widgetBox = await page.evaluate(() => {
-    const box = document.getElementById("omt-widget").getBoundingClientRect();
+    const box = document.getElementById("mas-widget").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(widgetBox.x, widgetBox.y);
   await new Promise((r) => setTimeout(r, 400));
   const expandedAgain = await page.evaluate(() =>
-    getComputedStyle(document.getElementById("omt-panel").querySelector(".omt-panel-body")).display !== "none");
+    getComputedStyle(document.getElementById("mas-panel").querySelector(".mas-panel-body")).display !== "none");
   check("点击挂件能再次展开", expandedAgain === true);
 
   // The drag handle must still drag: the fix for the button cannot cost that.
   const stillDrags = await page.evaluate(async () => {
-    const bar = document.getElementById("omt-panel-bar");
-    const panel = document.getElementById("omt-panel");
+    const bar = document.getElementById("mas-panel-bar");
+    const panel = document.getElementById("mas-panel");
     const before = panel.getBoundingClientRect().left;
     const box = bar.getBoundingClientRect();
     const x = box.left + 20;
@@ -317,11 +317,11 @@ try {
   // then fall back to idle, so both halves of that are worth pinning down. The
   // first version read it once at 4s, exactly when the dwell expires.
   const sample = async () => page.evaluate(() => {
-    const strip = document.getElementById("omt-status");
-    const panel = document.getElementById("omt-panel");
+    const strip = document.getElementById("mas-status");
+    const panel = document.getElementById("mas-panel");
     return {
       text: strip.textContent.trim(),
-      active: strip.classList.contains("omt-statusbar-active"),
+      active: strip.classList.contains("mas-statusbar-active"),
       insidePanel: panel.contains(strip),
     };
   });
@@ -352,14 +352,14 @@ try {
     document.body.insertAdjacentHTML("afterbegin", '<div id="probe" style="height:10px"></div>');
   });
   const selectBox = await page.evaluate(() => {
-    const box = document.getElementById("omt-select").getBoundingClientRect();
+    const box = document.getElementById("mas-select").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(selectBox.x, selectBox.y);
   await new Promise((r) => setTimeout(r, 600));
   const selection = await page.evaluate(() => ({
-    overlay: document.querySelectorAll(".mt-selection").length,
-    status: document.getElementById("omt-status")?.textContent?.trim() || "",
+    overlay: document.querySelectorAll(".mas-selection").length,
+    status: document.getElementById("mas-status")?.textContent?.trim() || "",
   }));
   console.log(`      选择层 ${selection.overlay} 个，状态「${selection.status}」`);
   check("点击框选翻译会进入选择模式", selection.overlay === 1,
@@ -368,7 +368,7 @@ try {
   await page.keyboard.press("Escape");
   await new Promise((r) => setTimeout(r, 300));
   const escaped = await page.evaluate(() =>
-    document.querySelectorAll(".mt-selection").length);
+    document.querySelectorAll(".mas-selection").length);
   check("Escape 能退出选择模式", escaped === 0, `还剩 ${escaped} 个`);
 
   console.log("\n状态点反映真实连通性");
@@ -379,9 +379,9 @@ try {
   const dots = await page.evaluate(() => {
     const read = (id) => {
       const node = document.getElementById(id);
-      return { state: node.dataset.state, text: node.querySelector(".omt-dot-text").textContent.trim() };
+      return { state: node.dataset.state, text: node.querySelector(".mas-dot-text").textContent.trim() };
     };
-    return { backend: read("omt-dot-backend"), translation: read("omt-dot-translation") };
+    return { backend: read("mas-dot-backend"), translation: read("mas-dot-translation") };
   });
   console.log(`      后端：${dots.backend.text}（${dots.backend.state}）  翻译：${dots.translation.text}（${dots.translation.state}）`);
   check("后端检测为正常", dots.backend.state === "ok", JSON.stringify(dots.backend));

@@ -1,5 +1,5 @@
 ---
-title: OpenMangaTranslator OCR
+title: MasLingo OCR
 emoji: 📖
 colorFrom: indigo
 colorTo: purple
@@ -8,9 +8,9 @@ app_port: 8001
 pinned: false
 ---
 
-# OpenMangaTranslator OCR backend
+# MasLingo OCR backend
 
-Shared OCR backend for the [OpenMangaTranslator](https://github.com/YaekaCutie/OpenMangaTranslator)
+Shared OCR backend for the [MasLingo](https://github.com/YaekaCutie/MasLingo)
 browser extension. It runs MangaOCR on CPU and exposes a small FastAPI surface:
 
 | Method | Path | Purpose |
@@ -33,12 +33,12 @@ Set these as Space variables (Settings → Variables and secrets):
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OMT_RATE_LIMIT_REQUESTS` | `0` (off) | Requests per IP per window |
-| `OMT_RATE_LIMIT_WINDOW` | `60` | Window length in seconds |
-| `OMT_OCR_CONCURRENCY` | `2` | OCR jobs allowed at once |
-| `OMT_TORCH_THREADS` | `0` (all cores) | Threads per OCR job |
-| `OMT_ENABLE_FREE_TRANSLATE` | `1` | Set `0` to refuse the shared Google endpoint |
-| `OMT_PRELOAD_MODEL` | `1` | Load the model at startup |
-| `OMT_ALLOWED_ORIGINS` | `*` | CORS origins, comma separated |
+| `MAS_RATE_LIMIT_REQUESTS` | `0` (off) | Requests per IP per window |
+| `MAS_RATE_LIMIT_WINDOW` | `60` | Window length in seconds |
+| `MAS_OCR_CONCURRENCY` | `2` | OCR jobs allowed at once |
+| `MAS_TORCH_THREADS` | `0` (all cores) | Threads per OCR job |
+| `MAS_ENABLE_FREE_TRANSLATE` | `1` | Set `0` to refuse the shared Google endpoint |
+| `MAS_PRELOAD_MODEL` | `1` | Load the model at startup |
+| `MAS_ALLOWED_ORIGINS` | `*` | CORS origins, comma separated |
 
 This Space is a thin wrapper; the source of truth is the repository above.

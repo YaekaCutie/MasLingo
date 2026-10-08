@@ -3,7 +3,7 @@
 // the extension and now orphaned", which is what happens when the extension is
 // reloaded while a page stays open. The two look identical from the popup and
 // need opposite advice: inject, or refresh the page.
-globalThis.__OMT_LOADED__ = true;
+globalThis.__MAS_LOADED__ = true;
 
 /**
  * Whether this is the frame the user is actually looking at.
@@ -15,7 +15,7 @@ globalThis.__OMT_LOADED__ = true;
  * screenshot using frame-local coordinates. So the UI lives in the top frame
  * only.
  */
-const OMT_isTopFrame = (() => {
+const MAS_isTopFrame = (() => {
   try {
     return window.top === window;
   } catch {
@@ -53,11 +53,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "AUTO_STATUS") {
     // The popup polls this while it is open; it must never be slower than the
     // poll interval, so it only reads counters.
-    sendResponse(OMT_auto.stats());
+    sendResponse(MAS_auto.stats());
     return true;
   }
   if (message.type === "AUTO_DIAG") {
-    sendResponse(OMT_auto.diagnostics());
+    sendResponse(MAS_auto.diagnostics());
     return true;
   }
   return undefined;
@@ -65,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
 function startSelect() {
   if (selecting) return;
-  if (!OMT_isTopFrame) {
+  if (!MAS_isTopFrame) {
     // The service worker crops a tab-level screenshot for the selected rect, and
     // a subframe's coordinates are relative to the frame, not the tab — so a
     // selection made here would recognise a different part of the screen. Say so
@@ -76,11 +76,11 @@ function startSelect() {
   selecting = true;
   dragging = false;
   selectionBox = document.createElement("div");
-  selectionBox.className = "mt-selection";
+  selectionBox.className = "mas-selection";
   selectionRect = document.createElement("div");
-  selectionRect.className = "mt-selection-rect";
+  selectionRect.className = "mas-selection-rect";
   selectionSize = document.createElement("span");
-  selectionSize.className = "mt-selection-size";
+  selectionSize.className = "mas-selection-size";
   selectionRect.appendChild(selectionSize);
   selectionBox.appendChild(selectionRect);
   selectionBox.addEventListener("pointerdown", onPointerDown);
@@ -163,7 +163,7 @@ function finishSelection() {
 }
 
 function startAutoRecognition() {
-  if (!OMT_isTopFrame) {
+  if (!MAS_isTopFrame) {
     showToast("请在最外层页面上使用整页识别。", "error");
     return;
   }
@@ -278,7 +278,7 @@ function startRecognition(rect, detectPage = false, mediaRect = null) {
 
 function showBusy(rect, fullPage) {
   const panel = document.createElement("div");
-  panel.className = fullPage ? "mt-overlay mt-overlay-page" : "mt-overlay";
+  panel.className = fullPage ? "mas-overlay mas-overlay-page" : "mas-overlay";
   if (!fullPage) {
     Object.assign(panel.style, {
       left: `${rect.left}px`, top: `${rect.top}px`,
@@ -286,11 +286,11 @@ function showBusy(rect, fullPage) {
     });
   }
   const content = document.createElement("div");
-  content.className = "mt-overlay-loading";
+  content.className = "mas-overlay-loading";
   content.setAttribute("role", "status");
   content.setAttribute("aria-live", "polite");
   const spinner = document.createElement("span");
-  spinner.className = "mt-loading-spinner";
+  spinner.className = "mas-loading-spinner";
   const label = document.createElement("span");
   label.textContent = fullPage ? "正在识别整页文字…" : "正在识别…";
   content.append(spinner, label);
@@ -413,23 +413,23 @@ let toastTimer = null;
  * chance of the two overlapping.
  */
 function showToast(text, kind = "info") {
-  if (globalThis.OMT_panel) {
-    OMT_panel.status(text, kind);
+  if (globalThis.MAS_panel) {
+    MAS_panel.status(text, kind);
     return;
   }
-  let toast = document.getElementById("mt-toast");
+  let toast = document.getElementById("mas-toast");
   if (!toast) {
     toast = document.createElement("div");
-    toast.id = "mt-toast";
+    toast.id = "mas-toast";
     toast.setAttribute("role", "status");
     toast.setAttribute("aria-live", "polite");
     document.body.appendChild(toast);
   }
-  toast.className = `mt-toast mt-toast-${kind} mt-toast-visible`;
+  toast.className = `mas-toast mas-toast-${kind} mas-toast-visible`;
   toast.textContent = text;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toast.classList.remove("mt-toast-visible");
+    toast.classList.remove("mas-toast-visible");
     toastTimer = null;
   }, kind === "error" ? 8000 : 4500);
 }
@@ -437,7 +437,7 @@ function showToast(text, kind = "info") {
 function hideToast() {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = null;
-  document.getElementById("mt-toast")?.remove();
+  document.getElementById("mas-toast")?.remove();
 }
 
 /** Remove everything this extension painted, leaving the page untouched. */
@@ -497,8 +497,8 @@ function drawTranslatedPatch(entry, text) {
     25,
     Math.sqrt(coreWidth * coreHeight / (characters.length * (vertical ? 0.8 : 0.95)))
   ));
-  fontSize *= cssScale * OMT_display.fontScale;
-  canvas.style.opacity = String(OMT_display.opacity);
+  fontSize *= cssScale * MAS_display.fontScale;
+  canvas.style.opacity = String(MAS_display.opacity);
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.lineJoin = "round";
@@ -602,7 +602,7 @@ function renderResults(rect, result, pageMode) {
     const patch = item.patch;
     const displayRect = patch?.rect || bounds;
     const canvas = document.createElement("canvas");
-    canvas.className = "mt-overlay-text-canvas";
+    canvas.className = "mas-overlay-text-canvas";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", item.text?.trim() || "未识别到文字");
     // Document coordinates, not viewport ones. `displayRect` comes from a
@@ -661,13 +661,13 @@ function dismissResults() {
 // Mirrored from storage so every paint sees the current values without a storage
 // round-trip; the settings page writes them and the change listener below keeps
 // this in step.
-const OMT_display = { fontScale: 1, opacity: 1 };
+const MAS_display = { fontScale: 1, opacity: 1 };
 
 async function loadDisplayPreferences() {
   try {
     const cfg = await chrome.storage.local.get(["fontScale", "overlayOpacity"]);
-    if (Number.isFinite(cfg.fontScale)) OMT_display.fontScale = Math.min(2, Math.max(0.4, cfg.fontScale));
-    if (Number.isFinite(cfg.overlayOpacity)) OMT_display.opacity = Math.min(1, Math.max(0.2, cfg.overlayOpacity));
+    if (Number.isFinite(cfg.fontScale)) MAS_display.fontScale = Math.min(2, Math.max(0.4, cfg.fontScale));
+    if (Number.isFinite(cfg.overlayOpacity)) MAS_display.opacity = Math.min(1, Math.max(0.2, cfg.overlayOpacity));
   } catch {
     /* extension APIs unreachable in this frame; defaults are fine */
   }
@@ -679,21 +679,21 @@ async function loadDisplayPreferences() {
 // simply call these — but an implicit cross-file dependency is invisible to
 // anyone reading either file, and the static checker rightly flags it. Naming
 // the shared surface makes the dependency explicit and checkable.
-globalThis.OMT_render = { drawTranslatedPatch, resolveTextDirection };
+globalThis.MAS_render = { drawTranslatedPatch, resolveTextDirection };
 
 // --- auto translate wiring --------------------------------------------------
 
 // Anchored overlays only need re-placing when layout moves, which for window
 // scrolling it does not — but an inner scroller, a resize or a late-loading
 // font does. Passive and rAF-coalesced, so the cost stays near zero.
-window.addEventListener("scroll", () => OMT_overlay.reposition(), { passive: true, capture: true });
-window.addEventListener("resize", () => OMT_overlay.reposition(), { passive: true });
+window.addEventListener("scroll", () => MAS_overlay.reposition(), { passive: true, capture: true });
+window.addEventListener("resize", () => MAS_overlay.reposition(), { passive: true });
 
 // Guarded: the script can land in frames where extension APIs are not reachable
 // (sandboxed iframes), and a throw here would break manual translation too.
 chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.autoTranslate) OMT_auto.sync();
+  if (changes.autoTranslate) MAS_auto.sync();
   if (changes.fontScale || changes.overlayOpacity) {
     loadDisplayPreferences().then(() => {
       // Already-painted regions keep their old size until repainted; that is
@@ -716,11 +716,11 @@ loadDisplayPreferences();
 // The panel is the top frame's job. Auto translate still runs in every frame —
 // it reads picture bytes, so subframes are useful — but a second floating panel
 // inside every ad iframe is not.
-if (OMT_isTopFrame) {
-  globalThis.OMT_panel
+if (MAS_isTopFrame) {
+  globalThis.MAS_panel
     ?.mount?.()
     .catch(() => {})
-    .then(() => OMT_auto.sync());
+    .then(() => MAS_auto.sync());
 } else {
-  OMT_auto.sync();
+  MAS_auto.sync();
 }

@@ -34,7 +34,7 @@
 | **Railway** | **No** card for Free plan | **No** — "30-day free trial with $5 credits, then $1 per month" | Yes | 1 vCPU / **0.5 GB RAM** / 0.5 GB volume after trial | **No** | Yes | ❌ credits + tiny |
 | **Zeabur** | n/a | Free plan $0 but **no hosted compute** — only lets you manage "1 server you purchased and own elsewhere" | n/a | none included | **No** (bring your own server) | n/a | ❌ no compute |
 | **Back4App Containers** | **NO** — "(no credit card required)" | Yes, $0/container/mo | **NOT VERIFIED** | **0.25 CPU / 256 MB RAM** / 100 GB transfer, USA only | **No** | Yes | ❌ too small |
-| **Northflank** Sandbox | **NOT VERIFIED** | Sandbox tier is permanent | **"Always-on-compute – no sleeping :)"** | **NOT VERIFIED** (2 free services, 1 free DB, 2 free cron) | Unknown | Yes | ⚠️ worth probing |
+| **Northflank** Sandbox | **YES** — "all users must add a payment method to start creating resources on Northflank, **regardless of plan selection**" | Sandbox tier is permanent | **"Always-on-compute – no sleeping :)"** | **0.2 shared vCPU / 512 MB RAM / 1 GB disk** × 2 services (+1 DB, 2 cron) | **No** — 512 MB RAM | Yes | ❌ card + too small |
 | **Sevalla** | **NOT VERIFIED** ("Is a credit card required?" FAQ exists but not readable) | App hosting from **$5/mo**; only static sites are free | n/a | static: 1 GB/site, 100 GB bandwidth | **No** — apps are paid | n/a | ❌ |
 | **Glitch** | — | **SHUT DOWN** — hosting ended July 2025 | — | — | — | — | ❌ dead |
 | **Replit** free (Starter) | No | **No** — "This published link will automatically go down after 30 days" | Yes | n/a | **No** | Only 30 days | ❌ |
@@ -196,11 +196,14 @@ From <https://modal.com/docs/guide/billing>: "Note that **you must have a paymen
 
 1. **If a card is truly impossible** → **self-host on your PC + Tailscale Funnel** (free forever, no card, stable `https://<machine>.<tailnet>.ts.net`, real 2 vCPU/2–4 GB because it's your own hardware). Caveats: your PC must stay awake and `tailscaled` must keep running; Funnel is in beta; keep the service bound to localhost and let Funnel handle TLS. Cloudflare Tunnel (named) is the more production-grade alternative if you're willing to buy a domain; Cloudflare Quick Tunnels are not viable (unstable hostname, no SSE, 429 at 200 in-flight requests).
 2. **If you can supply a real credit card** (must not be virtual/prepaid for Oracle) → **Oracle Cloud Always Free Arm A1**, 2 OCPU / 12 GB / 200 GB, permanent, always-on, Docker + PyTorch easily. **Mitigate the idle-reclamation rule** (CPU <20%, network <20%, memory <20% over 7 days on A1 shapes) by keeping baseline CPU/memory above those thresholds — this is the single most likely way to lose the instance.
-3. **Worth one manual check:** **Northflank Sandbox** — it's the only found platform that advertises "Always-on-compute – no sleeping :)" on a free tier with 2 free services. Verify its free resource limits and card policy directly at <https://app.northflank.com/signup> before dismissing it.
-4. **Everything else fails** for this specific workload: too little RAM (Render 512 MB, Koyeb 512 MB, Back4App 256 MB, Railway 0.5 GB, GCP e2-micro 1 GB), expired (AWS 6 months, Azure 30/365 days, Fly 7 days, Railway 30 days, Replit 30 days), paid-only (HF Docker Spaces via PRO, Cloudflare Containers via $5/mo), impossible (Workers 128 MB/10 ms, Deno/Val Town JS-only), forbidden (Codespaces ToS), or dead (Glitch, Deta Space).
+3. **Northflank Sandbox — checked 2026-10-04, disqualified.** This was the last open possibility (it advertises "Always-on-compute – no sleeping :)" on a free tier). Two independent blockers, both now confirmed:
+   * **Card is mandatory.** Northflank's own billing docs (<https://northflank.com/docs/v1/application/billing/pricing-on-northflank>): "Please note: **all users must add a payment method to start creating resources on Northflank, regardless of plan selection.** This is to verify user identity, and prevent malicious usage of the platform."
+   * **Too small for PyTorch.** The Developer Sandbox plan gives 2 services at **0.2 shared CPU / 512 MB RAM / 1 GB storage** (limits are not stated on the pricing page; they come from a documented end-to-end walkthrough of the signup and deploy flow at <https://zenn.dev/radian462/articles/22ab327b58dda9>, which also states a card must be added before the first deploy).
+4. **Everything else fails** for this specific workload: too little RAM (Render 512 MB, Koyeb 512 MB, Back4App 256 MB, Railway 0.5 GB, GCP e2-micro 1 GB, Northflank 512 MB), expired (AWS 6 months, Azure 30/365 days, Fly 7 days, Railway 30 days, Replit 30 days), paid-only (HF Docker Spaces via PRO, Cloudflare Containers via $5/mo), impossible (Workers 128 MB/10 ms, Deno/Val Town JS-only), forbidden (Codespaces ToS), or dead (Glitch, Deta Space).
+
+**With Northflank checked, every candidate has now been resolved. There is no unverified possibility left.**
 
 ## Things I could NOT verify from an official source
-* Northflank Sandbox free-tier resource limits and card policy.
 * Modal's exact free monthly credit amount.
 * Whether ngrok's free HTTP dev domain requires a card (only the TCP-address row mentions card verification).
 * Whether Back4App Containers' free tier sleeps, and after how long.

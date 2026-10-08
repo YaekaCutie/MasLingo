@@ -84,8 +84,8 @@ Chrome 扩展 ──HTTPS──> Caddy(自动 TLS) ──> FastAPI + MangaOCR �
 
 ```bash
 # 先用控制台向导建好 VCN + 公网子网（上面第 2 步），把子网 OCID 复制过来
-git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git
-cd OpenMangaTranslator
+git clone --depth 1 https://github.com/YaekaCutie/MasLingo.git
+cd MasLingo
 bash deploy/provision-oci.sh --subnet-id ocid1.subnet.oc1.<region>.<...>
 ```
 
@@ -139,8 +139,8 @@ sudo iptables -L INPUT -n --line-numbers
 SSH 登录实例（`ssh ubuntu@<公网IP>`），然后：
 
 ```bash
-git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git
-cd OpenMangaTranslator
+git clone --depth 1 https://github.com/YaekaCutie/MasLingo.git
+cd MasLingo
 bash deploy/bootstrap-vm.sh
 ```
 
@@ -195,14 +195,14 @@ python deploy/configure_hosted_backend.py https://<你的域名> --pack extensio
 ## 7. 日常运维
 
 ```bash
-cd ~/OpenMangaTranslator/deploy
+cd ~/MasLingo/deploy
 sudo docker compose logs -f api        # OCR 日志
 sudo docker compose logs -f caddy      # TLS / 访问日志
 sudo docker compose restart api
 sudo docker compose down                # 停
 
 # 更新代码
-cd ~/OpenMangaTranslator && git pull
+cd ~/MasLingo && git pull
 cd deploy && sudo docker compose up -d --build
 ```
 
@@ -210,11 +210,11 @@ cd deploy && sudo docker compose up -d --build
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `OMT_TORCH_THREADS` | 1 | 每个 OCR 任务用几个线程；2 OCPU 就填 1–2 |
-| `OMT_OCR_CONCURRENCY` | 2 | 同时处理几个任务；调大 = 更多人并行但每人更慢 |
-| `OMT_RATE_LIMIT_REQUESTS` | 40 | 每 IP 每窗口请求数上限，0 = 关闭 |
-| `OMT_ENABLE_FREE_TRANSLATE` | 1 | 置 0 可禁用 Google 翻译（见下） |
-| `OMT_PRELOAD_MODEL` | 1 | 启动即加载模型并常驻内存，**建议保持开启** |
+| `MAS_TORCH_THREADS` | 1 | 每个 OCR 任务用几个线程；2 OCPU 就填 1–2 |
+| `MAS_OCR_CONCURRENCY` | 2 | 同时处理几个任务；调大 = 更多人并行但每人更慢 |
+| `MAS_RATE_LIMIT_REQUESTS` | 40 | 每 IP 每窗口请求数上限，0 = 关闭 |
+| `MAS_ENABLE_FREE_TRANSLATE` | 1 | 置 0 可禁用 Google 翻译（见下） |
+| `MAS_PRELOAD_MODEL` | 1 | 启动即加载模型并常驻内存，**建议保持开启** |
 
 ---
 
@@ -233,7 +233,7 @@ Oracle 的规则（官方原文）：**7 天内** 95 分位 CPU **低于 20%** �
 
 建议：
 
-- [ ] 保持 `OMT_PRELOAD_MODEL=1`，**不要**做"没人用就缩容到 0"的改造；
+- [ ] 保持 `MAS_PRELOAD_MODEL=1`，**不要**做"没人用就缩容到 0"的改造；
 - [ ] 上线初期自己多用几次，或者跑个低频任务（例如每 30 分钟用满 1–2 分钟 CPU）把分位抬起来；
 - [ ] 想彻底免除这个心智负担，就把账号**升级为 Pay as You Go**——官方明确说明 Always Free 资源升级后依然免费，只有超出部分计费，而且不受空闲回收影响、ARM 容量优先级更高。
 
@@ -267,7 +267,7 @@ Oracle 的规则（官方原文）：**7 天内** 95 分位 CPU **低于 20%** �
 
 ### 8.5 Google 翻译会拖累你的服务器 IP
 
-`free-translate` 模式走的是 Google 的免费接口，**按服务器 IP 计**。用户一多，这台机器的 IP 会先被限流甚至封掉。真要上量就设 `OMT_ENABLE_FREE_TRANSLATE=0`，让用户用自己的 OpenAI-compatible Key（扩展已经把 Key 设计成随请求走、服务端不存储）。
+`free-translate` 模式走的是 Google 的免费接口，**按服务器 IP 计**。用户一多，这台机器的 IP 会先被限流甚至封掉。真要上量就设 `MAS_ENABLE_FREE_TRANSLATE=0`，让用户用自己的 OpenAI-compatible Key（扩展已经把 Key 设计成随请求走、服务端不存储）。
 
 ---
 
@@ -278,7 +278,7 @@ Oracle 的规则（官方原文）：**7 天内** 95 分位 CPU **低于 20%** �
 | 证书一直签不下来 | VCN 安全列表没放行 80/443 | 回第 3 步 |
 | `curl` 从外面连不上，服务器内正常 | 实例 iptables 没放行 | 回第 3 步第 2 层 |
 | `502` | api 容器没起来或还在加载模型 | `docker compose logs api` |
-| 第一次识别特别慢 | 模型在下载/首次加载 | 确认 `OMT_PRELOAD_MODEL=1`，看日志有没有"已预加载" |
+| 第一次识别特别慢 | 模型在下载/首次加载 | 确认 `MAS_PRELOAD_MODEL=1`，看日志有没有"已预加载" |
 | 整页识别要几十秒 | 2 OCPU ARM 的正常水平 | 见下 |
 | 构建时 pip 报找不到包 | 网络/DNS 抖动 | 重跑 `docker compose build` |
 | 磁盘满 | 旧镜像堆积 | `docker system prune -a` |
@@ -302,8 +302,8 @@ Oracle 的规则（官方原文）：**7 天内** 95 分位 CPU **低于 20%** �
 
 ```bash
 sudo apt-get update && sudo apt-get install -y python3-venv python3-pip git
-cd ~ && git clone --depth 1 https://github.com/YaekaCutie/OpenMangaTranslator.git
-cd OpenMangaTranslator
+cd ~ && git clone --depth 1 https://github.com/YaekaCutie/MasLingo.git
+cd MasLingo
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 
@@ -311,10 +311,10 @@ python3 -m venv .venv
 HF_HOME=$PWD/.hf .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('kha-white/manga-ocr-base')"
 ```
 
-把 `deploy/omt-backend.service` 拷到 `/etc/systemd/system/`，按里面注释改路径和用户，然后：
+把 `deploy/mas-backend.service` 拷到 `/etc/systemd/system/`，按里面注释改路径和用户，然后：
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now omt-backend
+sudo systemctl daemon-reload && sudo systemctl enable --now mas-backend
 ```
 
 TLS 用系统 Caddy（`sudo apt install caddy`），Caddyfile 把 `reverse_proxy api:8001` 改成 `reverse_proxy 127.0.0.1:8001`。

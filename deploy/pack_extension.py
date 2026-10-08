@@ -4,7 +4,7 @@ Chrome's own "Pack extension" dialog needs a browser and a GUI; this does the
 same job on a server or in CI so a release can be reproduced from the tag.
 
 Usage:
-    python deploy/pack_extension.py extension extension.pem OpenMangaTranslator.crx
+    python deploy/pack_extension.py extension extension.pem MasLingo.crx
 
 Writes the .crx and a sibling .zip (the ZIP is what the Chrome Web Store
 wants; the CRX is for self-distribution).

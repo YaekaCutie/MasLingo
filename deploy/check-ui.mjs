@@ -184,7 +184,7 @@ try {
   }))).catch(() => null);
 
   console.log(`      标题: ${popupState?.title}   自动翻译状态: ${popupState?.state} (${popupState?.stateKind})`);
-  check("弹窗标题正确", popupState?.title === "OpenMangaTranslator", popupState?.title);
+  check("弹窗标题正确", popupState?.title === "MasLingo", popupState?.title);
   check("自动翻译开关存在且默认关闭", popupState?.auto === false);
   check("自动翻译有状态行", Boolean(popupState?.state), popupState?.state);
   check("手动框选入口保留", popupState?.hasManual === true);

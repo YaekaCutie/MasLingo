@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Shared OCR backend for OpenMangaTranslator.
+# Shared OCR backend for MasLingo.
 #
 # Built on the target machine (works on both linux/amd64 and linux/arm64), so
 # pip resolves the native wheels: torch, numpy, Pillow and fugashi all publish
@@ -14,8 +14,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     HF_HOME=/models \
     OMP_NUM_THREADS=4 \
-    OMT_TORCH_THREADS=4 \
-    OMT_OCR_CONCURRENCY=2
+    MAS_TORCH_THREADS=4 \
+    MAS_OCR_CONCURRENCY=2
 
 WORKDIR /app
 

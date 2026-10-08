@@ -13,7 +13,7 @@
 //
 // Queueing, retries and state live here. Painting is shared with manual mode.
 
-const OMT_auto = (() => {
+const MAS_auto = (() => {
   const STATE = { DETECTED: "DETECTED", PROCESSING: "PROCESSING", TRANSLATED: "TRANSLATED", FAILED: "FAILED" };
   const MAX_ATTEMPTS = 2;
   /** Anything smaller is an avatar, a bullet or a decoration, not a page. */
@@ -118,9 +118,9 @@ const OMT_auto = (() => {
    */
   function isOurs(element) {
     return Boolean(
-      element.closest?.("#omt-layer") ||
-      element.classList?.contains("omt-result") ||
-      element.classList?.contains("mt-overlay-text-canvas"),
+      element.closest?.("#mas-layer") ||
+      element.classList?.contains("mas-result") ||
+      element.classList?.contains("mas-overlay-text-canvas"),
     );
   }
 
@@ -285,7 +285,7 @@ const OMT_auto = (() => {
    */
   function say(text, kind = "info") {
     try {
-      globalThis.OMT_panel?.status(text, kind);
+      globalThis.MAS_panel?.status(text, kind);
     } catch {
       /* panel not mounted in this frame */
     }
@@ -328,7 +328,7 @@ const OMT_auto = (() => {
         const id = regionIdFor(key, area);
         if (tracked.get(id)?.state === STATE.TRANSLATED) continue;
         track(id, STATE.DETECTED);
-        fresh.push({ id, area, item, box: OMT_detectionBox.show(element, area) });
+        fresh.push({ id, area, item, box: MAS_detectionBox.show(element, area) });
       }
       boxes = fresh.map((region) => region.box);
 
@@ -553,7 +553,7 @@ const OMT_auto = (() => {
     // Only the geometry is needed: the cover is flat white, so no pixels of the
     // original are carried into the overlay any more.
     const canvas = document.createElement("canvas");
-    canvas.className = "omt-result";
+    canvas.className = "mas-result";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", text);
     canvas.width = Math.max(1, Math.round(crop.width * displayScale * ratio));
@@ -573,14 +573,14 @@ const OMT_auto = (() => {
       width: crop.width * displayScale,
       height: crop.height * displayScale,
     };
-    // Painting is shared with manual mode; see the OMT_render export in
+    // Painting is shared with manual mode; see the MAS_render export in
     // content.js.
-    OMT_render.drawTranslatedPatch(
+    MAS_render.drawTranslatedPatch(
       { canvas, context, patch: { core, rect }, direction: region.item.direction },
       text,
     );
 
-    OMT_overlay.anchor(canvas, element, {
+    MAS_overlay.anchor(canvas, element, {
       left: crop.left / bitmap.width,
       top: crop.top / bitmap.height,
       width: crop.width / bitmap.width,
@@ -669,8 +669,8 @@ const OMT_auto = (() => {
     imageFailures.other = 0;
     attachObservers();
     scan(document);
-    OMT_notice.reset();
-    OMT_notice.show("已检测到漫画，正在自动翻译", { kind: "busy" });
+    MAS_notice.reset();
+    MAS_notice.show("已检测到漫画，正在自动翻译", { kind: "busy" });
   }
 
   function stop() {
@@ -713,7 +713,7 @@ const OMT_auto = (() => {
       seen: { ...seen },
       queued: queue.length,
       running,
-      anchored: OMT_overlay.count(),
+      anchored: MAS_overlay.count(),
       imageFailures: { ...imageFailures },
       lastError,
       translationMode,

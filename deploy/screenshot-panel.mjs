@@ -43,7 +43,7 @@ const server = http.createServer((request, response) => {
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
 
-const workDir = mkdtempSync(join(tmpdir(), "omt-shot-panel-"));
+const workDir = mkdtempSync(join(tmpdir(), "mas-shot-panel-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -85,7 +85,7 @@ try {
     await page.goto(pageUrl, { waitUntil: "load" });
     await new Promise((done) => setTimeout(done, 2500));
     // Show something in the status bar so the bottom line is not just "就绪".
-    await page.evaluate(() => globalThis.OMT_panel?.status("正在 OCR……"));
+    await page.evaluate(() => globalThis.MAS_panel?.status("正在 OCR……"));
     await new Promise((done) => setTimeout(done, 400));
     await page.screenshot({ path: join(outDir, `panel-on-manga-${scheme}.png`) });
     console.log(`  ${scheme}: panel-on-manga-${scheme}.png`);

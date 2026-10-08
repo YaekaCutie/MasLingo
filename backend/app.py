@@ -46,21 +46,21 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 # (including the model preload line the deployment guide tells operators to
 # look for) would never reach the container logs.
 logging.basicConfig(
-    level=os.getenv("OMT_LOG_LEVEL", "INFO"),
+    level=os.getenv("MAS_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-OCR_CONCURRENCY = max(1, int(os.getenv("OMT_OCR_CONCURRENCY", "2")))
-RATE_LIMIT_REQUESTS = int(os.getenv("OMT_RATE_LIMIT_REQUESTS", "0"))
-RATE_LIMIT_WINDOW = float(os.getenv("OMT_RATE_LIMIT_WINDOW", "60"))
+OCR_CONCURRENCY = max(1, int(os.getenv("MAS_OCR_CONCURRENCY", "2")))
+RATE_LIMIT_REQUESTS = int(os.getenv("MAS_RATE_LIMIT_REQUESTS", "0"))
+RATE_LIMIT_WINDOW = float(os.getenv("MAS_RATE_LIMIT_WINDOW", "60"))
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("OMT_ALLOWED_ORIGINS", "*").split(",")
+    for origin in os.getenv("MAS_ALLOWED_ORIGINS", "*").split(",")
     if origin.strip()
 ]
-ENABLE_FREE_TRANSLATE = os.getenv("OMT_ENABLE_FREE_TRANSLATE", "1") != "0"
-TORCH_THREADS = int(os.getenv("OMT_TORCH_THREADS", "0"))
-PRELOAD_MODEL = os.getenv("OMT_PRELOAD_MODEL", "1") != "0"
+ENABLE_FREE_TRANSLATE = os.getenv("MAS_ENABLE_FREE_TRANSLATE", "1") != "0"
+TORCH_THREADS = int(os.getenv("MAS_TORCH_THREADS", "0"))
+PRELOAD_MODEL = os.getenv("MAS_PRELOAD_MODEL", "1") != "0"
 
 if TORCH_THREADS > 0:
     # Small VMs benefit from an explicit cap: torch otherwise spawns one

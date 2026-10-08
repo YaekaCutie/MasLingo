@@ -587,7 +587,7 @@
     }
   }
 
-  root.OMT_providers = {
+  root.MAS_providers = {
     list: PROVIDERS,
     byId,
     chatPrompt,

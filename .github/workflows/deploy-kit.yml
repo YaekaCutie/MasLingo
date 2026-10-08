@@ -82,24 +82,24 @@ jobs:
           set -euo pipefail
           # Catches compose syntax errors and unresolved variables, which would
           # otherwise only surface on the VM after bootstrap-vm.sh has run.
-          OMT_DOMAIN=ocr.example.com docker compose -f deploy/docker-compose.yml config > compose-rendered.yml
+          MAS_DOMAIN=ocr.example.com docker compose -f deploy/docker-compose.yml config > compose-rendered.yml
           grep -q "ocr.example.com" compose-rendered.yml
           grep -q "8001" compose-rendered.yml
           grep -q "caddy" compose-rendered.yml
           echo "compose file renders OK"
 
       - name: Build the backend image
-        run: docker build -f deploy/Dockerfile -t omt-backend:test .
+        run: docker build -f deploy/Dockerfile -t mas-backend:test .
 
       - name: Start the container with production-like settings
         run: |
           docker run -d --name omt -p 127.0.0.1:8001:8001 \
-            -e OMT_TORCH_THREADS=2 \
-            -e OMT_OCR_CONCURRENCY=1 \
-            -e OMT_RATE_LIMIT_REQUESTS=4 \
-            -e OMT_RATE_LIMIT_WINDOW=60 \
-            -e OMT_PRELOAD_MODEL=1 \
-            omt-backend:test
+            -e MAS_TORCH_THREADS=2 \
+            -e MAS_OCR_CONCURRENCY=1 \
+            -e MAS_RATE_LIMIT_REQUESTS=4 \
+            -e MAS_RATE_LIMIT_WINDOW=60 \
+            -e MAS_PRELOAD_MODEL=1 \
+            mas-backend:test
 
       - name: Wait for /health
         run: |
@@ -252,8 +252,8 @@ jobs:
           # because CI cannot answer a Let's Encrypt HTTP-01 challenge. Every
           # other part — TLS termination, resolving the `api` service name,
           # proxying, the published ports — runs exactly as on the VM.
-          mkdir -p /tmp/omt-tls
-          cat > /tmp/omt-tls/Caddyfile <<'CADDY'
+          mkdir -p /tmp/mas-tls
+          cat > /tmp/mas-tls/Caddyfile <<'CADDY'
           {
           	local_certs
           	skip_install_trust
@@ -264,18 +264,18 @@ jobs:
           	reverse_proxy api:8001
           }
           CADDY
-          cat > /tmp/omt-tls/compose.override.yml <<'YAML'
+          cat > /tmp/mas-tls/compose.override.yml <<'YAML'
           services:
             caddy:
               volumes:
-                - /tmp/omt-tls/Caddyfile:/etc/caddy/Caddyfile:ro
+                - /tmp/mas-tls/Caddyfile:/etc/caddy/Caddyfile:ro
                 - caddy_data:/data
                 - caddy_config:/config
           YAML
-          OMT_DOMAIN=localhost docker compose \
+          MAS_DOMAIN=localhost docker compose \
             -p omt \
             -f deploy/docker-compose.yml \
-            -f /tmp/omt-tls/compose.override.yml \
+            -f /tmp/mas-tls/compose.override.yml \
             up -d --build
           docker compose -p omt ps
 
@@ -329,15 +329,15 @@ jobs:
       - name: Compose logs on failure
         if: failure()
         run: |
-          OMT_DOMAIN=localhost docker compose -p omt \
-            -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
+          MAS_DOMAIN=localhost docker compose -p omt \
+            -f deploy/docker-compose.yml -f /tmp/mas-tls/compose.override.yml \
             logs --tail 120 || true
 
       - name: Tear down
         if: always()
         run: |
-          OMT_DOMAIN=localhost docker compose -p omt \
-            -f deploy/docker-compose.yml -f /tmp/omt-tls/compose.override.yml \
+          MAS_DOMAIN=localhost docker compose -p omt \
+            -f deploy/docker-compose.yml -f /tmp/mas-tls/compose.override.yml \
             down -v || true
 
   arm64-image:
@@ -360,7 +360,7 @@ jobs:
             --platform linux/arm64 \
             --load \
             -f deploy/Dockerfile \
-            -t omt-backend:arm64 \
+            -t mas-backend:arm64 \
             .
           echo "arm64 image built"
 
@@ -371,11 +371,11 @@ jobs:
       - name: Run the arm64 image under emulation and serve OCR
         run: |
           set -euo pipefail
-          docker run -d --name omt-arm64 --platform linux/arm64 \
+          docker run -d --name mas-arm64 --platform linux/arm64 \
             -p 127.0.0.1:8001:8001 \
-            -e OMT_PRELOAD_MODEL=1 \
-            -e OMT_TORCH_THREADS=2 \
-            omt-backend:arm64
+            -e MAS_PRELOAD_MODEL=1 \
+            -e MAS_TORCH_THREADS=2 \
+            mas-backend:arm64
 
           # Torch import and model load are emulated, so this is slow: wait up
           # to ~25 minutes. uvicorn does not accept connections until the
@@ -392,14 +392,14 @@ jobs:
           done
           if [ "$healthy" != "yes" ]; then
             echo "::error::arm64 image never became healthy"
-            docker logs omt-arm64 | tail -n 60
+            docker logs mas-arm64 | tail -n 60
             exit 1
           fi
 
       - name: OCR works on aarch64 too
         run: |
           set -euo pipefail
-          docker exec -i omt-arm64 python - <<'PY'
+          docker exec -i mas-arm64 python - <<'PY'
           from PIL import Image, ImageDraw
 
           # Small on purpose: emulated inference is slow, and this only needs to
@@ -411,7 +411,7 @@ jobs:
                   draw.rectangle([col, row, col + 16, row + 16], fill="black")
           img.save("/tmp/probe.png")
           PY
-          docker cp omt-arm64:/tmp/probe.png /tmp/probe-arm.png
+          docker cp mas-arm64:/tmp/probe.png /tmp/probe-arm.png
           curl -fsS --max-time 900 -X POST \
             -F "image=@/tmp/probe-arm.png;type=image/png" \
             http://127.0.0.1:8001/api/recognize-image -o arm-recognize.json
@@ -419,8 +419,8 @@ jobs:
 
       - name: Emulated container logs on failure
         if: failure()
-        run: docker logs omt-arm64 | tail -n 120 || true
+        run: docker logs mas-arm64 | tail -n 120 || true
 
       - name: Tear down
         if: always()
-        run: docker rm -f omt-arm64 || true
+        run: docker rm -f mas-arm64 || true
