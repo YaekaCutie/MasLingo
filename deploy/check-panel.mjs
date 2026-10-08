@@ -175,7 +175,11 @@ try {
   check("状态栏是悬浮窗的一部分", layout.statusInsidePanel);
   check("状态栏只有一行", layout.statusWhiteSpace === "nowrap" && layout.statusLines <= 1,
     `${layout.statusLines} 行 / ${layout.statusWhiteSpace}：「${layout.statusText}」`);
-  check("页面上只剩悬浮窗一个浮层", layout.floatingSurfaces.length === 1,
+  // Auto translate is off at this point, so nothing else should be on the page.
+  // Once it starts, one extra element appears on purpose: the one-shot
+  // "detected manga" notice in the top-right corner, which an earlier
+  // requirement asked for by name.
+  check("未开启自动识别时页面上只有悬浮窗", layout.floatingSurfaces.length === 1,
     JSON.stringify(layout.floatingSurfaces));
 
   console.log("\n不阻塞页面操作");
