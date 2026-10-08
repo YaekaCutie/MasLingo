@@ -118,9 +118,9 @@ const MAS_auto = (() => {
    */
   function isOurs(element) {
     return Boolean(
-      element.closest?.("#mas-layer") ||
-      element.classList?.contains("mas-result") ||
-      element.classList?.contains("mas-overlay-text-canvas"),
+      element.closest?.("#maslingo-layer") ||
+      element.classList?.contains("maslingo-result") ||
+      element.classList?.contains("maslingo-overlay-text-canvas"),
     );
   }
 
@@ -553,7 +553,7 @@ const MAS_auto = (() => {
     // Only the geometry is needed: the cover is flat white, so no pixels of the
     // original are carried into the overlay any more.
     const canvas = document.createElement("canvas");
-    canvas.className = "mas-result";
+    canvas.className = "maslingo-result";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", text);
     canvas.width = Math.max(1, Math.round(crop.width * displayScale * ratio));

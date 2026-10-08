@@ -78,6 +78,7 @@ const CONTENT_SCRIPTS = [
   "config.js",
   "translation/providers.js",
   "content/glass.js",
+  "content/status.js",
   "content/overlay.js",
   "content/auto.js",
   "content/panel.js",

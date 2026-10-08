@@ -35,7 +35,7 @@ const server = http.createServer((request, response) => {
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
 
-const workDir = mkdtempSync(join(tmpdir(), "mas-shot-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-shot-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -79,7 +79,7 @@ try {
     await page.evaluate(() => globalThis.MAS_panel?.status("正在 OCR……"));
 
     const box = await page.evaluate(() => {
-      const panel = document.getElementById("mas-panel");
+      const panel = document.getElementById("maslingo-panel");
       if (!panel) return null;
       const rect = panel.getBoundingClientRect();
       return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
@@ -92,7 +92,7 @@ try {
 
     // Element screenshot: clipped to the panel exactly, so no crop arithmetic
     // can drift and silently slice the left edge off.
-    const handle = await page.$("#mas-panel");
+    const handle = await page.$("#maslingo-panel");
     await handle.screenshot({ path: join(outDir, `panel-${label}-${scheme}.png`) });
 
     // And one with the page showing through, for judging the glass itself.
@@ -109,12 +109,12 @@ try {
 
     // The collapsed end state. Captured after the transition settles, so this is
     // the shape the animation arrives at rather than a frame of it.
-    await page.evaluate(() => document.getElementById("mas-collapse").click());
+    await page.evaluate(() => document.getElementById("maslingo-collapse").click());
     await new Promise((r) => setTimeout(r, 900));
-    const collapsed = await page.$("#mas-panel");
+    const collapsed = await page.$("#maslingo-panel");
     await collapsed.screenshot({ path: join(outDir, `panel-${label}-${scheme}-collapsed.png`) });
     const collapsedBox = await page.evaluate(() => {
-      const rect = document.getElementById("mas-panel").getBoundingClientRect();
+      const rect = document.getElementById("maslingo-panel").getBoundingClientRect();
       return { width: Math.round(rect.width), height: Math.round(rect.height) };
     });
     console.log(`      收起态: ${collapsedBox.width}x${collapsedBox.height}`);

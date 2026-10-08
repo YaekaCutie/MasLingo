@@ -33,7 +33,7 @@ console.log(`测试图: ${imagePath.split(/[\\/]/).pop()} (${Math.round(image.le
 // the extension action. Pass --real-manifest to skip that crutch and see what
 // the shipped permission set actually does.
 const realManifest = process.argv.includes("--real-manifest");
-const workDir = mkdtempSync(join(tmpdir(), "mas-auto-flow-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-auto-flow-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 if (!realManifest) {
@@ -165,10 +165,10 @@ try {
   const deadline = Date.now() + 90000;
   while (Date.now() < deadline) {
     const state = await page.evaluate(() => ({
-      busy: Boolean(document.querySelector(".mas-overlay")),
-      toast: document.getElementById("mas-toast")?.textContent || null,
-      canvases: document.querySelectorAll("canvas.mas-overlay-text-canvas").length,
-      texts: [...document.querySelectorAll("canvas.mas-overlay-text-canvas")]
+      busy: Boolean(document.querySelector(".maslingo-overlay")),
+      toast: document.getElementById("maslingo-toast")?.textContent || null,
+      canvases: document.querySelectorAll("canvas.maslingo-overlay-text-canvas").length,
+      texts: [...document.querySelectorAll("canvas.maslingo-overlay-text-canvas")]
         .map((node) => node.getAttribute("aria-label")),
     })).catch(() => null);
     if (state) {
@@ -198,7 +198,7 @@ try {
     console.log("\n滚动跟随");
     const alignment = () => page.evaluate(() => {
       const image = document.querySelector("img");
-      const canvas = document.querySelector("canvas.mas-overlay-text-canvas, #mas-layer canvas.mas-result");
+      const canvas = document.querySelector("canvas.maslingo-overlay-text-canvas, #maslingo-layer canvas.maslingo-result");
       if (!image || !canvas) return null;
       const imageRect = image.getBoundingClientRect();
       const canvasRect = canvas.getBoundingClientRect();

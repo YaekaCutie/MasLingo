@@ -37,8 +37,8 @@ globalThis.MAS_panel = (() => {
   ];
 
   let root = null;
-  let statusNode = null;
-  let statusTimer = null;
+  // The status line moved to its own glass surface (content/status.js), so the
+  // panel no longer owns a node or a dismiss timer for it.
   let dragging = null;
   let typing = null;
   let resetTimer = null;
@@ -65,69 +65,30 @@ globalThis.MAS_panel = (() => {
 
   function setDot(node, state, text) {
     node.dataset.state = state;
-    node.querySelector(".mas-dot-text").textContent = text;
+    node.querySelector(".maslingo-dot-text").textContent = text;
   }
 
-  // --- status bar -----------------------------------------------------------
+  // --- status ---------------------------------------------------------------
   //
-  // One line, inside the panel, showing only what is happening right now. A new
-  // message replaces the old one rather than stacking, because a scrolling log is
-  // exactly what this is meant not to be.
+  // The line lives on its own glass surface in the lower right corner, not inside
+  // the panel. The material work made that the better arrangement: a status that
+  // only exists while the panel is open is invisible exactly when it matters —
+  // while the panel is collapsed out of the way, or while the user is reading
+  // somewhere else on the page.
   //
-  // It used to be a separate floating strip pinned to the bottom-right corner.
-  // Two surfaces meant the eye had to choose between them, and the corner one
-  // covered the page for no reason — everything it said belongs to the panel.
-
-  let idleText = "";
-
-  /**
-   * Replay the arrival animation on the status line.
-   *
-   * A class is re-added rather than a new node being created, so the line keeps
-   * its measured width and nothing reflows around it. Removing and re-adding in
-   * the same frame would not restart a CSS animation — reading offsetWidth
-   * between the two forces a style flush, which is what makes it restart.
-   */
-  function pulseStatus() {
-    const bar = statusNode;
-    if (!bar) return;
-    bar.classList.remove("mas-statusbar-updating");
-    void bar.offsetWidth;
-    bar.classList.add("mas-statusbar-updating");
-  }
+  // The panel keeps one job here: mirroring the busy state onto the collapsed
+  // widget's dot, which is the only status the widget can show at 8px.
 
   function status(text, kind = "info") {
-    const bar = statusNode;
-    if (!bar) return;
-    const line = bar.querySelector(".mas-status-text") || bar;
+    try {
+      globalThis.MAS_status?.show?.(text, kind);
+    } catch {
+      /* the popup could not mount in this frame */
+    }
 
-    line.textContent = text;
-    bar.dataset.kind = kind;
-    bar.classList.toggle("mas-statusbar-active", kind !== "info" || Boolean(text));
-    bar.classList.toggle("mas-statusbar-idle", !text);
-    if (text) pulseStatus();
-
-    // The collapsed widget carries the same message, because a status the user
-    // cannot see while collapsed is not a status. Its dot mirrors the kind.
-    const widgetText = root?.querySelector("#mas-widget-text");
+    const widgetText = root?.querySelector("#maslingo-widget-text");
     if (widgetText) widgetText.textContent = text || "自动翻译";
     if (root) root.dataset.busy = kind === "error" ? "2" : (text ? "1" : "0");
-
-    if (statusTimer) clearTimeout(statusTimer);
-    if (!text) return;
-    // Errors stay put long enough to be read and acted on; progress does not
-    // need to linger.
-    const dwell = kind === "error" ? 9000 : 4000;
-    statusTimer = setTimeout(() => {
-      line.textContent = idleText;
-      bar.dataset.kind = "info";
-      bar.classList.remove("mas-statusbar-active", "mas-statusbar-updating");
-      bar.classList.add("mas-statusbar-idle");
-      void bar.offsetWidth;
-      const back = root?.querySelector("#mas-widget-text");
-      if (back) back.textContent = "自动翻译";
-      if (root) root.dataset.busy = "0";
-    }, dwell);
   }
 
   // --- typing ---------------------------------------------------------------
@@ -178,7 +139,7 @@ globalThis.MAS_panel = (() => {
    * reading manga.
    */
   async function checkBackend({ quiet = false } = {}) {
-    const dot = root.querySelector("#mas-dot-backend");
+    const dot = root.querySelector("#maslingo-dot-backend");
     setDot(dot, STATE.WORKING, "后端检测中");
     if (!quiet) status("正在检测后端……");
 
@@ -212,7 +173,7 @@ globalThis.MAS_panel = (() => {
    * @returns {Promise<{ok: boolean, translated?: string, reason?: string}>}
    */
   async function checkTranslation(text) {
-    const dot = root.querySelector("#mas-dot-translation");
+    const dot = root.querySelector("#maslingo-dot-translation");
     setDot(dot, STATE.WORKING, "翻译检测中");
 
     const cfg = await readStore([
@@ -244,7 +205,7 @@ globalThis.MAS_panel = (() => {
 
   /** The provider currently chosen in the panel's own select. */
   function currentProviderId() {
-    return root?.querySelector("#mas-provider")?.value || "";
+    return root?.querySelector("#maslingo-provider")?.value || "";
   }
 
   /** A short, human reason — never the raw body. */
@@ -261,8 +222,8 @@ globalThis.MAS_panel = (() => {
   // --- the connectivity button ---------------------------------------------
 
   async function runConnectivityCheck() {
-    const button = root.querySelector("#mas-connect");
-    const line = root.querySelector("#mas-line");
+    const button = root.querySelector("#maslingo-connect");
+    const line = root.querySelector("#maslingo-line");
     if (button.disabled) return;
     button.disabled = true;
     const original = button.textContent;
@@ -288,7 +249,7 @@ globalThis.MAS_panel = (() => {
         resetTimer = setTimeout(() => {
           resetTimer = null;
           currentLine = pickLine();
-          typeInto(root.querySelector("#mas-line"), `「${currentLine}」`, { speed: 24 });
+          typeInto(root.querySelector("#maslingo-line"), `「${currentLine}」`, { speed: 24 });
         }, 4000);
       } else {
         await typeInto(line, "翻译连接失败");
@@ -308,17 +269,17 @@ globalThis.MAS_panel = (() => {
     root.style.top = `${position.top}px`;
     root.style.right = "auto";
     root.style.bottom = "auto";
+    // Any in-flight drag offset is meaningless once an absolute position is
+    // committed; left/top now carries it.
+    root.style.transform = "";
   }
 
   /**
    * Keep the panel fully on screen, whatever the page or window does.
-   *
-   * No corner is reserved any more: the status line moved inside the panel, so
-   * there is no second surface for it to collide with.
    */
   function clamp(left, top) {
     const margin = 8;
-    const width = root.offsetWidth || 264;
+    const width = root.offsetWidth || 268;
     const height = root.offsetHeight || 220;
     return {
       left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - width - margin)),
@@ -336,11 +297,22 @@ globalThis.MAS_panel = (() => {
     if (event.target.closest("button, input, select, a, textarea")) return;
 
     const rect = root.getBoundingClientRect();
-    dragging = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    // originLeft/Top are where the pane actually sits right now — the basis the
+    // translate3d offset is measured from, and what the final left/top is
+    // committed against on release.
+    dragging = {
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+      x: 0,
+      y: 0,
+      originLeft: rect.left,
+      originTop: rect.top,
+    };
     // The settle animation would otherwise fight the drag; it is re-added on
     // release, which is the whole point of it.
-    root.classList.remove("mas-panel-settling");
-    root.classList.add("mas-panel-dragging");
+    root.classList.remove("maslingo-panel-settling");
+    root.classList.add("maslingo-panel-dragging");
+    globalThis.MAS_glass?.setState?.(root, "dragging");
     try {
       root.setPointerCapture?.(event.pointerId);
     } catch {
@@ -350,19 +322,32 @@ globalThis.MAS_panel = (() => {
     event.preventDefault();
   }
 
+  /**
+   * Move the pane with translate3d, never with left/top.
+   *
+   * §6 requires this, and it is not a style preference: writing `left`/`top` on
+   * every pointer event invalidates layout for the panel and everything that
+   * depends on it, so the drag competes with the page's own rendering. A
+   * transform is handled by the compositor and costs nothing on the main thread.
+   * The final position is committed to `left`/`top` exactly once, on release.
+   */
   function moveDrag(event) {
     if (!dragging) return;
     const next = clamp(event.clientX - dragging.dx, event.clientY - dragging.dy);
-    root.style.left = `${next.left}px`;
-    root.style.top = `${next.top}px`;
-    root.style.right = "auto";
-    root.style.bottom = "auto";
+    dragging.x = next.left - dragging.originLeft;
+    dragging.y = next.top - dragging.originTop;
+    root.style.transform = `translate3d(${dragging.x}px, ${dragging.y}px, 0)`;
   }
 
   function endDrag() {
     if (!dragging) return;
+    const { x, y, originLeft, originTop } = dragging;
     dragging = null;
-    root.classList.remove("mas-panel-dragging");
+    root.classList.remove("maslingo-panel-dragging");
+    // Commit the position and drop the transform in the same frame, so the pane
+    // does not visibly move as the two swap over.
+    root.style.transform = "";
+    applyPosition({ left: Math.round(originLeft + x), top: Math.round(originTop + y) });
     // Lifts back with a short overshoot instead of snapping straight.
     globalThis.MAS_glass?.settle?.(root);
     const rect = root.getBoundingClientRect();
@@ -370,7 +355,7 @@ globalThis.MAS_panel = (() => {
   }
 
   window.addEventListener("resize", () => {
-    if (!root || root.classList.contains("mas-panel-collapsed")) return;
+    if (!root || root.classList.contains("maslingo-panel-collapsed")) return;
     const rect = root.getBoundingClientRect();
     applyPosition(clamp(rect.left, rect.top));
   }, { passive: true });
@@ -378,7 +363,10 @@ globalThis.MAS_panel = (() => {
   // --- collapse -------------------------------------------------------------
 
   function setCollapsed(collapsed) {
-    root.classList.toggle("mas-panel-collapsed", collapsed);
+    // One call flips the class every material layer reads through
+    // --maslingo-morph, and picks the longer expand curve (§20). Keeping it in
+    // MAS_glass means the collapse timing and the lighting live together.
+    globalThis.MAS_glass?.setMorph?.(root, collapsed);
     writeStore({ [COLLAPSED_KEY]: collapsed });
   }
 
@@ -388,75 +376,77 @@ globalThis.MAS_panel = (() => {
 
   function build() {
     const node = document.createElement("div");
-    node.id = "mas-panel";
-    node.className = "mas-panel mas-glass";
+    node.id = "maslingo-panel";
+    // `maslingo-surface` supplies the host-reset defences and the typography;
+    // the four layers carry the material and the content sits above them.
+    node.className = "maslingo-panel maslingo-surface";
+    node.dataset.state = "idle";
     // Each band is wrapped in a grid row so collapsing can animate the height.
     // There is no `display:none` anywhere in the collapsed state: the panel
     // changes shape continuously instead of swapping between two layouts.
     node.innerHTML = `
-      <div class="mas-glow" aria-hidden="true"></div>
+      <div class="maslingo-glass__base" aria-hidden="true"></div>
+      <div class="maslingo-glass__depth" aria-hidden="true"></div>
+      <div class="maslingo-glass__edge" aria-hidden="true"></div>
+      <div class="maslingo-glass__specular" aria-hidden="true"><i></i></div>
 
-      <div class="mas-sec mas-sec-bar"><div class="mas-sec-in">
-        <div class="mas-panel-bar" id="mas-panel-bar">
-          <span class="mas-brand">MasLingo</span>
-          <button class="mas-panel-btn" id="mas-collapse" title="收起为挂件" aria-label="收起">–</button>
-        </div>
-      </div></div>
-
-      <div class="mas-sec mas-sec-body"><div class="mas-sec-in">
-        <div class="mas-panel-body">
-          <div class="mas-dots">
-            <span class="mas-dot" id="mas-dot-backend" data-state="unknown">
-              <i></i><span class="mas-dot-text">后端未检测</span>
-            </span>
-            <span class="mas-dot" id="mas-dot-translation" data-state="unknown">
-              <i></i><span class="mas-dot-text">翻译未检测</span>
-            </span>
+      <div class="maslingo-glass__content">
+        <div class="maslingo-sec maslingo-sec-bar"><div class="maslingo-sec-in">
+          <div class="maslingo-panel-bar" id="maslingo-panel-bar">
+            <span class="maslingo-brand">MasLingo</span>
+            <button class="maslingo-panel-btn" id="maslingo-collapse" title="收起为挂件" aria-label="收起">–</button>
           </div>
+        </div></div>
 
-          <div class="mas-row">
-            <span class="mas-label" id="mas-auto-label">自动识别</span>
-            <label class="mas-switch" aria-labelledby="mas-auto-label">
-              <input id="mas-auto" type="checkbox" aria-labelledby="mas-auto-label">
-              <span class="mas-switch-track"><span class="mas-switch-thumb"></span></span>
-            </label>
+        <div class="maslingo-sec maslingo-sec-body"><div class="maslingo-sec-in">
+          <div class="maslingo-panel-body">
+            <div class="maslingo-dots">
+              <span class="maslingo-dot" id="maslingo-dot-backend" data-state="unknown">
+                <i></i><span class="maslingo-dot-text">后端未检测</span>
+              </span>
+              <span class="maslingo-dot" id="maslingo-dot-translation" data-state="unknown">
+                <i></i><span class="maslingo-dot-text">翻译未检测</span>
+              </span>
+            </div>
+
+            <div class="maslingo-row">
+              <span class="maslingo-label" id="maslingo-auto-label">自动识别</span>
+              <label class="maslingo-switch" aria-labelledby="maslingo-auto-label">
+                <input id="maslingo-auto" type="checkbox" aria-labelledby="maslingo-auto-label">
+                <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
+              </label>
+            </div>
+            <button class="maslingo-btn" id="maslingo-select">框选翻译</button>
+
+            <div class="maslingo-rule"></div>
+
+            <div class="maslingo-label" id="maslingo-provider-label">翻译类型</div>
+            <div class="maslingo-row maslingo-row-tight">
+              <select id="maslingo-provider" class="maslingo-select" aria-labelledby="maslingo-provider-label"></select>
+              <button class="maslingo-btn maslingo-btn-small" id="maslingo-connect">连通检测</button>
+            </div>
+            <div class="maslingo-line" id="maslingo-line"></div>
+
+            <div class="maslingo-rule"></div>
+            <div class="maslingo-foot">
+              <button class="maslingo-link" id="maslingo-settings">⚙ 设置</button>
+              <span class="maslingo-version" id="maslingo-version"></span>
+            </div>
           </div>
-          <button class="mas-btn" id="mas-select">框选翻译</button>
+        </div></div>
 
-          <div class="mas-rule"></div>
-
-          <div class="mas-label" id="mas-provider-label">翻译类型</div>
-          <div class="mas-row mas-row-tight">
-            <select id="mas-provider" class="mas-select" aria-labelledby="mas-provider-label"></select>
-            <button class="mas-btn mas-btn-small" id="mas-connect">连通检测</button>
-          </div>
-          <div class="mas-line" id="mas-line"></div>
-
-          <div class="mas-rule"></div>
-          <div class="mas-foot">
-            <button class="mas-link" id="mas-settings">⚙ 设置</button>
-            <span class="mas-version" id="mas-version"></span>
-          </div>
-        </div>
-      </div></div>
-
-      <div class="mas-sec mas-sec-status"><div class="mas-sec-in">
-        <div class="mas-statusbar" id="mas-status" role="status" aria-live="polite">
-          <span class="mas-status-text" id="mas-status-text"></span>
-        </div>
-      </div></div>
-
-      <div class="mas-sec mas-sec-widget"><div class="mas-sec-in">
-        <button class="mas-widget" id="mas-widget" title="展开">
-          <i></i><span id="mas-widget-text">自动翻译</span>
-        </button>
-      </div></div>
+        <div class="maslingo-sec maslingo-sec-widget"><div class="maslingo-sec-in">
+          <button class="maslingo-widget" id="maslingo-widget" title="展开">
+            <i></i><span id="maslingo-widget-text">自动翻译</span>
+          </button>
+        </div></div>
+      </div>
     `;
     return node;
   }
 
   function fillProviders() {
-    const select = root.querySelector("#mas-provider");
+    const select = root.querySelector("#maslingo-provider");
     const registry = globalThis.MAS_providers;
     if (!registry) return;
     select.textContent = "";
@@ -477,19 +467,13 @@ globalThis.MAS_panel = (() => {
     root = build();
     document.documentElement.appendChild(root);
 
-    // The status bar lives inside the panel, so there is no second surface to
-    // mount and nothing pinned to the corner of the page.
-    statusNode = root.querySelector("#mas-status");
-    idleText = "就绪";
-    statusNode.querySelector(".mas-status-text").textContent = idleText;
-
-    // Pointer-follow highlight. Bound once, on mount, and coalesced to one
-    // custom-property write per frame by MAS_glass.
-    globalThis.MAS_glass?.follow?.(root);
+    // The material engine: specular position, hover/drag states, settle. Bound
+    // once here; it schedules frames only while the pointer is actually moving.
+    globalThis.MAS_glass?.track?.(root);
 
     currentLine = pickLine();
-    root.querySelector("#mas-line").textContent = `「${currentLine}」`;
-    root.querySelector("#mas-version").textContent =
+    root.querySelector("#maslingo-line").textContent = `「${currentLine}」`;
+    root.querySelector("#maslingo-version").textContent =
       `v${chrome.runtime?.getManifest?.().version || ""}`;
 
     fillProviders();
@@ -497,22 +481,25 @@ globalThis.MAS_panel = (() => {
     const cfg = await readStore([
       "autoTranslate", "translationProvider", "panelPosition", "panelCollapsed",
     ]);
-    root.querySelector("#mas-auto").checked = Boolean(cfg.autoTranslate);
-    if (cfg.translationProvider) root.querySelector("#mas-provider").value = cfg.translationProvider;
-    if (cfg.panelCollapsed) root.classList.add("mas-panel-collapsed");
+    root.querySelector("#maslingo-auto").checked = Boolean(cfg.autoTranslate);
+    if (cfg.translationProvider) root.querySelector("#maslingo-provider").value = cfg.translationProvider;
+    // Through MAS_glass so the restored state arrives with the same class the
+    // transition expects; setting it directly would skip the longer expand curve
+    // and, on a restored collapse, run the collapse animation on first paint.
+    if (cfg.panelCollapsed) globalThis.MAS_glass?.setMorph?.(root, true);
     applyPosition(cfg.panelPosition);
 
-    root.querySelector("#mas-auto").addEventListener("change", (event) => {
+    root.querySelector("#maslingo-auto").addEventListener("change", (event) => {
       writeStore({ autoTranslate: event.target.checked });
       status(event.target.checked ? "正在扫描漫画……" : "自动识别已关闭");
     });
-    root.querySelector("#mas-provider").addEventListener("change", (event) => {
+    root.querySelector("#maslingo-provider").addEventListener("change", (event) => {
       writeStore({ translationProvider: event.target.value });
-      root.querySelector("#mas-dot-translation").dataset.state = STATE.UNKNOWN;
-      setDot(root.querySelector("#mas-dot-translation"), STATE.UNKNOWN, "翻译未检测");
+      root.querySelector("#maslingo-dot-translation").dataset.state = STATE.UNKNOWN;
+      setDot(root.querySelector("#maslingo-dot-translation"), STATE.UNKNOWN, "翻译未检测");
     });
-    root.querySelector("#mas-connect").addEventListener("click", runConnectivityCheck);
-    root.querySelector("#mas-select").addEventListener("click", async () => {
+    root.querySelector("#maslingo-connect").addEventListener("click", runConnectivityCheck);
+    root.querySelector("#maslingo-select").addEventListener("click", async () => {
       // Via the service worker: runtime.sendMessage cannot reach content scripts,
       // so sending START_SELECT directly from here went nowhere at all.
       const result = await chrome.runtime
@@ -520,13 +507,13 @@ globalThis.MAS_panel = (() => {
         .catch((error) => ({ ok: false, error: error.message }));
       if (!result?.ok) status(`无法开始框选：${result?.error || "未知原因"}`, "error");
     });
-    root.querySelector("#mas-settings").addEventListener("click", () => {
+    root.querySelector("#maslingo-settings").addEventListener("click", () => {
       chrome.runtime.sendMessage({ type: "OPEN_OPTIONS" }).catch(() => {});
     });
-    root.querySelector("#mas-collapse").addEventListener("click", () => setCollapsed(true));
-    root.querySelector("#mas-widget").addEventListener("click", () => setCollapsed(false));
+    root.querySelector("#maslingo-collapse").addEventListener("click", () => setCollapsed(true));
+    root.querySelector("#maslingo-widget").addEventListener("click", () => setCollapsed(false));
 
-    const bar = root.querySelector("#mas-panel-bar");
+    const bar = root.querySelector("#maslingo-panel-bar");
     bar.addEventListener("pointerdown", startDrag);
     window.addEventListener("pointermove", moveDrag, { passive: true });
     window.addEventListener("pointerup", endDrag, { passive: true });
@@ -538,16 +525,16 @@ globalThis.MAS_panel = (() => {
       chrome.storage?.onChanged?.addListener((changes, area) => {
         if (area !== "local") return;
         if (changes.autoTranslate) {
-          const box = root.querySelector("#mas-auto");
+          const box = root.querySelector("#maslingo-auto");
           if (box && box.checked !== Boolean(changes.autoTranslate.newValue)) {
             box.checked = Boolean(changes.autoTranslate.newValue);
           }
         }
         if (changes.translationProvider) {
-          const select = root.querySelector("#mas-provider");
+          const select = root.querySelector("#maslingo-provider");
           if (select && select.value !== changes.translationProvider.newValue) {
             select.value = changes.translationProvider.newValue;
-            setDot(root.querySelector("#mas-dot-translation"), STATE.UNKNOWN, "翻译未检测");
+            setDot(root.querySelector("#maslingo-dot-translation"), STATE.UNKNOWN, "翻译未检测");
           }
         }
       });

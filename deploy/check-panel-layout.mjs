@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workDir = mkdtempSync(join(tmpdir(), "mas-layout-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-layout-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -62,7 +62,7 @@ try {
   await new Promise((r) => setTimeout(r, 2500));
 
   const report = await page.evaluate(() => {
-    const panel = document.getElementById("mas-panel");
+    const panel = document.getElementById("maslingo-panel");
     if (!panel) return { error: "找不到面板" };
     const panelRect = panel.getBoundingClientRect();
 
@@ -70,9 +70,9 @@ try {
     // nested inside them is laid out relative to its own parent — measuring the
     // switch's thumb against the panel edge would prove nothing.
     const bands = [
-      panel.querySelector(".mas-panel-bar"),
-      panel.querySelector(".mas-panel-body"),
-      panel.querySelector(".mas-statusbar"),
+      panel.querySelector(".maslingo-panel-bar"),
+      panel.querySelector(".maslingo-panel-body"),
+      panel.querySelector(".maslingo-statusbar"),
     ].filter(Boolean);
 
     const content = [];

@@ -13,7 +13,7 @@
 //    and stays. Removing one must never remove the other.
 
 const MAS_overlay = (() => {
-  const LAYER_ID = "mas-layer";
+  const LAYER_ID = "maslingo-layer";
   let layer = null;
   let repositionQueued = false;
   /** @type {Set<{node: HTMLElement, target: Element|null, place: Function}>} */
@@ -172,11 +172,11 @@ const MAS_detectionBox = (() => {
 
   function create() {
     const node = document.createElement("div");
-    node.className = "mas-box";
+    node.className = "maslingo-box";
     const dashed = document.createElement("div");
-    dashed.className = "mas-box-border mas-box-dashed";
+    dashed.className = "maslingo-box-border maslingo-box-dashed";
     const solid = document.createElement("div");
-    solid.className = "mas-box-border mas-box-solid";
+    solid.className = "maslingo-box-border maslingo-box-solid";
     node.append(dashed, solid);
     return { node, solid };
   }
@@ -188,29 +188,29 @@ const MAS_detectionBox = (() => {
   function show(element, region) {
     const { node, solid } = create();
     const entry = MAS_overlay.anchor(node, element, region);
-    node.classList.add("mas-box-visible");
+    node.classList.add("maslingo-box-visible");
 
     return {
       node,
       /** Work has started: let the dashed edge begin turning solid. */
       markProcessing() {
-        solid.classList.add("mas-box-working");
+        solid.classList.add("maslingo-box-working");
       },
       /** Translation is in. Complete the border, hold, then disappear. */
       finish() {
-        solid.classList.remove("mas-box-working");
-        solid.classList.add("mas-box-solid-on");
+        solid.classList.remove("maslingo-box-working");
+        solid.classList.add("maslingo-box-solid-on");
         setTimeout(() => {
-          node.classList.add("mas-box-fading");
+          node.classList.add("maslingo-box-fading");
           setTimeout(() => MAS_overlay.release(entry), FADE_MS);
         }, HOLD_MS);
       },
       /** Something went wrong: same exit, different colour. */
       fail() {
-        solid.classList.remove("mas-box-working");
-        node.classList.add("mas-box-failed");
+        solid.classList.remove("maslingo-box-working");
+        node.classList.add("maslingo-box-failed");
         setTimeout(() => {
-          node.classList.add("mas-box-fading");
+          node.classList.add("maslingo-box-fading");
           setTimeout(() => MAS_overlay.release(entry), FADE_MS);
         }, HOLD_MS);
       },
@@ -232,20 +232,20 @@ const MAS_notice = (() => {
   function show(text, { once = true, kind = "info" } = {}) {
     if (once && shown) return;
     shown = true;
-    let node = document.getElementById("mas-notice");
+    let node = document.getElementById("maslingo-notice");
     if (!node) {
       node = document.createElement("div");
-      node.id = "mas-notice";
+      node.id = "maslingo-notice";
       node.setAttribute("role", "status");
       node.setAttribute("aria-live", "polite");
       document.documentElement.appendChild(node);
     }
-    node.className = `mas-notice mas-glass mas-notice-${kind}`;
+    node.className = `maslingo-notice maslingo-notice-${kind}`;
     node.textContent = text;
-    requestAnimationFrame(() => node.classList.add("mas-notice-in"));
+    requestAnimationFrame(() => node.classList.add("maslingo-notice-in"));
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      node.classList.remove("mas-notice-in");
+      node.classList.remove("maslingo-notice-in");
       timer = null;
     }, 2600);
   }

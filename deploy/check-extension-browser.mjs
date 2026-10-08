@@ -153,13 +153,13 @@ try {
 
         await worker.evaluate((id) => chrome.tabs.sendMessage(id, { type: "START_SELECT" }), tabId);
         const overlay = await page
-          .waitForSelector(".mas-selection", { timeout: 10000 })
+          .waitForSelector(".maslingo-selection", { timeout: 10000 })
           .then(() => true)
           .catch(() => false);
         if (overlay) {
           pass("START_SELECT produced the selection overlay in the page");
         } else {
-          fail("START_SELECT did not create .mas-selection");
+          fail("START_SELECT did not create .maslingo-selection");
         }
       } else {
         fail(`content script never answered PING (${answered})`);

@@ -23,9 +23,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // MAS_panel undefined.
 const contentScripts = [
   "extension/config.js", "extension/translation/providers.js",
-  "extension/content/glass.js", "extension/content/overlay.js",
-  "extension/content/auto.js", "extension/content/panel.js",
-  "extension/content/content.js",
+  "extension/content/glass.js", "extension/content/status.js",
+  "extension/content/overlay.js", "extension/content/auto.js",
+  "extension/content/panel.js", "extension/content/content.js",
 ].map((name) => readFileSync(join(repoRoot, name), "utf8"));
 // The stylesheets have to come along too, otherwise class-based assertions test
 // nothing: an earlier run of this check passed the element into existence and
@@ -169,26 +169,27 @@ try {
     const out = {};
     out.noticeFunctionRemoved = typeof showTranslationNotice === "undefined";
 
-    // Status goes to the panel's own bottom line; there is no second toast and
-    // no floating strip any more, so that is what must behave.
-    out.noToastElement = document.getElementById("mas-toast") === null;
+    // Status goes to its own glass surface in the corner (spec §11). The old
+    // in-panel strip and the old standalone toast are both gone, so what has to
+    // behave is the surface and nothing else.
+    out.noToastElement = document.getElementById("maslingo-toast") === null;
     showToast("测试提示", "info");
-    const panel = document.getElementById("mas-panel");
-    const strip = document.getElementById("mas-status");
-    // The message lives on the inner line element; the band around it is a
-    // container and its textContent carries the markup's whitespace.
-    const line = strip?.querySelector(".mas-status-text");
+    const panel = document.getElementById("maslingo-panel");
+    const strip = document.getElementById("maslingo-status");
+    const line = strip?.querySelector(".maslingo-status-text");
     out.stripCreated = Boolean(strip);
-    out.stripText = line ? line.textContent : null;
+    out.stripText = line ? line.textContent.trim() : null;
+    out.stripVisible = strip ? strip.classList.contains("maslingo-status-in") : false;
+    out.stripIsSurface = strip ? strip.classList.contains("maslingo-surface") : false;
     out.stripInsidePanel = Boolean(panel && strip && panel.contains(strip));
     out.stripSingleLine = line ? getComputedStyle(line).whiteSpace === "nowrap" : false;
     out.floatingSurfaces = [...document.documentElement.children]
-      .filter((node) => node.id?.startsWith("mas-")).map((node) => node.id);
+      .filter((node) => node.id?.startsWith("maslingo-")).map((node) => node.id);
 
     activeRequestId = "check-1";
     showTranslationResult({ requestId: "check-1", mode: "none", result: {} });
-    out.panelsAfterNone = document.querySelectorAll(".mas-overlay, .mas-overlay-status").length;
-    out.canvasesAfterNone = document.querySelectorAll("canvas.mas-overlay-text-canvas").length;
+    out.panelsAfterNone = document.querySelectorAll(".maslingo-overlay, .maslingo-overlay-status").length;
+    out.canvasesAfterNone = document.querySelectorAll("canvas.maslingo-overlay-text-canvas").length;
 
     hideToast();
     return out;
@@ -196,11 +197,14 @@ try {
 
   check("旧的居中结果面板函数已移除", overlay.noticeFunctionRemoved);
   check("不再存在第二个提示元素", overlay.noToastElement);
-  check("状态提示写在悬浮窗状态栏上", overlay.stripCreated && overlay.stripText === "测试提示",
+  check("状态提示写在独立玻璃状态面上", overlay.stripCreated && overlay.stripText === "测试提示",
     JSON.stringify({ text: overlay.stripText }));
-  check("状态栏属于悬浮窗", overlay.stripInsidePanel);
-  check("状态栏只有一行", overlay.stripSingleLine);
-  check("页面上只有一个浮层", overlay.floatingSurfaces.length === 1,
+  check("状态面显示了出来", overlay.stripVisible);
+  check("状态面自带玻璃材质", overlay.stripIsSurface);
+  // §11: it must survive the panel being collapsed, so it cannot be a child.
+  check("状态面不属于悬浮窗", overlay.stripInsidePanel === false);
+  check("状态面只有一行", overlay.stripSingleLine);
+  check("页面上有悬浮窗和状态面两个浮层", overlay.floatingSurfaces.length === 2,
     JSON.stringify(overlay.floatingSurfaces));
   check("关闭翻译时不留下任何面板", overlay.panelsAfterNone === 0, `还有 ${overlay.panelsAfterNone} 个`);
   check("关闭翻译时不留下覆盖画布", overlay.canvasesAfterNone === 0, `还有 ${overlay.canvasesAfterNone} 个`);

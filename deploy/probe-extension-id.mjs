@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workDir = mkdtempSync(join(tmpdir(), "mas-id-probe-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-id-probe-"));
 
 /** Load the extension from a given folder name and report the ID Chrome gives it. */
 async function idFromFolder(folderName) {

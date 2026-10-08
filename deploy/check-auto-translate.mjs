@@ -5,7 +5,7 @@
 // fold:
 //
 //   * the notice appears once, not once per region;
-//   * a result canvas ends up anchored to each image, inside #mas-layer;
+//   * a result canvas ends up anchored to each image, inside #maslingo-layer;
 //   * scrolling to new images translates them, and scrolling back finds the
 //     earlier results still there;
 //   * each image is sent to OCR exactly once — scrolling past it again must not
@@ -162,7 +162,7 @@ const backendUrl = `http://127.0.0.1:${backend.address().port}`;
 // only needs OCR to have happened. Translation failures are handled by design
 // (the region is marked FAILED and the queue continues), which is itself worth
 // asserting.
-const workDir = mkdtempSync(join(tmpdir(), "mas-auto-translate-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-auto-translate-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -337,11 +337,11 @@ try {
   await page.waitForSelector("#one");
 
   const layers = () => page.evaluate(() => ({
-    layer: Boolean(document.getElementById("mas-layer")),
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
-    boxes: document.querySelectorAll("#mas-layer .mas-box").length,
-    notice: document.getElementById("mas-notice")?.textContent || "",
-    noticeVisible: Boolean(document.getElementById("mas-notice")?.classList.contains("mas-notice-in")),
+    layer: Boolean(document.getElementById("maslingo-layer")),
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
+    boxes: document.querySelectorAll("#maslingo-layer .maslingo-box").length,
+    notice: document.getElementById("maslingo-notice")?.textContent || "",
+    noticeVisible: Boolean(document.getElementById("maslingo-notice")?.classList.contains("maslingo-notice-in")),
   }));
 
   console.log("\n关闭状态");
@@ -360,7 +360,7 @@ try {
   const boxSamples = await page.evaluate(() => new Promise((resolve) => {
     const seen = [];
     const timer = setInterval(() => {
-      for (const box of document.querySelectorAll("#mas-layer .mas-box")) {
+      for (const box of document.querySelectorAll("#maslingo-layer .maslingo-box")) {
         const rect = box.getBoundingClientRect();
         if (rect.width > 1 && rect.height > 1) {
           seen.push({ w: Math.round(rect.width), h: Math.round(rect.height) });
@@ -421,9 +421,9 @@ try {
   await bare.goto(`${pageUrl}p1.png`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 5000));
   const bareState = await bare.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
     images: document.querySelectorAll("img").length,
-    layer: Boolean(document.getElementById("mas-layer")),
+    layer: Boolean(document.getElementById("maslingo-layer")),
   })).catch(() => ({ canvases: -1, images: -1, layer: false }));
   console.log(`      img=${bareState.images} layer=${bareState.layer} canvases=${bareState.canvases}`);
   check("图片直链页面注入了覆盖层", bareState.layer);
@@ -445,7 +445,7 @@ try {
   await grow.goto(`${pageUrl}grow`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 7000));
   const growState = await grow.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
     width: document.getElementById("late")?.getBoundingClientRect().width,
   }));
   console.log(`      图片最终宽度 ${growState.width}px，画布 ${growState.canvases}`);
@@ -488,7 +488,7 @@ try {
   await broken.goto(`${pageUrl}broken`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 6000));
   const brokenState = await broken.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
   }));
   const brokenProbe = await readStatus(broken);
   const brokenStats = brokenProbe.stats || { imageFailures: {} };
@@ -563,7 +563,7 @@ try {
   await cross.goto(`${pageUrl}crossorigin`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 8000));
   const crossState = await cross.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
   }));
   const crossProbe = await readStatus(cross);
   console.log(`      画布 ${crossState.canvases}，图片失败 ${JSON.stringify(crossProbe.stats?.imageFailures)}`);
@@ -581,7 +581,7 @@ try {
   await locked.goto(`${pageUrl}guarded`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 9000));
   const lockedState = await locked.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
   }));
   const lockedProbe = await readStatus(locked);
   console.log(`      画布 ${lockedState.canvases}，图片失败 ${JSON.stringify(lockedProbe.stats?.imageFailures)}`);
@@ -599,7 +599,7 @@ try {
   await hot.goto(`${pageUrl}hotlink`, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 9000));
   const hotState = await hot.evaluate(() => ({
-    canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
+    canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
     shown: document.getElementById("hot")?.naturalWidth || 0,
   }));
   const hotProbe = await readStatus(hot);

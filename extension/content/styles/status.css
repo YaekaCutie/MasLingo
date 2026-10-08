@@ -1,98 +1,178 @@
-/* MasLingo — status line and status dots.
+/* MasLingo — the status surface.
  *
- * One line, inside the panel's bottom edge. It reports what is happening right
- * now and nothing else: a new message replaces the old one, and the line settles
- * back to an idle word rather than keeping a log. Colour is the only thing that
- * distinguishes the four states, and there are exactly four.
+ * An independent glass surface, pinned to the lower right corner, composed from
+ * the same five layers as the panel. §7 of the specification asks that separate
+ * glass elements read as one material rather than as several cards, and sharing
+ * the layer classes is how that is guaranteed rather than approximated: the popup
+ * is a smaller piece cut from the same pane.
  *
- * The line is a band of the pane, so it carries no material of its own — a
- * second glass surface stacked on the first would double the blur cost for no
- * visual gain. What animates is the text: it slides up into place on arrival and
- * fades out when the message expires.
+ * It is cheaper than the panel on purpose. A popup appears and disappears over
+ * whatever the user is reading, so its blur radius and its rim ring are both
+ * reduced — the material is recognisably the same, but it costs less to composite
+ * while a page is scrolling underneath it.
+ *
+ * ==== Why the surface is never rebuilt ====
+ *
+ * §11 asks that a content change update the existing surface instead of
+ * destroying and recreating the DOM. Rebuilding would restart the backdrop-filter
+ * every message — a visible flash on the compositor — and would throw away the
+ * entry animation state. So the popup is created once, kept mounted, and only its
+ * text, its state colour and its `data-kind` are written.
  */
 
-.mas-statusbar {
-  padding-top: 8px;
-  padding-bottom: 10px;
-  /* Edge to edge, matching the title bar. */
-  border-top: 1px solid var(--mas-glass-line);
-  font: 11px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-  color: var(--mas-muted);
-  overflow: hidden;
-}
-
-.mas-status-text {
-  display: block;
+.maslingo-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483646;
+  max-width: min(340px, calc(100vw - 32px));
+  border-radius: 14px;
+  /* One line, always. */
   white-space: nowrap;
   overflow: hidden;
+  pointer-events: none;
+
+  --maslingo-blur: 16px;
+  --maslingo-sat: 122%;
+  --maslingo-edge-ring: 1px;
+  --maslingo-edge-blur: 4px;
+  --maslingo-radius: 14px;
+  --maslingo-spec-size: 200px;
+  --maslingo-spec-alpha: .09;
+
+  box-shadow: var(--maslingo-shadow-contact), 0 12px 32px rgba(8, 12, 22, .26);
+
+  /* §11: in over 220–300ms, out over 200–300ms, 4–8px of travel. */
+  opacity: 0;
+  transform: translate3d(0, 10px, 0);
+  transition:
+    opacity 240ms ease,
+    transform 260ms var(--maslingo-ease),
+    visibility 0s linear 260ms;
+  visibility: hidden;
+}
+.maslingo-status-in {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  visibility: visible;
+  transition:
+    opacity 260ms ease,
+    transform 280ms var(--maslingo-ease),
+    visibility 0s;
+}
+/* Leaving: fades and drifts down, but never below the resting offset, so it does
+   not appear to sink into the page. */
+.maslingo-status-out { opacity: 0; transform: translate3d(0, 6px, 0); }
+
+.maslingo-status-line {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font: 12px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: var(--maslingo-muted);
+}
+.maslingo-status-text {
+  display: block;
+  overflow: hidden;
   text-overflow: ellipsis;
-  transition: color var(--mas-fast) ease;
+  transition: color var(--maslingo-hover) ease;
+}
+.maslingo-status-active .maslingo-status-text { color: var(--maslingo-ink); }
+.maslingo-status[data-kind="error"] .maslingo-status-text { color: var(--maslingo-err-text); }
+.maslingo-status[data-kind="ok"] .maslingo-status-text { color: var(--maslingo-ink); }
+
+/* --- status dot ---------------------------------------------------------- */
+/*
+ * §11: the dot animates very lightly. Working breathes over 1.5–2.0s; success
+ * brightens once and then holds, because a success that keeps pulsing reads as
+ * "still working"; failure draws attention once without shaking — a shaking
+ * failure indicator is a game convention, and §13 asks for a system tool.
+ */
+.maslingo-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--maslingo-dot-idle);
+  transition: background .2s ease;
+}
+.maslingo-status[data-kind="working"] .maslingo-status-dot {
+  background: var(--maslingo-dot-working);
+  animation: maslingo-breathe 1.75s ease-in-out infinite;
+}
+.maslingo-status[data-kind="ok"] .maslingo-status-dot {
+  background: var(--maslingo-dot-ok);
+  animation: maslingo-brighten 520ms ease-out 1;
+}
+.maslingo-status[data-kind="error"] .maslingo-status-dot {
+  background: var(--maslingo-dot-bad);
+  animation: maslingo-attend 620ms ease-out 1;
+}
+.maslingo-status[data-kind="info"] .maslingo-status-dot { background: var(--maslingo-dot-idle); }
+
+@keyframes maslingo-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .45; }
+}
+/* One soft lift, no colour change beyond the base hue. */
+@keyframes maslingo-brighten {
+  0% { box-shadow: 0 0 0 0 rgba(87, 192, 138, .45); }
+  100% { box-shadow: 0 0 0 7px rgba(87, 192, 138, 0); }
+}
+/* A single ring, not a shake. */
+@keyframes maslingo-attend {
+  0% { box-shadow: 0 0 0 0 rgba(232, 119, 106, .45); }
+  100% { box-shadow: 0 0 0 7px rgba(232, 119, 106, 0); }
 }
 
-/* Slide and fade on every new message. The class is removed on animation end so
-   the same message arriving twice animates twice. */
-.mas-statusbar-updating .mas-status-text {
-  animation: mas-status-in .34s var(--mas-ease);
-}
-@keyframes mas-status-in {
-  from { opacity: 0; transform: translate3d(0, 6px, 0); }
-  to   { opacity: 1; transform: translate3d(0, 0, 0); }
-}
-
-/* Settling back to idle is quieter than a new message — no movement, just a
-   fade, so the line does not keep drawing the eye after the work is done. */
-.mas-statusbar-idle .mas-status-text { animation: mas-status-out .5s ease; }
-@keyframes mas-status-out {
-  from { opacity: .35; }
-  to   { opacity: 1; }
-}
-
-.mas-statusbar-active .mas-status-text { color: var(--mas-ink); }
-.mas-statusbar[data-kind="error"] .mas-status-text { color: var(--mas-err-text); }
-.mas-statusbar[data-kind="ok"] .mas-status-text { color: var(--mas-dot-ok); }
-
-/* --- status dots --------------------------------------------------------- */
-/* Colour lives here and nowhere else in the panel. */
-.mas-dots {
+/* --- in-panel dots (the connectivity indicators) -------------------------- */
+/* Same four colours, same meaning, no animation beyond the working breathe. */
+.maslingo-dots {
   display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
   padding-bottom: 12px;
 }
-.mas-dot {
+.maslingo-dot {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: var(--mas-muted);
+  color: var(--maslingo-muted);
   white-space: nowrap;
 }
-.mas-dot i {
+.maslingo-dot i {
   width: 7px;
   height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
-  background: var(--mas-dot-idle);
+  background: var(--maslingo-dot-idle);
   transition: background .2s ease;
 }
-.mas-dot[data-state="working"] i {
-  background: var(--mas-dot-working);
-  animation: mas-pulse 1.2s ease-in-out infinite;
+.maslingo-dot[data-state="working"] i {
+  background: var(--maslingo-dot-working);
+  animation: maslingo-breathe 1.75s ease-in-out infinite;
 }
-.mas-dot[data-state="ok"] i { background: var(--mas-dot-ok); }
-.mas-dot[data-state="bad"] i { background: var(--mas-dot-bad); }
-.mas-dot[data-state="ok"] .mas-dot-text,
-.mas-dot[data-state="bad"] .mas-dot-text { color: var(--mas-ink); }
+.maslingo-dot[data-state="ok"] i { background: var(--maslingo-dot-ok); }
+.maslingo-dot[data-state="bad"] i { background: var(--maslingo-dot-bad); }
+.maslingo-dot[data-state="ok"] .maslingo-dot-text,
+.maslingo-dot[data-state="bad"] .maslingo-dot-text { color: var(--maslingo-ink); }
 
 /* Focus forwards to the track, because the input itself is 0x0 and invisible. */
-.mas-switch input:focus-visible + .mas-switch-track {
-  outline: 2px solid rgba(255, 255, 255, .78);
+.maslingo-switch input:focus-visible + .maslingo-switch-track {
+  outline: 2px solid rgba(255, 255, 255, .80);
   outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mas-statusbar-updating .mas-status-text,
-  .mas-statusbar-idle .mas-status-text { animation-duration: .01ms; }
-  .mas-dot i { animation: none !important; }
+  /* §21: no continuous movement. The popup still appears and still changes
+     colour — those carry information — but nothing loops. */
+  .maslingo-status { transition-duration: .01ms; }
+  .maslingo-status-in { transition-duration: .01ms; }
+  .maslingo-status-dot,
+  .maslingo-dot i { animation: none !important; }
 }

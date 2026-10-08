@@ -76,11 +76,11 @@ function startSelect() {
   selecting = true;
   dragging = false;
   selectionBox = document.createElement("div");
-  selectionBox.className = "mas-selection";
+  selectionBox.className = "maslingo-selection";
   selectionRect = document.createElement("div");
-  selectionRect.className = "mas-selection-rect";
+  selectionRect.className = "maslingo-selection-rect";
   selectionSize = document.createElement("span");
-  selectionSize.className = "mas-selection-size";
+  selectionSize.className = "maslingo-selection-size";
   selectionRect.appendChild(selectionSize);
   selectionBox.appendChild(selectionRect);
   selectionBox.addEventListener("pointerdown", onPointerDown);
@@ -278,7 +278,7 @@ function startRecognition(rect, detectPage = false, mediaRect = null) {
 
 function showBusy(rect, fullPage) {
   const panel = document.createElement("div");
-  panel.className = fullPage ? "mas-overlay mas-overlay-page" : "mas-overlay";
+  panel.className = fullPage ? "maslingo-overlay maslingo-overlay-page" : "maslingo-overlay";
   if (!fullPage) {
     Object.assign(panel.style, {
       left: `${rect.left}px`, top: `${rect.top}px`,
@@ -286,11 +286,11 @@ function showBusy(rect, fullPage) {
     });
   }
   const content = document.createElement("div");
-  content.className = "mas-overlay-loading";
+  content.className = "maslingo-overlay-loading";
   content.setAttribute("role", "status");
   content.setAttribute("aria-live", "polite");
   const spinner = document.createElement("span");
-  spinner.className = "mas-loading-spinner";
+  spinner.className = "maslingo-loading-spinner";
   const label = document.createElement("span");
   label.textContent = fullPage ? "正在识别整页文字…" : "正在识别…";
   content.append(spinner, label);
@@ -405,31 +405,36 @@ function showTranslationResult(message) {
 let toastTimer = null;
 
 /**
- * Status text goes to the panel's single-line strip.
+ * Status text goes to the glass status surface.
  *
- * There used to be a second, independent toast element. Two places showing
- * status meant neither was authoritative, and the strip is the one that sits
- * where the eye already goes during auto translate. Keeping one also removes any
- * chance of the two overlapping.
+ * There used to be three places that could show a message — a strip inside the
+ * panel, a corner toast, and a centred panel — and two of them existed only as
+ * fallbacks for the third not being mounted. The status surface is now an
+ * independent glass pane with its own module, so it is always available and the
+ * fallback chain has nothing left to fall back to.
  */
 function showToast(text, kind = "info") {
-  if (globalThis.MAS_panel) {
-    MAS_panel.status(text, kind);
+  if (globalThis.MAS_status) {
+    MAS_status.show(text, kind);
     return;
   }
-  let toast = document.getElementById("mas-toast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.id = "mas-toast";
-    toast.setAttribute("role", "status");
-    toast.setAttribute("aria-live", "polite");
-    document.body.appendChild(toast);
+  // Only reachable when status.js failed to load at all, which the package check
+  // treats as a broken build. Kept as a last resort so a status message can never
+  // be silently lost.
+  let fallback = document.getElementById("maslingo-toast");
+  if (!fallback) {
+    fallback = document.createElement("div");
+    fallback.id = "maslingo-toast";
+    fallback.className = "maslingo-toast maslingo-surface";
+    fallback.setAttribute("role", "status");
+    fallback.setAttribute("aria-live", "polite");
+    document.body.appendChild(fallback);
   }
-  toast.className = `mas-toast mas-glass mas-toast-${kind} mas-toast-visible`;
-  toast.textContent = text;
+  fallback.textContent = text;
+  fallback.classList.add("maslingo-toast-visible");
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => {
-    toast.classList.remove("mas-toast-visible");
+    fallback.classList.remove("maslingo-toast-visible");
     toastTimer = null;
   }, kind === "error" ? 8000 : 4500);
 }
@@ -437,7 +442,7 @@ function showToast(text, kind = "info") {
 function hideToast() {
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = null;
-  document.getElementById("mas-toast")?.remove();
+  document.getElementById("maslingo-toast")?.remove();
 }
 
 /** Remove everything this extension painted, leaving the page untouched. */
@@ -602,7 +607,7 @@ function renderResults(rect, result, pageMode) {
     const patch = item.patch;
     const displayRect = patch?.rect || bounds;
     const canvas = document.createElement("canvas");
-    canvas.className = "mas-overlay-text-canvas";
+    canvas.className = "maslingo-overlay-text-canvas";
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", item.text?.trim() || "未识别到文字");
     // Document coordinates, not viewport ones. `displayRect` comes from a

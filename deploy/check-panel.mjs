@@ -70,7 +70,7 @@ const pages = http.createServer((_request, response) => {
 await new Promise((done) => pages.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${pages.address().port}/`;
 
-const workDir = mkdtempSync(join(tmpdir(), "mas-panel-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-panel-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -107,62 +107,82 @@ try {
 
   console.log("\n悬浮窗结构与位置");
   const layout = await page.evaluate(() => {
-    const panel = document.getElementById("mas-panel");
+    const panel = document.getElementById("maslingo-panel");
     if (!panel) return null;
     const rect = panel.getBoundingClientRect();
-    const strip = document.getElementById("mas-status");
+    const strip = document.getElementById("maslingo-status");
     const stripRect = strip?.getBoundingClientRect();
     const panelRect = rect;
-    const dots = [...panel.querySelectorAll(".mas-dot")].map((dot) => {
+    const dots = [...panel.querySelectorAll(".maslingo-dot")].map((dot) => {
       const box = dot.getBoundingClientRect();
-      return { text: dot.querySelector(".mas-dot-text").textContent.trim(), top: box.top, left: box.left };
+      return { text: dot.querySelector(".maslingo-dot-text").textContent.trim(), top: box.top, left: box.left };
     });
+    // The material is layered now, so the pane's own computed backdrop-filter is
+    // `none` and always will be. Asking the root was the old contract.
+    const baseLayer = panel.querySelector(".maslingo-glass__base");
+    const edgeLayer = panel.querySelector(".maslingo-glass__edge");
+    const layers = [".maslingo-glass__base", ".maslingo-glass__depth",
+      ".maslingo-glass__edge", ".maslingo-glass__specular"]
+      .map((selector) => Boolean(panel.querySelector(selector)));
     return {
       right: window.innerWidth - rect.right,
       bottom: window.innerHeight - rect.bottom,
       width: rect.width,
-      glass: getComputedStyle(panel).backdropFilter || getComputedStyle(panel).webkitBackdropFilter,
+      glass: baseLayer
+        ? getComputedStyle(baseLayer).backdropFilter || getComputedStyle(baseLayer).webkitBackdropFilter
+        : "none",
+      edgeGlass: edgeLayer
+        ? getComputedStyle(edgeLayer).backdropFilter || getComputedStyle(edgeLayer).webkitBackdropFilter
+        : "none",
+      layers,
       position: getComputedStyle(panel).position,
       pointerEvents: getComputedStyle(panel).pointerEvents,
       dots,
-      hasAuto: Boolean(panel.querySelector("#mas-auto")),
-      hasSelect: Boolean(panel.querySelector("#mas-select")),
-      hasProvider: Boolean(panel.querySelector("#mas-provider")),
-      hasConnect: Boolean(panel.querySelector("#mas-connect")),
+      hasAuto: Boolean(panel.querySelector("#maslingo-auto")),
+      hasSelect: Boolean(panel.querySelector("#maslingo-select")),
+      hasProvider: Boolean(panel.querySelector("#maslingo-provider")),
+      hasConnect: Boolean(panel.querySelector("#maslingo-connect")),
       connectAfterSelect: (() => {
-        const select = panel.querySelector("#mas-provider");
-        const button = panel.querySelector("#mas-connect");
+        const select = panel.querySelector("#maslingo-provider");
+        const button = panel.querySelector("#maslingo-connect");
         return Boolean(select && button && select.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
       })(),
-      line: panel.querySelector("#mas-line")?.textContent || "",
-      hasSettings: Boolean(panel.querySelector("#mas-settings")),
-      version: panel.querySelector("#mas-version")?.textContent || "",
-      hasTerminal: Boolean(panel.querySelector("pre, .mas-terminal, .mas-log")),
-      // The status line now lives inside the panel, so what matters is that it
-      // is a child of it and single-line — not where it sits on the page.
-      statusInsidePanel: Boolean(panel.querySelector("#mas-status")),
+      line: panel.querySelector("#maslingo-line")?.textContent || "",
+      hasSettings: Boolean(panel.querySelector("#maslingo-settings")),
+      version: panel.querySelector("#maslingo-version")?.textContent || "",
+      hasTerminal: Boolean(panel.querySelector("pre, .maslingo-terminal, .maslingo-log")),
+      // §11: the status surface is deliberately NOT part of the panel. It has to
+      // stay readable while the panel is collapsed, so a child of the panel would
+      // be hidden exactly when the user needs it.
+      statusInsidePanel: Boolean(panel.querySelector("#maslingo-status")),
+      statusIsSurface: Boolean(strip?.classList.contains("maslingo-surface")),
       statusLines: (() => {
-        // The line itself is the inner span; the band around it is a container.
-        const line = strip?.querySelector(".mas-status-text") || strip;
+        const line = strip?.querySelector(".maslingo-status-text") || strip;
         return line ? line.textContent.split("\n").length : 0;
       })(),
       statusWhiteSpace: (() => {
-        const line = strip?.querySelector(".mas-status-text") || strip;
+        const line = strip?.querySelector(".maslingo-status-text") || strip;
         return line ? getComputedStyle(line).whiteSpace : null;
       })(),
-      statusText: strip?.textContent?.trim() || "",
+      statusText: strip?.querySelector(".maslingo-status-text")?.textContent?.trim() || "",
+      statusRight: stripRect ? Math.round(window.innerWidth - stripRect.right) : -1,
+      statusBottom: stripRect ? Math.round(window.innerHeight - stripRect.bottom) : -1,
       floatingSurfaces: [...document.documentElement.children]
-        .filter((node) => node.id?.startsWith("mas-"))
+        .filter((node) => node.id?.startsWith("maslingo-"))
         .map((node) => node.id),
     };
   });
 
-  check("悬浮窗已挂载", Boolean(layout), "找不到 #mas-panel");
+  check("悬浮窗已挂载", Boolean(layout), "找不到 #maslingo-panel");
   // Sitting in the lower right; nothing is reserved below it any more, since the
   // status line moved inside the panel.
   check("停在右下角", layout.right < 40 && layout.bottom < 40,
     JSON.stringify({ right: layout.right, bottom: layout.bottom }));
-  check("玻璃质感（backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
+  check("玻璃质感在材质层上（base 有 backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
+  check("边缘层是独立的光学层（自带 backdrop-filter）", /blur/.test(layout.edgeGlass || ""),
+    layout.edgeGlass);
+  check("材质拆成 base/depth/edge/specular 四层",
+    layout.layers.every(Boolean), JSON.stringify(layout.layers));
   check("定位为 fixed", layout.position === "fixed");
   check("两个状态点横向排列", layout.dots.length === 2 && layout.dots[0].top === layout.dots[1].top,
     JSON.stringify(layout.dots));
@@ -178,15 +198,18 @@ try {
   check("显示版本号", /^v\d+\.\d+\.\d+$/.test(layout.version), layout.version);
   check("面板内没有终端", !layout.hasTerminal);
 
-  console.log("\n状态栏在悬浮窗内（不再有角落弹窗）");
-  check("状态栏是悬浮窗的一部分", layout.statusInsidePanel);
-  check("状态栏只有一行", layout.statusWhiteSpace === "nowrap" && layout.statusLines <= 1,
-    `${layout.statusLines} 行 / ${layout.statusWhiteSpace}：「${layout.statusText}」`);
-  // Auto translate is off at this point, so nothing else should be on the page.
-  // Once it starts, one extra element appears on purpose: the one-shot
-  // "detected manga" notice in the top-right corner, which an earlier
-  // requirement asked for by name.
-  check("未开启自动识别时页面上只有悬浮窗", layout.floatingSurfaces.length === 1,
+  console.log("\n状态面不会挤进面板（§11）");
+  // Structural checks on the status surface happen further down, once a status
+  // has actually been raised — it is created lazily, so at this point it does not
+  // exist yet, and asserting its position here would compare -1 against 40 and
+  // pass while testing nothing at all.
+  check("状态面此刻尚未创建（懒挂载）", layout.statusInsidePanel === false && layout.statusRight < 0,
+    JSON.stringify({ right: layout.statusRight, bottom: layout.statusBottom }));
+  // Auto translate is off at this point and nothing has reported a status, so
+  // the status surface has not been created yet. Once auto translate starts, two
+  // elements exist on purpose: the panel, the status surface, and — for a few
+  // seconds — the one-shot "detected manga" notice in the top-right corner.
+  check("未开启自动识别时不额外挂载浮层", layout.floatingSurfaces.length === 1,
     JSON.stringify(layout.floatingSurfaces));
 
   console.log("\n不阻塞页面操作");
@@ -205,8 +228,8 @@ try {
 
   console.log("\n拖动");
   const dragged = await page.evaluate(async () => {
-    const panel = document.getElementById("mas-panel");
-    const bar = document.getElementById("mas-panel-bar");
+    const panel = document.getElementById("maslingo-panel");
+    const bar = document.getElementById("maslingo-panel-bar");
     const before = panel.getBoundingClientRect();
     const startX = bar.getBoundingClientRect().left + 40;
     const startY = bar.getBoundingClientRect().top + 8;
@@ -226,7 +249,7 @@ try {
   check("可以拖动", dragged.movedX > 100 && dragged.movedY > 80, JSON.stringify(dragged));
 
   const clamped = await page.evaluate(async () => {
-    const bar = document.getElementById("mas-panel-bar");
+    const bar = document.getElementById("maslingo-panel-bar");
     const startX = bar.getBoundingClientRect().left + 10;
     const startY = bar.getBoundingClientRect().top + 8;
     bar.dispatchEvent(new PointerEvent("pointerdown", {
@@ -239,7 +262,7 @@ try {
     }
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 5000, clientY: 5000, pointerId: 1 }));
     await new Promise((r) => requestAnimationFrame(r));
-    const rect = document.getElementById("mas-panel").getBoundingClientRect();
+    const rect = document.getElementById("maslingo-panel").getBoundingClientRect();
     return {
       left: Math.round(rect.left), top: Math.round(rect.top),
       right: Math.round(rect.right), bottom: Math.round(rect.bottom),
@@ -253,7 +276,7 @@ try {
   // Dragging into the corner keeps the whole panel on screen; the status line
   // travels with it, so there is nothing left to collide with.
   const corner = await page.evaluate(() => {
-    const rect = document.getElementById("mas-panel").getBoundingClientRect();
+    const rect = document.getElementById("maslingo-panel").getBoundingClientRect();
     return {
       inside: rect.left >= 0 && rect.top >= 0
         && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
@@ -270,22 +293,22 @@ try {
   // to the listener and sails past that, so the first version of this check
   // passed while the button did nothing for an actual user.
   const collapseBox = await page.evaluate(() => {
-    const box = document.getElementById("mas-collapse").getBoundingClientRect();
+    const box = document.getElementById("maslingo-collapse").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(collapseBox.x, collapseBox.y);
   await new Promise((r) => setTimeout(r, 400));
 
   const collapsed = await page.evaluate(() => {
-    const panel = document.getElementById("mas-panel");
-    const widget = document.getElementById("mas-widget");
-    const body = panel.querySelector(".mas-panel-body");
+    const panel = document.getElementById("maslingo-panel");
+    const widget = document.getElementById("maslingo-widget");
+    const body = panel.querySelector(".maslingo-panel-body");
     // Collapse is a continuous shape change now, not a swap between two
     // layouts: every band is a grid row that animates to 0fr, so what shrinks is
     // the band's clipping box. The body inside keeps its natural height and is
     // simply clipped away — measuring the body itself reports 323px and looks
     // like a failure when the collapse worked perfectly.
-    const clip = panel.querySelector(".mas-sec-body .mas-sec-in");
+    const clip = panel.querySelector(".maslingo-sec-body .maslingo-sec-in");
     let hiddenByDisplay = false;
     for (const node of panel.querySelectorAll("*")) {
       if (getComputedStyle(node).display === "none") { hiddenByDisplay = true; break; }
@@ -309,21 +332,21 @@ try {
   console.log(`      收起后 面板高 ${collapsed.panelHeight}px  宽 ${Math.round(collapsed.width)}px`);
 
   const widgetBox = await page.evaluate(() => {
-    const box = document.getElementById("mas-widget").getBoundingClientRect();
+    const box = document.getElementById("maslingo-widget").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(widgetBox.x, widgetBox.y);
   await new Promise((r) => setTimeout(r, 800));
   const expandedAgain = await page.evaluate(() => {
-    const clip = document.querySelector("#mas-panel .mas-sec-body .mas-sec-in");
+    const clip = document.querySelector("#maslingo-panel .maslingo-sec-body .maslingo-sec-in");
     return Math.round(clip.getBoundingClientRect().height);
   });
   check("点击挂件能再次展开", expandedAgain > 100, `主体只有 ${expandedAgain}px 高`);
 
   // The drag handle must still drag: the fix for the button cannot cost that.
   const stillDrags = await page.evaluate(async () => {
-    const bar = document.getElementById("mas-panel-bar");
-    const panel = document.getElementById("mas-panel");
+    const bar = document.getElementById("maslingo-panel-bar");
+    const panel = document.getElementById("maslingo-panel");
     const before = panel.getBoundingClientRect().left;
     const box = bar.getBoundingClientRect();
     const x = box.left + 20;
@@ -336,38 +359,70 @@ try {
   });
   check("拖拽仍然可用", stillDrags > 60, `只移动了 ${stillDrags}px`);
 
-  console.log("\n状态栏显示自动识别的进度");
+  console.log("\n状态面：独立玻璃层，显示自动识别的进度（§11）");
   await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
-  // Sampled early and then again later: the line is meant to show progress and
-  // then fall back to idle, so both halves of that are worth pinning down. The
-  // first version read it once at 4s, exactly when the dwell expires.
+  // Sampled early and then again later: the surface is meant to appear with
+  // progress and then go away, so both halves of that are worth pinning down.
   const sample = async () => page.evaluate(() => {
-    const strip = document.getElementById("mas-status");
-    const panel = document.getElementById("mas-panel");
+    const strip = document.getElementById("maslingo-status");
+    const panel = document.getElementById("maslingo-panel");
+    if (!strip) return { missing: true };
+    // §11 requires the surface to be updated in place rather than rebuilt. A
+    // marker written on the first sample survives only if the same node is still
+    // there — a recreated one would come back without it.
+    if (!strip.dataset.probe) strip.dataset.probe = String(Date.now());
+    const line = strip.querySelector(".maslingo-status-text");
+    const rect = strip.getBoundingClientRect();
     return {
-      text: strip.textContent.trim(),
-      active: strip.classList.contains("mas-statusbar-active"),
+      missing: false,
+      probe: strip.dataset.probe,
+      text: line?.textContent?.trim() || "",
+      visible: strip.classList.contains("maslingo-status-in"),
+      // Deliberately NOT a child of the panel: while the panel is collapsed the
+      // status still has to be readable, and a child would fold away with it.
       insidePanel: panel.contains(strip),
+      isSurface: strip.classList.contains("maslingo-surface"),
+      layers: [".maslingo-glass__base", ".maslingo-glass__depth",
+        ".maslingo-glass__edge", ".maslingo-glass__specular"]
+        .every((selector) => Boolean(strip.querySelector(selector))),
+      dot: Boolean(strip.querySelector(".maslingo-status-dot")),
+      kind: strip.dataset.kind,
+      whiteSpace: line ? getComputedStyle(line).whiteSpace : null,
+      right: Math.round(window.innerWidth - rect.right),
+      bottom: Math.round(window.innerHeight - rect.bottom),
     };
   });
 
   let progress = await sample();
-  for (let attempt = 0; attempt < 15 && !progress.active; attempt += 1) {
+  for (let attempt = 0; attempt < 15 && !(progress.visible && progress.text); attempt += 1) {
     await new Promise((r) => setTimeout(r, 200));
     progress = await sample();
   }
   const afterToggle = ocrCalls.length;
-  console.log(`      状态：「${progress.text}」`);
+  console.log(`      状态：「${progress.text}」  kind=${progress.kind}`);
 
-  await new Promise((r) => setTimeout(r, 5000));
+  await new Promise((r) => setTimeout(r, 6000));
   const settled = await sample();
 
+  check("状态面已挂载", progress.missing === false, "没有 #maslingo-status");
+  check("状态面自身是玻璃材质", progress.isSurface === true && progress.layers === true,
+    JSON.stringify({ surface: progress.isSurface, layers: progress.layers }));
+  check("状态面有状态点", progress.dot === true);
+  check("状态面不在悬浮窗内部", progress.insidePanel === false,
+    "状态面又被塞回面板里了");
+  check("状态面停在右下角", progress.right >= 0 && progress.right < 40
+    && progress.bottom >= 0 && progress.bottom < 40,
+    JSON.stringify({ right: progress.right, bottom: progress.bottom }));
   check("自动识别产生了状态文字", progress.text.length > 0, progress.text);
-  check("状态文字只在一行", !progress.text.includes("\n"));
-  check("状态栏仍然属于悬浮窗", progress.insidePanel === true);
-  check("有进度时状态栏高亮", progress.active === true, `读到「${progress.text}」`);
-  check("进度结束后回到就绪", settled.active === false && settled.text === "就绪",
-    `停在「${settled.text}」`);
+  check("状态文字只在一行", progress.whiteSpace === "nowrap" && !progress.text.includes("\n"),
+    progress.whiteSpace);
+  check("有进度时状态面可见", progress.visible === true, `读到「${progress.text}」`);
+  check("进度结束后状态面淡出", settled.missing === false && settled.visible === false,
+    JSON.stringify({ missing: settled.missing, visible: settled.visible }));
+  // §11: "不要销毁 DOM 再重建". Rebuilding would restart the backdrop filter on
+  // every message, which flashes on the compositor, so this is worth pinning.
+  check("状态面是同一个节点，没有重建", settled.probe === progress.probe,
+    `${progress.probe} -> ${settled.probe}`);
 
   console.log("\n面板按钮真的接线了");
   // Clicked for real. The button existed in every earlier run and did nothing:
@@ -377,14 +432,14 @@ try {
     document.body.insertAdjacentHTML("afterbegin", '<div id="probe" style="height:10px"></div>');
   });
   const selectBox = await page.evaluate(() => {
-    const box = document.getElementById("mas-select").getBoundingClientRect();
+    const box = document.getElementById("maslingo-select").getBoundingClientRect();
     return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
   });
   await page.mouse.click(selectBox.x, selectBox.y);
   await new Promise((r) => setTimeout(r, 600));
   const selection = await page.evaluate(() => ({
-    overlay: document.querySelectorAll(".mas-selection").length,
-    status: document.getElementById("mas-status")?.textContent?.trim() || "",
+    overlay: document.querySelectorAll(".maslingo-selection").length,
+    status: document.getElementById("maslingo-status")?.textContent?.trim() || "",
   }));
   console.log(`      选择层 ${selection.overlay} 个，状态「${selection.status}」`);
   check("点击框选翻译会进入选择模式", selection.overlay === 1,
@@ -393,7 +448,7 @@ try {
   await page.keyboard.press("Escape");
   await new Promise((r) => setTimeout(r, 300));
   const escaped = await page.evaluate(() =>
-    document.querySelectorAll(".mas-selection").length);
+    document.querySelectorAll(".maslingo-selection").length);
   check("Escape 能退出选择模式", escaped === 0, `还剩 ${escaped} 个`);
 
   console.log("\n状态点反映真实连通性");
@@ -404,9 +459,9 @@ try {
   const dots = await page.evaluate(() => {
     const read = (id) => {
       const node = document.getElementById(id);
-      return { state: node.dataset.state, text: node.querySelector(".mas-dot-text").textContent.trim() };
+      return { state: node.dataset.state, text: node.querySelector(".maslingo-dot-text").textContent.trim() };
     };
-    return { backend: read("mas-dot-backend"), translation: read("mas-dot-translation") };
+    return { backend: read("maslingo-dot-backend"), translation: read("maslingo-dot-translation") };
   });
   console.log(`      后端：${dots.backend.text}（${dots.backend.state}）  翻译：${dots.translation.text}（${dots.translation.state}）`);
   check("后端检测为正常", dots.backend.state === "ok", JSON.stringify(dots.backend));

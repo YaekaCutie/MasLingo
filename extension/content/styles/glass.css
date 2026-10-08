@@ -1,207 +1,436 @@
-/* MasLingo — glass material and tokens.
+/* MasLingo — the glass material.
  *
- * The material, in one place. Every surface in this extension that floats over
- * the page (the panel, the notice, the toast) is cut from these tokens, so
- * "liquid glass" means one thing rather than four similar things.
+ * ==== Why this file is shaped the way it is ====
  *
- * The recipe, per the specification:
- *   - a translucent, low-saturation dark grey-blue body at 45–60% opacity
- *   - backdrop blur 18–24px with 120–150% saturation, plus the -webkit- prefix
- *   - a very weak white border and a soft inner highlight — never a glow
- *   - one shallow shadow to lift the pane off the artwork, and no second one
+ * The earlier version was `background: rgba(...) + backdrop-filter: blur() + a
+ * radial gradient that followed the pointer`, which is ordinary glassmorphism.
+ * The specification rejects that explicitly, and the reason is visible the moment
+ * it sits on a page: the panel reads as a flat translucent card with a border,
+ * because nothing in it behaves like a material with thickness.
  *
- * Colour discipline: status is the only thing allowed to be coloured, and it is
- * limited to four values — grey, yellow, green, red. Nothing here paints a theme
- * colour across the UI; the accent exists solely for focus rings.
+ * So the surface is built from five independent layers, each answering one
+ * question, and this file is organised in that order:
+ *
+ *   A. base       what the pane is made of          (.maslingo-glass__base)
+ *   B. depth      how thick it is                   (.maslingo-glass__depth)
+ *   C. edge       what happens at the rim           (.maslingo-glass__edge)
+ *   D. specular   where the light is                (.maslingo-glass__specular)
+ *   E. foreground the controls, above all of it     (.maslingo-glass__content)
+ *
+ * Layer C is the one whose absence was most obvious. A 1px border says "this box
+ * has an outline". A rim that is optically *different* — less blurred, slightly
+ * brighter, catching more light at the corners — says "this is the edge of a
+ * piece of glass and the page continues underneath it". That difference is a
+ * second backdrop-filter confined to a ring by a mask, so the rim genuinely
+ * changes what is behind it rather than painting over it.
+ *
+ * ==== Colour discipline ====
+ *
+ * No theme colour. The body is a low-saturation neutral slate; colour appears
+ * only in the four status values (grey / yellow / green / red), and only on
+ * status elements. There is no hue that means "MasLingo".
  */
 
-:root {
-  /* --- glass body ------------------------------------------------------- */
-  --mas-glass-tint: rgba(20, 25, 40, .52);
-  --mas-glass-tint-strong: rgba(20, 25, 40, .68);
-  --mas-glass-blur: 22px;
-  --mas-glass-sat: 135%;
-
-  /* --- glass edges ------------------------------------------------------ */
-  --mas-glass-edge: rgba(255, 255, 255, .14);
-  --mas-glass-inner: rgba(255, 255, 255, .09);
-  --mas-glass-line: rgba(255, 255, 255, .10);
-  --mas-glass-shadow: 0 10px 34px rgba(6, 10, 18, .30);
-
-  /* --- ink on glass ----------------------------------------------------- */
-  --mas-ink: #eef1f4;
-  --mas-muted: #a4adb6;
-
-  /* --- control fills (flat: separation by fill, not by outline) ---------- */
-  --mas-fill: rgba(255, 255, 255, .07);
-  --mas-fill-strong: rgba(255, 255, 255, .13);
-
-  /* --- status: the only colours in the UI ------------------------------- */
-  --mas-dot-idle: #98a1a8;      /* not run / not checked */
-  --mas-dot-working: #e0b357;   /* in progress */
-  --mas-dot-ok: #57c08a;        /* success */
-  --mas-dot-bad: #e8776a;       /* failure / unavailable */
-  --mas-err-text: #f0938a;
-
-  /* --- geometry --------------------------------------------------------- */
-  /* One horizontal inset for every child of a glass surface. Divider lines are
-     the deliberate exception: they run edge to edge, because a line that stops
-     short of the edge reads as a mistake rather than as a rule. */
-  --mas-gutter: 14px;
-  --mas-radius: 16px;
-  --mas-radius-sm: 10px;
-
-  /* --- motion ----------------------------------------------------------- */
-  /* The specification names this curve. Used for every state change that is
-     more than a fade, so the whole product moves with one accent. */
-  --mas-ease: cubic-bezier(.22, 1, .36, 1);
-  --mas-fast: .18s;
-  --mas-slow: .52s;
+@property --maslingo-morph {
+  /* Registered so it interpolates. Every layer reads it, which is what lets the
+     material follow the shape during a collapse instead of the contents sliding
+     out from under a pane that stayed the same size. */
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
 }
 
-/* Dark scheme: the same material, a little deeper. Not a different design —
-   the dark glass already reads well on white manga paper, which is the common
-   case, so light and dark differ only in how much tint is needed. */
+:root {
+  /* --- A. base material ---------------------------------------------------- */
+  --maslingo-tint: 20, 25, 40;          /* rgb triplet, so alpha stays tunable */
+  --maslingo-alpha: .52;
+  --maslingo-alpha-strong: .70;
+  --maslingo-blur: 24px;                /* spec: 18–28px */
+  --maslingo-sat: 128%;                 /* spec: 110–135% */
+  --maslingo-bright: 1.02;
+  --maslingo-contrast: .97;
+
+  /* --- B. depth ------------------------------------------------------------ */
+  --maslingo-inner-hi: rgba(255, 255, 255, .10);
+  --maslingo-inner-lo: rgba(0, 0, 0, .12);
+
+  /* --- C. edge ------------------------------------------------------------- */
+  --maslingo-glass-edge: rgba(255, 255, 255, .14);  /* the hairline the lighter surfaces share */
+  --maslingo-edge-ring: 2.5px;
+  --maslingo-edge-blur: 5px;
+  --maslingo-edge-gain: 1.12;
+
+  /* --- D. specular --------------------------------------------------------- */
+  --maslingo-spec-size: 260px;
+  --maslingo-spec-alpha: .11;
+
+  /* --- E. ink -------------------------------------------------------------- */
+  --maslingo-ink: #eef1f4;
+  --maslingo-muted: #a4adb6;
+  --maslingo-fill: rgba(255, 255, 255, .07);
+  --maslingo-fill-strong: rgba(255, 255, 255, .13);
+  --maslingo-line: rgba(255, 255, 255, .10);
+
+  /* --- status: the only colours in the product ----------------------------- */
+  --maslingo-dot-idle: #98a1a8;
+  --maslingo-dot-working: #e0b357;
+  --maslingo-dot-ok: #57c08a;
+  --maslingo-dot-bad: #e8776a;
+  --maslingo-err-text: #f0938a;
+
+  /* --- geometry ------------------------------------------------------------ */
+  --maslingo-gutter: 14px;
+  --maslingo-radius: 20px;              /* spec: 18–24px expanded */
+  --maslingo-radius-sm: 10px;
+  --maslingo-w-panel: 268px;
+  --maslingo-w-widget: 150px;
+
+  /* --- motion -------------------------------------------------------------- */
+  --maslingo-ease: cubic-bezier(.22, 1, .36, 1);
+  --maslingo-hover: 140ms;              /* spec: 100–180ms */
+  --maslingo-press: 120ms;              /* spec: 90–160ms */
+  --maslingo-morph-in: 460ms;           /* expand, spec: 350–500ms */
+  --maslingo-morph-out: 320ms;          /* collapse, spec: 250–400ms */
+  --maslingo-settle: 260ms;             /* drag release, spec: 180–350ms */
+
+  /* --- shadows: layered, never pure black (§15) ---------------------------- */
+  --maslingo-shadow-contact: 0 1px 2px rgba(8, 12, 22, .20);
+  --maslingo-shadow-outer: 0 18px 48px rgba(8, 12, 22, .28);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --mas-glass-tint: rgba(12, 16, 28, .60);
-    --mas-glass-tint-strong: rgba(12, 16, 28, .74);
-    --mas-ink: #f2f5f8;
-    --mas-muted: #b0b8c0;
-    --mas-glass-edge: rgba(255, 255, 255, .16);
-    --mas-glass-line: rgba(255, 255, 255, .12);
-    --mas-glass-shadow: 0 12px 38px rgba(0, 0, 0, .44);
-    --mas-fill: rgba(255, 255, 255, .08);
-    --mas-fill-strong: rgba(255, 255, 255, .15);
+    /* The same material, deeper. Not a second design: dark glass already reads
+       well on white manga paper, which is the common case, so the two schemes
+       differ only in how much tint the pane needs. */
+    --maslingo-alpha: .60;
+    --maslingo-alpha-strong: .76;
+    --maslingo-ink: #f2f5f8;
+    --maslingo-muted: #b0b8c0;
+    --maslingo-inner-hi: rgba(255, 255, 255, .12);
+    --maslingo-shadow-outer: 0 20px 54px rgba(0, 0, 0, .42);
   }
 }
 
-/* --- the material ------------------------------------------------------- */
-
-/* Applied to every floating surface. `position: fixed` pages are responsible
-   for their own placement; this only describes the pane. */
-.mas-glass {
-  box-sizing: border-box;
-  border: 1px solid var(--mas-glass-edge);
-  background: var(--mas-glass-tint);
-  -webkit-backdrop-filter: blur(var(--mas-glass-blur)) saturate(var(--mas-glass-sat));
-  backdrop-filter: blur(var(--mas-glass-blur)) saturate(var(--mas-glass-sat));
-  /* Inner highlight and the single lift shadow, in one declaration so no
-     surface can accidentally add a third. */
-  box-shadow: inset 0 1px 0 var(--mas-glass-inner), var(--mas-glass-shadow);
-  color: var(--mas-ink);
+/* --- the pane ------------------------------------------------------------ */
+/*
+ * A positioned, clipped box. Everything visual is a child layer, so no layer can
+ * accidentally end up with another's job and the stack can be restacked without
+ * touching the layout.
+ */
+.maslingo-surface {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--maslingo-radius);
+  color: var(--maslingo-ink);
   font: 13px/1.45 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-}
-
-/* Browsers without backdrop-filter get an opaque-enough pane instead of an
-   unreadable one: the blur is the effect, but legibility is the requirement. */
-@supports not (backdrop-filter: blur(1px)) {
-  .mas-glass { background: var(--mas-glass-tint-strong); }
-}
-
-/* Flat switch: a filled track, no shadow under the thumb.
- *
- * No accent colour: the specification allows colour only for status, and an
- * "on" toggle is a control state, not a status. A light track with a dark thumb
- * reads as on/off on its own and keeps the pane free of a theme colour. */
-.mas-switch { position: relative; display: inline-flex; cursor: pointer; }
-.mas-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.mas-switch-track {
+  /* Host pages inject resets, and the panel is the one surface with no Shadow
+     DOM to hide behind. Every inherited property that would visibly break it is
+     pinned here rather than hoped for. */
+  font-feature-settings: normal;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  text-indent: 0;
+  direction: ltr;
+  writing-mode: horizontal-tb;
   box-sizing: border-box;
-  width: 40px;
-  height: 23px;
-  padding: 2px;
-  border-radius: 999px;
-  background: var(--mas-fill-strong);
-  display: flex;
-  align-items: center;
-  transition: background .2s var(--mas-ease);
+  -webkit-font-smoothing: antialiased;
 }
-.mas-switch-thumb {
-  width: 19px;
-  height: 19px;
+.maslingo-surface *,
+.maslingo-surface *::before,
+.maslingo-surface *::after { box-sizing: border-box; }
+
+/* A. base — the material itself. */
+.maslingo-glass__base {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    rgba(var(--maslingo-tint), calc(var(--maslingo-alpha) + .06)) 0%,
+    rgba(var(--maslingo-tint), var(--maslingo-alpha)) 46%,
+    rgba(var(--maslingo-tint), calc(var(--maslingo-alpha) + .05)) 100%
+  );
+  -webkit-backdrop-filter:
+    blur(var(--maslingo-blur)) saturate(var(--maslingo-sat))
+    brightness(var(--maslingo-bright)) contrast(var(--maslingo-contrast));
+  backdrop-filter:
+    blur(var(--maslingo-blur)) saturate(var(--maslingo-sat))
+    brightness(var(--maslingo-bright)) contrast(var(--maslingo-contrast));
+  pointer-events: none;
+}
+
+/* B. depth — thickness, not a 3D bevel.
+ *
+ * Light comes from above, so the top inner edge catches a hairline of light and
+ * the bottom inner edge falls into a shallow shadow. Both sit at the threshold of
+ * visibility: the failure mode here is a pane that looks like moulded plastic. */
+.maslingo-glass__depth {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, .055) 0%,
+    rgba(255, 255, 255, .012) 12%,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(0, 0, 0, 0) 68%,
+    rgba(0, 0, 0, .07) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 var(--maslingo-inner-hi),
+    inset 0 -1px 0 var(--maslingo-inner-lo),
+    inset 0 0 22px rgba(255, 255, 255, .022);
+  pointer-events: none;
+}
+
+/* C. edge — the rim.
+ *
+ * Two things happen here, and both are needed:
+ *
+ *   1. A second backdrop-filter, masked to a thin ring. The rim therefore shows
+ *      the page through a *sharper and brighter* filter than the body does. That
+ *      is a real optical difference at the boundary, which is what reads as glass
+ *      rather than as a rectangle with a border drawn on it.
+ *   2. A soft ring gradient, stronger at the top and at the corners, so the rim
+ *      has structure instead of uniform brightness.
+ *
+ * The mask is the padding-box xor border-box trick: `content-box` keeps only the
+ * area inside the padding, and excluding it from the full box leaves the ring. */
+.maslingo-glass__edge {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  padding: var(--maslingo-edge-ring);
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--maslingo-edge-blur)) brightness(var(--maslingo-edge-gain)) saturate(1.06);
+  backdrop-filter: blur(var(--maslingo-edge-blur)) brightness(var(--maslingo-edge-gain)) saturate(1.06);
+  background: conic-gradient(
+    from 200deg at 50% 50%,
+    rgba(255, 255, 255, .30) 0deg,
+    rgba(255, 255, 255, .06) 42deg,
+    rgba(255, 255, 255, .16) 92deg,
+    rgba(255, 255, 255, .05) 160deg,
+    rgba(255, 255, 255, .13) 200deg,
+    rgba(255, 255, 255, .05) 268deg,
+    rgba(255, 255, 255, .22) 320deg,
+    rgba(255, 255, 255, .30) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: calc(1 - .35 * var(--maslingo-morph));
+  transition: opacity var(--maslingo-hover) ease;
+}
+
+/* D. specular — where the light is.
+ *
+ * One soft spot, large and dim, moved by --maslingo-mx/--maslingo-my. There is
+ * deliberately no keyframe loop: the specification names an endlessly travelling
+ * highlight as forbidden, and a light that keeps moving while nothing is happening
+ * is the clearest tell of a fake material. With no pointer input the spot rests,
+ * and the small states (hover, drag) change its gain instead of its position. */
+.maslingo-glass__specular {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+.maslingo-glass__specular i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--maslingo-spec-size);
+  height: var(--maslingo-spec-size);
+  margin: calc(var(--maslingo-spec-size) / -2) 0 0 calc(var(--maslingo-spec-size) / -2);
   border-radius: 50%;
-  background: #fff;
-  transition: transform .22s var(--mas-ease), background .22s ease;
-}
-.mas-switch input:checked + .mas-switch-track { background: rgba(255, 255, 255, .82); }
-.mas-switch input:checked + .mas-switch-track .mas-switch-thumb {
-  /* 40 - 2*2 padding - 19 thumb = 17 */
-  transform: translateX(17px);
-  background: #1b2029;
+  background: radial-gradient(
+    closest-side,
+    rgba(255, 255, 255, var(--maslingo-spec-alpha)),
+    rgba(255, 255, 255, calc(var(--maslingo-spec-alpha) * .35)) 52%,
+    rgba(255, 255, 255, 0) 78%
+  );
+  /* Written by JS as two custom properties and interpolated there by a
+     requestAnimationFrame loop — not by a CSS transition, because the spec asks
+     for easing with inertia rather than a fixed curve. */
+  transform: translate3d(var(--maslingo-mx, 50%), var(--maslingo-my, 18%), 0);
+  opacity: calc(1 - .45 * var(--maslingo-morph));
+  will-change: transform;
 }
 
-/* --- shared primitives -------------------------------------------------- */
-/* Fills separate controls; outlines are reserved for focus. */
+/* E. foreground — never blurred, never under a layer. */
+.maslingo-glass__content {
+  position: relative;
+  z-index: 4;
+}
 
-.mas-btn {
+/* --- state-driven light (§19) -------------------------------------------- */
+/*
+ * The material responds to what the user is doing, then goes quiet. This is the
+ * difference between "ambient light" and "an animation that plays":
+ *
+ *   idle      nothing moves
+ *   hover     the rim warms very slightly
+ *   dragging  rim and specular both lift, and the pane thickens
+ *   settling  back to idle on the release curve
+ */
+.maslingo-panel[data-state="hover"] .maslingo-glass__edge { opacity: calc(1 - .35 * var(--maslingo-morph) + .12); }
+.maslingo-panel[data-state="dragging"] {
+  --maslingo-alpha: .58;
+  --maslingo-spec-alpha: .16;
+  --maslingo-edge-gain: 1.14;
+}
+.maslingo-panel[data-state="dragging"] .maslingo-glass__edge { opacity: 1; }
+
+/* --- shadows (§15) ------------------------------------------------------- */
+/* Three parts, each with a job: a contact shadow that seats the pane, a wide
+   outer shadow that lifts it, and the inner highlight that belongs to depth.
+   None is pure black — a neutral black shadow on a coloured page reads as a grey
+   halo around the panel. */
+.maslingo-panel {
+  box-shadow: var(--maslingo-shadow-contact), var(--maslingo-shadow-outer);
+}
+
+/* --- controls ------------------------------------------------------------ */
+/*
+ * Controls are translucent fills on the pane, not glass cards of their own. The
+ * specification forbids the nested-glass pattern, and it is also the cheaper
+ * choice: a page running auto translate may hold hundreds of painted regions, so
+ * the expensive material stays on the one window and the few surfaces that carry
+ * state.
+ */
+.maslingo-btn {
   display: block;
   width: 100%;
   margin-top: 10px;
-  padding: 9px var(--mas-gutter);
+  padding: 9px var(--maslingo-gutter);
   border: 0;
-  border-radius: var(--mas-radius-sm);
-  background: var(--mas-fill);
-  color: var(--mas-ink);
+  border-radius: var(--maslingo-radius-sm);
+  background: var(--maslingo-fill);
+  color: var(--maslingo-ink);
   font: 500 12px/1.2 inherit;
   font-family: inherit;
   cursor: pointer;
-  /* Only compositor-friendly properties animate: no layout, no repaint of the
-     pane behind it. */
-  transition: background var(--mas-fast) ease, transform var(--mas-fast) var(--mas-ease);
+  transition:
+    background var(--maslingo-hover) ease,
+    transform var(--maslingo-hover) var(--maslingo-ease),
+    box-shadow var(--maslingo-hover) ease;
 }
-.mas-btn:hover:not(:disabled) { background: var(--mas-fill-strong); }
-.mas-btn:active:not(:disabled) { transform: scale(.985); }
-.mas-btn:disabled { opacity: .55; cursor: default; }
-.mas-btn-small { width: auto; margin: 0; padding: 8px 12px; white-space: nowrap; }
+.maslingo-btn:hover:not(:disabled) {
+  background: var(--maslingo-fill-strong);
+  /* Hover is a gloss change, not a size change: 1.01 is the ceiling. */
+  transform: scale(1.01);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07);
+}
+.maslingo-btn:active:not(:disabled) {
+  transform: scale(.985);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .18);
+  transition-duration: var(--maslingo-press);
+}
+.maslingo-btn:disabled { opacity: .55; cursor: default; }
+.maslingo-btn-small { width: auto; margin: 0; padding: 8px 12px; white-space: nowrap; }
 
-.mas-select {
+.maslingo-select {
   flex: 1 1 auto;
   min-width: 0;
   padding: 8px 10px;
   border: 0;
-  border-radius: var(--mas-radius-sm);
-  background: var(--mas-fill);
-  color: var(--mas-ink);
+  border-radius: var(--maslingo-radius-sm);
+  background: var(--maslingo-fill);
+  color: var(--maslingo-ink);
   font: 12px/1.2 inherit;
   font-family: inherit;
 }
-.mas-select option { color: #17191c; }
+.maslingo-select option { color: #17191c; }
 
-.mas-link {
+.maslingo-link {
   padding: 5px 8px;
   margin-left: -8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--mas-muted);
+  color: var(--maslingo-muted);
   font: 12px/1.2 inherit;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--mas-fast) ease, color var(--mas-fast) ease;
+  transition: background var(--maslingo-hover) ease, color var(--maslingo-hover) ease;
 }
-.mas-link:hover { background: var(--mas-fill); color: var(--mas-ink); }
+.maslingo-link:hover { background: var(--maslingo-fill); color: var(--maslingo-ink); }
 
-/* A rule between bands. Edge to edge by design — see --mas-gutter. */
-.mas-rule {
+/* A rule between bands. Edge to edge: a separator that stops short of the edge
+   reads as a mistake rather than as a rule. */
+.maslingo-rule {
   height: 1px;
   margin: 0;
   border: 0;
-  background: var(--mas-glass-line);
+  background: var(--maslingo-line);
 }
 
-/* Focus. The panel is injected into arbitrary pages, any of which may reset
-   outlines, so every control draws its own. */
-.mas-glass :focus-visible {
-  outline: 2px solid rgba(255, 255, 255, .78);
+/* Flat switch: a filled track, no shadow under the thumb.
+   No accent colour — an "on" toggle is a control state, not a status, and the
+   specification limits colour to status. */
+.maslingo-switch { position: relative; display: inline-flex; cursor: pointer; }
+.maslingo-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.maslingo-switch-track {
+  box-sizing: border-box;
+  width: 40px;
+  height: 23px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--maslingo-fill-strong);
+  display: flex;
+  align-items: center;
+  transition: background .2s var(--maslingo-ease), box-shadow .2s ease;
+}
+.maslingo-switch-thumb {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .22s var(--maslingo-ease), background .22s ease;
+}
+.maslingo-switch input:checked + .maslingo-switch-track { background: rgba(255, 255, 255, .82); }
+.maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
+  /* 40 - 2*2 padding - 19 thumb = 17 */
+  transform: translateX(17px);
+  background: #1b2029;
+}
+
+/* Focus: clearly visible, never a neon ring. */
+.maslingo-surface :focus-visible {
+  outline: 2px solid rgba(255, 255, 255, .80);
   outline-offset: 2px;
   border-radius: 6px;
 }
-.mas-glass .mas-select:focus-visible { outline-offset: -1px; }
+.maslingo-surface .maslingo-select:focus-visible { outline-offset: -1px; }
+
+/* Host pages without backdrop-filter get a denser pane rather than an
+   unreadable one. The blur is the effect; legibility is the requirement. */
+@supports not (backdrop-filter: blur(1px)) {
+  .maslingo-glass__base { background: rgba(var(--maslingo-tint), .88); }
+  .maslingo-glass__edge { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .mas-btn { transition: none; }
-  .mas-btn:active:not(:disabled) { transform: none; }
-  .mas-switch-track,
-  .mas-switch-thumb { transition-duration: .01ms; }
+  /* Fewer movements, not less feedback: durations collapse so every state change
+     still happens, it just arrives immediately. */
+  .maslingo-btn,
+  .maslingo-link,
+  .maslingo-switch-track,
+  .maslingo-switch-thumb,
+  .maslingo-glass__edge { transition-duration: .01ms; }
+  .maslingo-btn:hover:not(:disabled),
+  .maslingo-btn:active:not(:disabled) { transform: none; }
 }

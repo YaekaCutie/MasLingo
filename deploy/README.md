@@ -311,10 +311,10 @@ python3 -m venv .venv
 HF_HOME=$PWD/.hf .venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('kha-white/manga-ocr-base')"
 ```
 
-把 `deploy/mas-backend.service` 拷到 `/etc/systemd/system/`，按里面注释改路径和用户，然后：
+把 `deploy/maslingo-backend.service` 拷到 `/etc/systemd/system/`，按里面注释改路径和用户，然后：
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now mas-backend
+sudo systemctl daemon-reload && sudo systemctl enable --now maslingo-backend
 ```
 
 TLS 用系统 Caddy（`sudo apt install caddy`），Caddyfile 把 `reverse_proxy api:8001` 改成 `reverse_proxy 127.0.0.1:8001`。

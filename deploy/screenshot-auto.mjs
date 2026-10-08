@@ -52,7 +52,7 @@ const server = http.createServer((request, response) => {
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const pageUrl = `http://127.0.0.1:${server.address().port}/`;
 
-const workDir = mkdtempSync(join(tmpdir(), "mas-shot-auto-"));
+const workDir = mkdtempSync(join(tmpdir(), "maslingo-shot-auto-"));
 const extensionDir = join(workDir, "extension");
 cpSync(join(repoRoot, "extension"), extensionDir, { recursive: true });
 const manifestPath = join(extensionDir, "manifest.json");
@@ -95,18 +95,18 @@ try {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     await new Promise((r) => setTimeout(r, 1500));
     painted = await page.evaluate(() =>
-      document.querySelectorAll("#mas-layer canvas.mas-result").length);
+      document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length);
     const boxes = await page.evaluate(() =>
-      document.querySelectorAll("#mas-layer .mas-box").length);
+      document.querySelectorAll("#maslingo-layer .maslingo-box").length);
     if (painted > 0 && boxes === 0) break;
   }
 
   const summary = await page.evaluate(() => {
-    const status = document.getElementById("mas-status");
-    const panel = document.getElementById("mas-panel");
+    const status = document.getElementById("maslingo-status");
+    const panel = document.getElementById("maslingo-panel");
     return {
-      canvases: document.querySelectorAll("#mas-layer canvas.mas-result").length,
-      boxes: document.querySelectorAll("#mas-layer .mas-box").length,
+      canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,
+      boxes: document.querySelectorAll("#maslingo-layer .maslingo-box").length,
       status: status?.textContent?.trim() || "",
       panelText: panel?.textContent?.replace(/\s+/g, " ").slice(0, 90) || "",
     };
