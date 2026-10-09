@@ -73,7 +73,7 @@
   width: 20px;
   height: 20px;
   flex: 0 0 auto;
-  border: 2px solid rgba(255, 255, 255, .28);
+  border: 2px solid rgba(0, 0, 0, .10);
   border-top-color: var(--maslingo-ink);
   border-radius: 50%;
   animation: maslingo-loading-spin .8s linear infinite;
@@ -108,7 +108,7 @@
   max-width: min(340px, calc(100vw - 32px));
   padding: 11px 15px;
   border-radius: 14px;
-  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .14));
+  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .60));
   border-left-width: 3px;
   border-left-color: var(--maslingo-dot-ok);
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
@@ -139,7 +139,7 @@
   max-width: min(360px, calc(100vw - 32px));
   padding: 10px 14px;
   border-radius: 14px;
-  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .14));
+  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .60));
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
   -webkit-backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
   backdrop-filter: blur(16px) saturate(var(--maslingo-sat));

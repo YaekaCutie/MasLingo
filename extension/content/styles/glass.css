@@ -42,18 +42,29 @@
 
 :root {
   /* --- A. base material ---------------------------------------------------- */
-  --maslingo-tint: 20, 25, 40;          /* rgb triplet, so alpha stays tunable */
-  /* .38, down from .52. At .52 the panel measured as a flat dark grey over any
-     backdrop — the blur was happening but the tint was drowning it, so it read as
-     painted plastic rather than glass. Transparency is what makes the backdrop
-     legible through the material, and legibility of the backdrop *is* the effect. */
-  --maslingo-alpha-base: .44;
+  /*
+   * Light glass, and light only.
+   *
+   * The material was dark and the two schemes differed only in how much tint it
+   * needed. It is now a light frosted pane in both, because that is what was
+   * asked for — and because it is the right call for the product: this panel sits
+   * on top of white manga paper most of the time, and a light pane over white
+   * paper reads as part of the page rather than as a dark box bolted onto it.
+   *
+   * The `prefers-color-scheme: dark` override is gone rather than inverted. A
+   * "light theme" that flips back to dark on a machine with dark mode on is not
+   * the thing that was asked for.
+   */
+  --maslingo-tint: 250, 250, 252;       /* rgb triplet, so alpha stays tunable */
+  /* Light glass needs more opacity than dark for the same text contrast: dark
+     ink on a bright material loses legibility much faster than the reverse. */
+  --maslingo-alpha-base: .74;
   --maslingo-alpha: var(--maslingo-alpha-base);
-  --maslingo-alpha-strong: .58;
+  --maslingo-alpha-strong: .88;
   --maslingo-blur: 28px;                /* spec: 18–28px; top of range */
   --maslingo-sat: 135%;                 /* spec: 110–135%; top of range */
-  --maslingo-bright: 1.02;
-  --maslingo-contrast: .97;
+  --maslingo-bright: 1.06;
+  --maslingo-contrast: 1.02;
 
   /* Type scale, in one place. Apple's hierarchy comes mostly from a few well
      separated sizes rather than from many weights. */
@@ -62,32 +73,38 @@
   --maslingo-font-small: 11.5px;
 
   /* --- B. depth ------------------------------------------------------------ */
-  --maslingo-inner-hi: rgba(255, 255, 255, .10);
-  --maslingo-inner-lo: rgba(0, 0, 0, .12);
+  /* A bright top edge and a faint dark bottom edge: the pane catching light from
+     above, which is what gives light glass its thickness. */
+  --maslingo-inner-hi: rgba(255, 255, 255, .85);
+  --maslingo-inner-lo: rgba(0, 0, 0, .05);
 
   /* --- C. edge ------------------------------------------------------------- */
-  --maslingo-glass-edge: rgba(255, 255, 255, .14);  /* the hairline the lighter surfaces share */
+  --maslingo-glass-edge: rgba(255, 255, 255, .60);  /* the hairline the lighter surfaces share */
   --maslingo-edge-ring: 2.5px;
   --maslingo-edge-blur: 5px;
   --maslingo-edge-gain: 1.12;
 
   /* --- D. specular --------------------------------------------------------- */
   --maslingo-spec-size: 260px;
-  --maslingo-spec-alpha: .11;
+  --maslingo-spec-alpha: .55;
 
   /* --- E. ink -------------------------------------------------------------- */
-  --maslingo-ink: #eef1f4;
-  --maslingo-muted: #b6bfc8;
-  --maslingo-fill: rgba(255, 255, 255, .07);
-  --maslingo-fill-strong: rgba(255, 255, 255, .13);
-  --maslingo-line: rgba(255, 255, 255, .10);
+  /* Apple's own label colours: near-black primary, and a secondary that is the
+     same hue at 60% so the two never look like different greys. */
+  --maslingo-ink: #1c1e21;
+  --maslingo-muted: #555b66;
+  --maslingo-fill: rgba(120, 120, 128, .13);
+  --maslingo-fill-strong: rgba(120, 120, 128, .22);
+  --maslingo-line: rgba(0, 0, 0, .10);
 
   /* --- status: the only colours in the product ----------------------------- */
-  --maslingo-dot-idle: #98a1a8;
-  --maslingo-dot-working: #e0b357;
-  --maslingo-dot-ok: #57c08a;
-  --maslingo-dot-bad: #e8776a;
-  --maslingo-err-text: #f0938a;
+  /* Darkened from the values used on the dark material: these now sit on a
+     bright pane, where the lighter originals washed out. */
+  --maslingo-dot-idle: #8e8e93;
+  --maslingo-dot-working: #c98a12;
+  --maslingo-dot-ok: #248f52;
+  --maslingo-dot-bad: #d33a3f;
+  --maslingo-err-text: #b3261e;
 
   /* --- geometry ------------------------------------------------------------ */
   --maslingo-gutter: 14px;
@@ -109,23 +126,10 @@
   --maslingo-settle: 260ms;             /* drag release, spec: 180–350ms */
 
   /* --- shadows: layered, never pure black (§15) ---------------------------- */
-  --maslingo-shadow-contact: 0 1px 2px rgba(8, 12, 22, .20);
-  --maslingo-shadow-outer: 0 18px 48px rgba(8, 12, 22, .28);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* The same material, deeper. Not a second design: dark glass already reads
-       well on white manga paper, which is the common case, so the two schemes
-       differ only in how much tint the pane needs. */
-    --maslingo-alpha-base: .60;
-    --maslingo-alpha: var(--maslingo-alpha-base);
-    --maslingo-alpha-strong: .76;
-    --maslingo-ink: #f2f5f8;
-    --maslingo-muted: #b0b8c0;
-    --maslingo-inner-hi: rgba(255, 255, 255, .12);
-    --maslingo-shadow-outer: 0 20px 54px rgba(0, 0, 0, .42);
-  }
+  /* Soft and neutral. On a bright pane a black shadow reads as dirt rather than
+     as depth, so these are greyer and much lighter than the dark-material pair. */
+  --maslingo-shadow-contact: 0 1px 2px rgba(16, 20, 30, .10);
+  --maslingo-shadow-outer: 0 12px 36px rgba(16, 20, 30, .16);
 }
 
 /* --- the pane ------------------------------------------------------------ */
@@ -358,17 +362,17 @@
      width. The gradient is 1px of light at the top edge and nothing at the
      bottom, so it suggests a surface catching light from above rather than a
      bevel. */
-  border: 1px solid rgba(255, 255, 255, .10);
+  border: 1px solid rgba(0, 0, 0, .07);
   border-radius: var(--maslingo-radius-sm);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .03));
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .58));
   color: var(--maslingo-ink);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  box-shadow: 0 1px 1.5px rgba(16, 20, 30, .06);
   transition:
     background var(--maslingo-hover) ease,
     border-color var(--maslingo-hover) ease,
@@ -376,18 +380,16 @@
     box-shadow var(--maslingo-hover) ease;
 }
 .maslingo-btn:hover:not(:disabled) {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .06));
-  border-color: rgba(255, 255, 255, .16);
+  background: linear-gradient(180deg, #fff, rgba(255, 255, 255, .82));
+  border-color: rgba(0, 0, 0, .10);
   /* Hover is a gloss change, not a size change: 1.01 is the ceiling. */
   transform: scale(1.01);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10);
+  box-shadow: 0 2px 5px rgba(16, 20, 30, .10);
 }
 .maslingo-btn:active:not(:disabled) {
   transform: scale(.985);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .02));
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .22);
+  background: linear-gradient(180deg, rgba(120, 120, 128, .18), rgba(120, 120, 128, .12));
+  box-shadow: inset 0 1.5px 4px rgba(16, 20, 30, .14);
   transition-duration: var(--maslingo-press);
 }
 .maslingo-btn:disabled { opacity: .45; cursor: default; }
@@ -400,15 +402,15 @@
   /* Same hairline and top-lit gradient as the buttons, so the two controls read
      as the same family. They previously had identical flat fills but different
      corner radii and no borders, which made the row look assembled from parts. */
-  border: 1px solid rgba(255, 255, 255, .10);
+  border: 1px solid rgba(0, 0, 0, .07);
   border-radius: var(--maslingo-radius-sm);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .03));
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .58));
   color: var(--maslingo-ink);
   font-size: 12px;
   line-height: 1.2;
   font-family: inherit;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  box-shadow: 0 1px 1.5px rgba(16, 20, 30, .06);
   cursor: pointer;
 }
 .maslingo-select option { color: #17191c; }
@@ -453,8 +455,8 @@
   height: 23px;
   padding: 2px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, .16);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
+  background: rgba(120, 120, 128, .26);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .04);
   display: flex;
   align-items: center;
   transition: background .22s var(--maslingo-ease), box-shadow .22s var(--maslingo-ease);
@@ -463,23 +465,23 @@
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, .74);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .30);
+  background: #fff;
+  box-shadow: 0 1px 2.5px rgba(16, 20, 30, .28);
   transition: transform .24s var(--maslingo-ease), background .24s var(--maslingo-ease),
               box-shadow .24s var(--maslingo-ease);
 }
 .maslingo-switch input:checked + .maslingo-switch-track {
-  background: rgba(255, 255, 255, .38);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12);
+  background: rgba(28, 30, 33, .82);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .10);
 }
 .maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
   /* 40 - 2*2 padding - 19 thumb = 17 */
   transform: translateX(17px);
   background: #fff;
-  box-shadow: 0 1.5px 3px rgba(0, 0, 0, .38);
+  box-shadow: 0 1.5px 3.5px rgba(16, 20, 30, .34);
 }
 .maslingo-switch input:focus-visible + .maslingo-switch-track {
-  outline: 2px solid rgba(255, 255, 255, .80);
+  outline: 2px solid rgba(28, 30, 33, .55);
   outline-offset: 2px;
 }
 
@@ -487,7 +489,7 @@
 /* No border-radius here: this selector is (0,2,0) and would override the
    controls' own 8/10px corners, so tabbing visibly re-rounded every button. */
 .maslingo-surface :focus-visible {
-  outline: 2px solid rgba(255, 255, 255, .80);
+  outline: 2px solid rgba(28, 30, 33, .55);
   outline-offset: 2px;
 }
 .maslingo-surface .maslingo-select:focus-visible { outline-offset: -1px; }

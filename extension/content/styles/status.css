@@ -23,7 +23,12 @@
 .maslingo-status {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  /* Lifted while the collapsed pill is docked in this same corner, so the two
+     stack against one right edge instead of overlapping. panel.js writes the
+     lift once the collapse animation has settled and measures the real pill
+     height; 0px is the expanded case, where the panel's own reserve keeps the
+     space free. */
+  bottom: calc(16px + var(--maslingo-status-lift, 0px));
   z-index: 2147483646;
   max-width: min(340px, calc(100vw - 32px));
   border-radius: 14px;
@@ -169,7 +174,7 @@
 
 /* Focus forwards to the track, because the input itself is 0x0 and invisible. */
 .maslingo-switch input:focus-visible + .maslingo-switch-track {
-  outline: 2px solid rgba(255, 255, 255, .80);
+  outline: 2px solid rgba(28, 30, 33, .55);
   outline-offset: 2px;
 }
 

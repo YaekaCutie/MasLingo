@@ -273,3 +273,21 @@
   .maslingo-panel-settling { animation: none; }
   .maslingo-panel-collapsed .maslingo-widget i { animation: none !important; }
 }
+
+/* --- docked (collapsed) --------------------------------------------------- */
+/*
+ * The collapsed pill parks in the bottom-right corner, DOCK_INSET from both
+ * edges, with its right edge lined up with the status surface above it.
+ *
+ * There is deliberately no `transition: none` here. That was the first attempt,
+ * and it silently killed the collapse animation: this class lands at the same
+ * moment as `.maslingo-panel-collapsed`, and the shorthand cancelled the
+ * `--maslingo-morph` transition that the class beside it depends on — measured
+ * as zero intermediate morph values, i.e. the panel snapped instead of morphing.
+ * It was also unnecessary: the panel's transition list covers the morph, the
+ * width and the radius, not left/top/right/bottom, so the move is already
+ * instantaneous.
+ */
+.maslingo-panel-docked {
+  cursor: pointer;
+}

@@ -51,6 +51,10 @@ globalThis.MAS_panel = (() => {
   // outside the clipping layer entirely.
   let tracker = null;
   let dragging = null;
+  // Where the panel sat before it was docked, so expanding puts it back rather
+  // than dumping it in the stylesheet's default corner and losing the user's
+  // arrangement. Null means it has never been positioned by hand.
+  let lastFreePosition = null;
   let typing = null;
   let resetTimer = null;
 
@@ -441,12 +445,14 @@ globalThis.MAS_panel = (() => {
     // applies that keyframe — so the saved position would be the *scaled* box,
     // roughly 4px right and 5px down, and the panel would reappear offset after
     // the next reload.
-    writeStore({
-      [POSITION_KEY]: {
-        left: Math.round(originLeft + x),
-        top: Math.round(originTop + y),
-      },
-    });
+    const committed = {
+      left: Math.round(originLeft + x),
+      top: Math.round(originTop + y),
+    };
+    writeStore({ [POSITION_KEY]: committed });
+    // Kept so that expanding a docked pill returns the panel to where the user
+    // actually put it, instead of to the stylesheet's default corner.
+    lastFreePosition = committed;
     // Lifts back with a short overshoot instead of snapping straight.
     globalThis.MAS_glass?.settle?.(root);
   }
@@ -467,11 +473,68 @@ globalThis.MAS_panel = (() => {
 
   // --- collapse -------------------------------------------------------------
 
+  /** Distance the docked pill keeps from the window corner. */
+  const DOCK_INSET = 14;
+
+  /**
+   * Park the collapsed pill in the bottom-right corner.
+   *
+   * Collapsed, the panel is a 150×37 capsule with no drag handle's worth of
+   * surface and no reason to be anywhere in particular — leaving it wherever it
+   * was last dragged means it ends up mid-page, half over the artwork, and the
+   * user has to hunt for it. Docking it to the corner is what "regular" should
+   * mean for a collapsed control.
+   *
+   * The status surface lives in the same corner, so it is lifted above the pill
+   * rather than left underneath it: both stay pinned to the same right edge, one
+   * above the other, which is the only arrangement where the corner still reads
+   * as ordered.
+   */
+  function dockCollapsed() {
+    root.classList.add("maslingo-panel-docked");
+    root.style.left = "auto";
+    root.style.top = "auto";
+    root.style.right = `${DOCK_INSET}px`;
+    root.style.bottom = `${DOCK_INSET}px`;
+    root.style.transform = "";
+    tracker?.refresh?.();
+    // Measured after the morph settles: reading the height mid-animation gives a
+    // number that is true for one frame and wrong for the ones the user looks at.
+    setTimeout(() => {
+      if (!root?.classList.contains("maslingo-panel-docked")) return;
+      const height = Math.round(root.getBoundingClientRect().height);
+      document.documentElement.style.setProperty(
+        "--maslingo-status-lift", `${height + 8}px`,
+      );
+    }, 360);
+  }
+
+  /** Hand the panel back to the user's own position, or to the default corner. */
+  function undock() {
+    root.classList.remove("maslingo-panel-docked");
+    document.documentElement.style.setProperty("--maslingo-status-lift", "0px");
+    if (lastFreePosition) {
+      applyPosition(clamp(lastFreePosition.left, lastFreePosition.top));
+    } else {
+      // Never dragged: back to the stylesheet's own anchoring.
+      root.style.left = "";
+      root.style.top = "";
+      root.style.right = "";
+      root.style.bottom = "";
+      tracker?.refresh?.();
+    }
+  }
+
   function setCollapsed(collapsed) {
     // One call flips the class every material layer reads through
     // --maslingo-morph, and picks the longer expand curve (§20). Keeping it in
     // MAS_glass means the collapse timing and the lighting live together.
     globalThis.MAS_glass?.setMorph?.(root, collapsed);
+    if (collapsed) {
+      dockCollapsed();
+    } else {
+      undock();
+    }
     writeStore({ [COLLAPSED_KEY]: collapsed });
   }
 
@@ -598,6 +661,7 @@ globalThis.MAS_panel = (() => {
       // and handed back on the next frame.
       root.classList.add("maslingo-panel-instant");
       globalThis.MAS_glass?.setMorph?.(root, true);
+      dockCollapsed();
       requestAnimationFrame(() => root.classList.remove("maslingo-panel-instant"));
     }
     // Clamped on restore, not applied raw.
@@ -606,6 +670,9 @@ globalThis.MAS_panel = (() => {
     // the panel to the far right on a wide monitor, reopen on a laptop, and the
     // stored `left` puts it past the right edge — the panel is mounted, running,
     // and completely invisible, which reads as "it disappeared".
+    lastFreePosition = cfg.panelPosition
+      ? { left: cfg.panelPosition.left, top: cfg.panelPosition.top }
+      : null;
     applyPosition(cfg.panelPosition ? clamp(cfg.panelPosition.left, cfg.panelPosition.top) : null);
 
     root.querySelector("#maslingo-auto").addEventListener("change", (event) => {
