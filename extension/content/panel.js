@@ -41,6 +41,11 @@ globalThis.MAS_panel = (() => {
   // panel still mirrors the message onto the collapsed widget — so it still owns
   // a dismiss timer, for that mirror rather than for the line itself.
   let statusTimer = null;
+  // Growing re-check delays, in ms. Capped at a minute so a long-lived page costs
+  // one request a minute, not one a second.
+  const BACKEND_RETRY_DELAYS = [3000, 6000, 12000, 25000, 45000, 60000];
+  let backendRetryTimer = null;
+  let backendRetryStep = 0;
   // Kept so the material engine can be told when the pane moves; its pointer
   // mapping is measured, and a stale measurement puts the specular light
   // outside the clipping layer entirely.
@@ -162,11 +167,11 @@ globalThis.MAS_panel = (() => {
   /**
    * Is the OCR backend reachable?
    *
-   * Called on load and whenever the user asks. A failure is reported as a short
-   * sentence, never as a stack or a raw body — the people reading this are
-   * reading manga.
+   * Called on load, after a re-check, and on a backoff when it fails. A failure
+   * is reported as a short sentence, never as a stack or a raw body — the people
+   * reading this are reading manga.
    */
-  async function checkBackend({ quiet = false } = {}) {
+  async function checkBackend({ quiet = false, retry = true } = {}) {
     const dot = root.querySelector("#maslingo-dot-backend");
     setDot(dot, STATE.WORKING, "后端检测中");
     if (!quiet) status("正在检测后端……");
@@ -182,11 +187,45 @@ globalThis.MAS_panel = (() => {
     }
     if (result?.ok) {
       setDot(dot, STATE.OK, "后端正常");
+      backendRetryStep = 0;
+      if (backendRetryTimer) {
+        clearTimeout(backendRetryTimer);
+        backendRetryTimer = null;
+      }
       return true;
     }
+
     setDot(dot, STATE.BAD, "后端未连接");
-    if (!quiet) status("本地后端未启动", "error");
+    if (!quiet) {
+      // Says what to do, not just what is wrong. The common case is a browser
+      // that was open before the engine was installed, so "未启动" on its own
+      // reads as a dead end.
+      status("本地引擎未连接 —— 确认 MasLingo 引擎正在运行，稍候会自动重连", "error");
+    }
+    if (retry) scheduleBackendRetry();
     return false;
+  }
+
+  /**
+   * Re-check on a growing delay until the backend answers.
+   *
+   * The engine and the browser are started independently — the engine at login,
+   * Chrome whenever the user opens it — so "not connected yet" is a normal state
+   * that resolves itself, and a page reload should not be how the user finds out.
+   * The delay grows so this is never a tight poll: §五 requires a timeout and a
+   * backoff rather than high-frequency polling, and a page left open all day must
+   * not sit there issuing a request every second.
+   */
+  function scheduleBackendRetry() {
+    if (backendRetryTimer) return;
+    const delay = BACKEND_RETRY_DELAYS[
+      Math.min(backendRetryStep, BACKEND_RETRY_DELAYS.length - 1)
+    ];
+    backendRetryStep += 1;
+    backendRetryTimer = setTimeout(() => {
+      backendRetryTimer = null;
+      checkBackend({ quiet: true }).catch(() => {});
+    }, delay);
   }
 
   /**

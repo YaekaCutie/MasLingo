@@ -81,8 +81,37 @@ def latin_ratio(text: str) -> float:
     return count / len(text)
 
 
+def _bundled_model_dir():
+    """The weights that shipped inside the installer, if there are any.
+
+    The desktop build carries the model as a plain directory rather than as a
+    HuggingFace cache. That is worth the code: the cache stores each file twice —
+    once under `blobs/` and once under `snapshots/` — because Windows only creates
+    symlinks when Developer Mode is on. Measured, the packaged payload was
+    2541 MB with 1694 MB of it being the same 847 MB of weights copied twice.
+
+    A plain directory has no layout to maintain and no cache to keep consistent,
+    so the packaged engine also stops depending on huggingface_hub's cache
+    resolution at startup. Development keeps using the normal cache path, which
+    is what the fallback below is.
+
+    MASLINGO_MODEL_DIR overrides both, for testing a packaged layout in place.
+    """
+    override = os.environ.get("MASLINGO_MODEL_DIR")
+    if override:
+        candidate = Path(override)
+        return candidate if (candidate / "config.json").is_file() else None
+
+    # backend/ocr/manga_ocr_engine.py -> repo root
+    candidate = Path(__file__).resolve().parents[2] / "models" / MODEL_ID.rsplit("/", 1)[-1]
+    return candidate if (candidate / "config.json").is_file() else None
+
+
 @lru_cache(maxsize=1)
 def get_engine():
+    bundled = _bundled_model_dir()
+    if bundled is not None:
+        return MangaOcr(str(bundled))
     try:
         model_path = snapshot_download(MODEL_ID, local_files_only=True)
     except LocalEntryNotFoundError:

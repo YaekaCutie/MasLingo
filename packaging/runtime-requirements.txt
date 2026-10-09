@@ -1,0 +1,27 @@
+# The runtime the installer ships — deliberately not the development environment.
+#
+# The dev venv is 1770 MB because it accumulated things the backend never
+# imports. Tracing the graph found a whole chain hanging off `paddlex`:
+#
+#   paddlex -> modelscope -> opencv-contrib-python, pandas -> paddle
+#
+# `backend/` imports none of it. Measured sizes: paddle 372 MB, cv2 121 MB,
+# pandas 60 MB, modelscope 47 MB — about 600 MB of the installer for nothing.
+#
+# What the backend actually imports, read off the source rather than guessed:
+#   fastapi, starlette, pydantic, huggingface_hub, manga_ocr, PIL, numpy, torch
+#
+# Versions are pinned to the ones this project has been developed and tested
+# against, so a build months from now produces the same runtime.
+
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+python-multipart==0.0.20
+pillow==12.3.0
+numpy==2.5.3
+manga-ocr==0.1.16
+# manga-ocr pulls torch and transformers, but they are pinned here too: torch is
+# the single largest thing in the installer, and an unpinned upgrade of it is a
+# multi-hundred-megabyte surprise in a release build.
+torch==2.14.0
+transformers==5.17.0
