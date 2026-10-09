@@ -43,13 +43,23 @@
 :root {
   /* --- A. base material ---------------------------------------------------- */
   --maslingo-tint: 20, 25, 40;          /* rgb triplet, so alpha stays tunable */
-  --maslingo-alpha-base: .52;
+  /* .38, down from .52. At .52 the panel measured as a flat dark grey over any
+     backdrop — the blur was happening but the tint was drowning it, so it read as
+     painted plastic rather than glass. Transparency is what makes the backdrop
+     legible through the material, and legibility of the backdrop *is* the effect. */
+  --maslingo-alpha-base: .44;
   --maslingo-alpha: var(--maslingo-alpha-base);
-  --maslingo-alpha-strong: .70;
-  --maslingo-blur: 24px;                /* spec: 18–28px */
-  --maslingo-sat: 128%;                 /* spec: 110–135% */
+  --maslingo-alpha-strong: .58;
+  --maslingo-blur: 28px;                /* spec: 18–28px; top of range */
+  --maslingo-sat: 135%;                 /* spec: 110–135%; top of range */
   --maslingo-bright: 1.02;
   --maslingo-contrast: .97;
+
+  /* Type scale, in one place. Apple's hierarchy comes mostly from a few well
+     separated sizes rather than from many weights. */
+  --maslingo-font: 13px;
+  --maslingo-font-title: 13.5px;
+  --maslingo-font-small: 11.5px;
 
   /* --- B. depth ------------------------------------------------------------ */
   --maslingo-inner-hi: rgba(255, 255, 255, .10);
@@ -67,7 +77,7 @@
 
   /* --- E. ink -------------------------------------------------------------- */
   --maslingo-ink: #eef1f4;
-  --maslingo-muted: #a4adb6;
+  --maslingo-muted: #b6bfc8;
   --maslingo-fill: rgba(255, 255, 255, .07);
   --maslingo-fill-strong: rgba(255, 255, 255, .13);
   --maslingo-line: rgba(255, 255, 255, .10);
@@ -129,7 +139,20 @@
   isolation: isolate;
   border-radius: var(--maslingo-radius);
   color: var(--maslingo-ink);
-  font: 13px/1.45 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  /* Latin and CJK are selected separately on purpose. `system-ui` on Windows is
+     Segoe UI, which carries no Chinese glyphs at all — so the previous stack gave
+     every Chinese character to whatever the browser fell back to, which is why the
+     panel's Chinese did not match the Latin beside it. Apple pairs SF Pro with
+     PingFang SC; the nearest Windows pair is Segoe UI Variable with Microsoft
+     YaHei UI, and YaHei is listed before system-ui so that CJK resolves
+     deliberately instead of by exhaustion. */
+  font-family:
+    -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei",
+    system-ui, sans-serif;
+  font-size: var(--maslingo-font);
+  line-height: 1.45;
+  font-weight: 400;
   /* Host pages inject resets, and the panel is the one surface with no Shadow
      DOM to hide behind. Every inherited property that would visibly break it is
      pinned here rather than hoped for. */
@@ -328,45 +351,65 @@
   width: 100%;
   margin-top: 10px;
   padding: 9px var(--maslingo-gutter);
-  border: 0;
+  /* A hairline and a top-lit gradient, which is what makes a control read as a
+     physical object rather than a painted rectangle. Without them every control
+     in the panel was the same flat grey and the eye had nothing to grab: the
+     button, the select and the check button were indistinguishable except by
+     width. The gradient is 1px of light at the top edge and nothing at the
+     bottom, so it suggests a surface catching light from above rather than a
+     bevel. */
+  border: 1px solid rgba(255, 255, 255, .10);
   border-radius: var(--maslingo-radius-sm);
-  background: var(--maslingo-fill);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .03));
   color: var(--maslingo-ink);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
   transition:
     background var(--maslingo-hover) ease,
+    border-color var(--maslingo-hover) ease,
     transform var(--maslingo-hover) var(--maslingo-ease),
     box-shadow var(--maslingo-hover) ease;
 }
 .maslingo-btn:hover:not(:disabled) {
-  background: var(--maslingo-fill-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .15), rgba(255, 255, 255, .06));
+  border-color: rgba(255, 255, 255, .16);
   /* Hover is a gloss change, not a size change: 1.01 is the ceiling. */
   transform: scale(1.01);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .10);
 }
 .maslingo-btn:active:not(:disabled) {
   transform: scale(.985);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .02));
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .22);
   transition-duration: var(--maslingo-press);
 }
-.maslingo-btn:disabled { opacity: .55; cursor: default; }
+.maslingo-btn:disabled { opacity: .45; cursor: default; }
 .maslingo-btn-small { width: auto; margin: 0; padding: 8px 12px; white-space: nowrap; }
 
 .maslingo-select {
   flex: 1 1 auto;
   min-width: 0;
   padding: 8px 10px;
-  border: 0;
+  /* Same hairline and top-lit gradient as the buttons, so the two controls read
+     as the same family. They previously had identical flat fills but different
+     corner radii and no borders, which made the row look assembled from parts. */
+  border: 1px solid rgba(255, 255, 255, .10);
   border-radius: var(--maslingo-radius-sm);
-  background: var(--maslingo-fill);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .03));
   color: var(--maslingo-ink);
   font-size: 12px;
   line-height: 1.2;
   font-family: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  cursor: pointer;
 }
 .maslingo-select option { color: #17191c; }
 
@@ -394,9 +437,14 @@
   background: var(--maslingo-line);
 }
 
-/* Flat switch: a filled track, no shadow under the thumb.
-   No accent colour — an "on" toggle is a control state, not a status, and the
-   specification limits colour to status. */
+/* A filled track with a lifted thumb.
+   No hue: an "on" toggle is a control state, not a status, and the specification
+   keeps colour for status alone. So "on" is expressed with luminance and
+   elevation instead — which is also what stops it looking inverted.
+
+   The previous version had the checked state as a near-white track with a
+   #1b2029 thumb: the thumb, the one element that should read as the brightest
+   thing on the control, was the darkest. It looked broken rather than subtle. */
 .maslingo-switch { position: relative; display: inline-flex; cursor: pointer; }
 .maslingo-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .maslingo-switch-track {
@@ -405,23 +453,34 @@
   height: 23px;
   padding: 2px;
   border-radius: 999px;
-  background: var(--maslingo-fill-strong);
+  background: rgba(255, 255, 255, .16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .06);
   display: flex;
   align-items: center;
-  transition: background .2s var(--maslingo-ease), box-shadow .2s ease;
+  transition: background .22s var(--maslingo-ease), box-shadow .22s var(--maslingo-ease);
 }
 .maslingo-switch-thumb {
   width: 19px;
   height: 19px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform .22s var(--maslingo-ease), background .22s ease;
+  background: rgba(255, 255, 255, .74);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .30);
+  transition: transform .24s var(--maslingo-ease), background .24s var(--maslingo-ease),
+              box-shadow .24s var(--maslingo-ease);
 }
-.maslingo-switch input:checked + .maslingo-switch-track { background: rgba(255, 255, 255, .82); }
+.maslingo-switch input:checked + .maslingo-switch-track {
+  background: rgba(255, 255, 255, .38);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12);
+}
 .maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
   /* 40 - 2*2 padding - 19 thumb = 17 */
   transform: translateX(17px);
-  background: #1b2029;
+  background: #fff;
+  box-shadow: 0 1.5px 3px rgba(0, 0, 0, .38);
+}
+.maslingo-switch input:focus-visible + .maslingo-switch-track {
+  outline: 2px solid rgba(255, 255, 255, .80);
+  outline-offset: 2px;
 }
 
 /* Focus: clearly visible, never a neon ring. */
