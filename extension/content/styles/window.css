@@ -176,10 +176,11 @@
   justify-content: space-between;
   gap: 8px;
 }
-.maslingo-version { font-size: 10px; color: var(--maslingo-muted); }
+.maslingo-version { font-size: 11px; color: var(--maslingo-muted); }
 
 /* --- the collapsed widget ------------------------------------------------- */
 .maslingo-widget {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -189,7 +190,13 @@
   border: 0;
   background: transparent;
   color: var(--maslingo-ink);
-  font: 500 12px/1.2 inherit;
+  /* Written as longhands on purpose. `font: 500 12px/1.2 inherit` is invalid —
+     a CSS-wide keyword cannot fill the <font-family> slot — so Chrome dropped the
+     whole declaration and the label fell back to the UA button default (400,
+     13.33px, line-height normal) instead of the 12px/500 the design asks for. */
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
@@ -203,6 +210,48 @@
   transition: background .2s ease;
 }
 .maslingo-widget span { overflow: hidden; text-overflow: ellipsis; }
+
+/*
+ * Progress, in the one place a collapsed control can show it.
+ *
+ * The widget already carries a dot and a line of text, but neither says how far
+ * along a page translation is — the dot pulses and the text is whatever was said
+ * last. A hairline sweeping under the pill answers "is it still going" without
+ * adding another thing to read, and it disappears entirely when idle, so the
+ * collapsed state stays quiet.
+ *
+ * Indeterminate rather than a percentage: the work arrives per region and the
+ * count is not known until detection finishes, so a bar that filled would have
+ * to lie for the first half of the run.
+ */
+.maslingo-widget::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--maslingo-dot-working) 45%,
+    var(--maslingo-dot-working) 55%,
+    transparent
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+.maslingo-panel-collapsed[data-busy="1"] .maslingo-widget::after {
+  opacity: .9;
+  animation: maslingo-progress 1.5s var(--maslingo-ease) infinite;
+}
+@keyframes maslingo-progress {
+  0%   { transform: translateX(-70%) scaleX(.45); }
+  50%  { transform: translateX(5%) scaleX(.65); }
+  100% { transform: translateX(75%) scaleX(.45); }
+}
 
 /* --- collapsed ----------------------------------------------------------- */
 /*
