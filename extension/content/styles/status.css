@@ -50,7 +50,6 @@
   --maslingo-mx: 70px;
   --maslingo-my: 14px;
 
-  box-shadow: var(--maslingo-shadow-contact), 0 12px 32px rgba(8, 12, 22, .26);
 
   /* §11: in over 220–300ms, out over 200–300ms, 4–8px of travel. */
   opacity: 0;

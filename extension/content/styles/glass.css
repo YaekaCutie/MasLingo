@@ -56,13 +56,14 @@
    * the thing that was asked for.
    */
   --maslingo-tint: 250, 250, 252;       /* rgb triplet, so alpha stays tunable */
-  /* .58. Light glass needs more opacity than dark for the same text contrast —
-     dark ink on a bright material loses legibility much faster than the reverse —
-     but .74 read as almost solid, which loses the effect the material exists for.
-     .58 keeps the backdrop legible through the pane while holding the ink. */
-  --maslingo-alpha-base: .58;
+  /* .34, and the material is now genuinely see-through: the artwork behind the
+     pane is legible as artwork, not as a smudge. The cost is real and worth
+     naming — over a busy or dark page the ink has less to sit on — which is why
+     the blur and saturation stay at the top of their ranges: they smooth the
+     backdrop so the text still has a fairly even field under it. */
+  --maslingo-alpha-base: .34;
   --maslingo-alpha: var(--maslingo-alpha-base);
-  --maslingo-alpha-strong: .78;
+  --maslingo-alpha-strong: .58;
   --maslingo-blur: 28px;                /* spec: 18–28px; top of range */
   --maslingo-sat: 135%;                 /* spec: 110–135%; top of range */
   --maslingo-bright: 1.06;
@@ -343,7 +344,6 @@
    None is pure black — a neutral black shadow on a coloured page reads as a grey
    halo around the panel. */
 .maslingo-panel {
-  box-shadow: var(--maslingo-shadow-contact), var(--maslingo-shadow-outer);
 }
 
 /* --- controls ------------------------------------------------------------ */

@@ -364,7 +364,17 @@ try {
     let sawInlineLeft = false;
     let sawTransform = false;
     let sawDraggingState = false;
-    let sawMaterialLift = false;
+    // Measured as a lift against the resting value, not against a fixed number.
+    // The assertion is "the material thickens while dragged", and an absolute
+    // threshold stops testing that the moment the resting alpha is retuned: this
+    // check failed on a correct build purely because idle alpha moved from .52 to
+    // .34 and the drag value .40 fell below a hard-coded .55.
+    let draggingAlpha = 0;
+    const restingAlpha = (() => {
+      const painted = getComputedStyle(panel.querySelector(".maslingo-glass__base")).backgroundImage;
+      const found = [...painted.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\s*\)/g)].map((m) => Number(m[1]));
+      return found.length ? Math.max(...found) : null;
+    })();
     const leftBefore = panel.style.left;
 
     bar.dispatchEvent(new PointerEvent("pointerdown", {
@@ -379,22 +389,28 @@ try {
       if (panel.style.transform.includes("translate3d")) sawTransform = true;
       if (panel.dataset.state === "dragging") sawDraggingState = true;
       // Read the alpha that is actually painted, not the custom property: the
-      // property now holds a calc() expression, so parseFloat on it is NaN. The
-      // base layer's computed gradient has every var() and calc() resolved.
+      // property holds a calc() expression, so parseFloat on it is NaN. The base
+      // layer's computed gradient has every var() and calc() resolved.
       const painted = getComputedStyle(panel.querySelector(".maslingo-glass__base")).backgroundImage;
       const alphas = [...painted.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\s*\)/g)].map((m) => Number(m[1]));
-      if (alphas.some((value) => value > 0.55)) sawMaterialLift = true;
+      if (alphas.length) {
+        draggingAlpha = Math.max(draggingAlpha, Math.max(...alphas));
+      }
     }
     window.dispatchEvent(new PointerEvent("pointerup", {
       bubbles: true, clientX: x - 96, clientY: y + 32, pointerId: 9,
     }));
     await new Promise((r) => requestAnimationFrame(r));
-    return { sawInlineLeft, sawTransform, sawDraggingState, sawMaterialLift };
+    return { sawInlineLeft, sawTransform, sawDraggingState, draggingAlpha, restingAlpha };
   });
   check("拖动期间用 translate3d 移动", dragTrace.sawTransform);
   check("拖动期间不逐帧写 left", dragTrace.sawInlineLeft === false);
   check("拖动时材质进入 dragging 状态", dragTrace.sawDraggingState);
-  check("拖动时材质变厚（alpha 提升）", dragTrace.sawMaterialLift);
+  check(
+    "拖动时材质变厚（alpha 提升）",
+    dragTrace.restingAlpha !== null && dragTrace.draggingAlpha > dragTrace.restingAlpha + 0.01,
+    `静止 ${dragTrace.restingAlpha} → 拖动 ${dragTrace.draggingAlpha}`,
+  );
   await new Promise((r) => setTimeout(r, 600));
 
   // ==== F: no neon, no saturated chrome ==================================

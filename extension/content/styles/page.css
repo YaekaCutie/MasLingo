@@ -114,10 +114,10 @@
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
   -webkit-backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
   backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
-  box-shadow:
-    inset 0 1px 0 var(--maslingo-inner-hi),
-    var(--maslingo-shadow-contact),
-    0 12px 32px rgba(8, 12, 22, .26);
+  /* Top edge only. The 32px drop shadow that used to sit here was the same
+     hard-coded value the panel carried, and it survived the token change meant to
+     remove it — a token set to `none` does not touch a literal written beside it. */
+  box-shadow: inset 0 1px 0 var(--maslingo-inner-hi);
   color: var(--maslingo-ink);
   font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   pointer-events: none;
@@ -143,10 +143,10 @@
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
   -webkit-backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
   backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
-  box-shadow:
-    inset 0 1px 0 var(--maslingo-inner-hi),
-    var(--maslingo-shadow-contact),
-    0 12px 32px rgba(8, 12, 22, .26);
+  /* Top edge only. The 32px drop shadow that used to sit here was the same
+     hard-coded value the panel carried, and it survived the token change meant to
+     remove it — a token set to `none` does not touch a literal written beside it. */
+  box-shadow: inset 0 1px 0 var(--maslingo-inner-hi);
   color: var(--maslingo-ink);
   font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   pointer-events: none;
