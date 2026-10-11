@@ -44,7 +44,9 @@
   position: absolute;
   inset: 0;
   box-sizing: border-box;
-  border-radius: 6px;
+  /* Rounded on purpose: the region is a soft "here" pointer, not a hard crop
+     boundary, and the corners are what say so. */
+  border-radius: 12px;
 }
 
 /* Two stacked borders, cross-faded. `border-style` cannot be interpolated, so a
@@ -119,9 +121,11 @@
   z-index: 2147483641 !important;
 }
 
-/* Manual-mode results are appended to <body>, not to the layer, so they need
-   their own copy of the rules. Absolute with a document-coordinate `left`/`top`
-   — as `fixed` they detached from the artwork the moment the page scrolled. */
+/* Manual-mode results live in the same layer as the auto ones now, but keep
+   their own copy of the rules: the class is what the renderer and `isOurs`
+   check, and the two result kinds are allowed to drift apart. Absolute with a
+   document-coordinate `left`/`top` — as `fixed` they detached from the artwork
+   the moment the page scrolled. */
 canvas.maslingo-overlay-text-canvas {
   position: absolute !important;
   display: block !important;

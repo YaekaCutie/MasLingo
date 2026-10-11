@@ -1,17 +1,20 @@
 // The material, measured rather than eyeballed.
 //
-// §24 of the specification refuses "已实现" as an answer and lists seven things to
-// demonstrate. Several of them are measurable, and this does that:
+// The design language is flat surfaces over an acrylic fill. "Acrylic" is a
+// recipe, not a vibe — tint + blur + noise — and the flat half is defined by
+// what is absent: no gradients, no bevels, no specular, no rim refraction. The
+// measurable parts of both halves are checked here:
 //
-//   A/B  the pane is a material, not a translucent card. A high-contrast striped
-//        page is used as the backdrop, and local contrast is measured in three
-//        places: on the bare page, through the middle of the pane, and through
-//        the rim band. A card with one flat blur gives the same number in the
-//        last two; a layered material does not, because the rim runs a different
-//        filter than the body.
-//   C    the specular follows the pointer and then stops. Measured by driving
-//        real pointer moves and reading the custom property it writes, including
-//        that it settles and that no frames are scheduled afterwards.
+//   A/B  the pane changes what is behind it. A high-contrast striped page is
+//        used as the backdrop, and local contrast is measured on the bare page,
+//        through the middle of the pane, and with the pane hidden as a control.
+//        Any difference is the acrylic; a pane that did nothing would show the
+//        bare-page number on all three.
+//   B2   the layer stack is the acrylic recipe and nothing else: one fill with
+//        a blur and a noise pass, one 1px border, and no depth or specular
+//        layers (the "liquid glass" stack these replaced).
+//   C    flat means the pointer drives no light: no custom properties written,
+//        no animation on the material; hover/leave are state, not geometry.
 //   D    the collapse is a morph of one element. Measured mid-transition: the
 //        morph variable must be between 0 and 1 at some point, which a
 //        cross-fade between two elements can never produce.
@@ -170,7 +173,7 @@ try {
   }));
 
   // ==== A / B: the pane changes what is behind it =========================
-  console.log("A/B 背景穿透与边缘光学差异（黑白条纹背景）");
+  console.log("A/B 背景穿透（黑白条纹背景）");
   const page = await browser.newPage();
   await page.setViewport({ width: 900, height: 760, deviceScaleFactor: 1 });
   await page.goto(`${base}/stripes`, { waitUntil: "load" });
@@ -214,22 +217,6 @@ try {
     width: 120,
     height: 24,
   });
-  // The rim band is only a few pixels wide by design — it is an edge, not a
-  // frame — so the sample has to sit inside it rather than straddle it.
-  const rim = await bandStats(page, {
-    x: panelBox.x + 1,
-    y: panelBox.y + Math.round(panelBox.height / 2) - 10,
-    width: 3,
-    height: 20,
-  });
-  // A second band just inside the rim, under the body of the pane. Same stripes
-  // behind it, different filter in front of it.
-  const justInside = await bandStats(page, {
-    x: panelBox.x + 6,
-    y: panelBox.y + Math.round(panelBox.height / 2) - 10,
-    width: 3,
-    height: 20,
-  });
 
   // The control: the identical clip with the pane hidden. Everything else about
   // the page and the capture pipeline is unchanged, so any difference is the
@@ -245,86 +232,83 @@ try {
 
   const r = (value) => Math.round(value * 10) / 10;
   console.log(`      裸页面 对比${r(bare.contrast)} 亮度${r(bare.luma)}`);
-  console.log(`      玻璃中部 对比${r(middle.contrast)} 亮度${r(middle.luma)}`);
-  console.log(`      边缘圈 对比${r(rim.contrast)} 亮度${r(rim.luma)}`);
-  console.log(`      圈内侧 对比${r(justInside.contrast)} 亮度${r(justInside.luma)}`);
+  console.log(`      亚克力中部 对比${r(middle.contrast)} 亮度${r(middle.luma)}`);
   console.log(`      对照组（遮住面板后，同一位置）对比${r(control.contrast)} 亮度${r(control.luma)}`);
 
-  check("玻璃确实改变了后方内容（同一位置，遮住面板后对比度回升）",
+  check("亚克力确实改变了后方内容（同一位置，遮住面板后对比度回升）",
     control.contrast > middle.contrast * 2.5,
-    `遮住 ${r(control.contrast)} vs 玻璃下 ${r(middle.contrast)}`);
-  check("边缘圈的光学表现与圈内侧不同（边缘是独立光学层）",
-    Math.abs(rim.luma - justInside.luma) > 2 || Math.abs(rim.contrast - justInside.contrast) > 1.5,
-    `边缘 亮度${r(rim.luma)} 对比${r(rim.contrast)} / 圈内 亮度${r(justInside.luma)} 对比${r(justInside.contrast)}`);
+    `遮住 ${r(control.contrast)} vs 亚克力下 ${r(middle.contrast)}`);
 
-  // The layer stack itself.
+  // The layer stack itself: the acrylic recipe, and nothing more.
+  console.log("\nB2 层堆叠：亚克力配方（填充 + 模糊 + 噪点 + 描边）");
   const layers = await page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
-    const read = (selector) => {
-      const node = panel.querySelector(selector);
-      if (!node) return null;
-      const style = getComputedStyle(node);
-      return {
-        backdrop: style.backdropFilter || style.webkitBackdropFilter,
-        background: style.backgroundImage !== "none" || style.backgroundColor !== "rgba(0, 0, 0, 0)",
-        shadow: style.boxShadow !== "none",
-      };
-    };
+    const base = panel.querySelector(".maslingo-glass__base");
+    const edge = panel.querySelector(".maslingo-glass__edge");
+    const baseStyle = base ? getComputedStyle(base) : null;
+    const edgeStyle = edge ? getComputedStyle(edge) : null;
+    const noise = base ? getComputedStyle(base, "::after") : null;
+    const alpha = (() => {
+      const match = (baseStyle?.backgroundColor || "").match(/rgba?\(([^)]+)\)/);
+      if (!match) return null;
+      const parts = match[1].split(",").map((value) => Number(value.trim()));
+      return parts.length === 4 ? parts[3] : 1;
+    })();
     return {
-      base: read(".maslingo-glass__base"),
-      depth: read(".maslingo-glass__depth"),
-      edge: read(".maslingo-glass__edge"),
-      specular: read(".maslingo-glass__specular"),
-      pointerEvents: getComputedStyle(panel.querySelector(".maslingo-glass__edge")).pointerEvents,
+      baseBackdrop: baseStyle ? baseStyle.backdropFilter || baseStyle.webkitBackdropFilter : "",
+      baseFillIsFlat: (baseStyle?.backgroundImage || "none") === "none",
+      baseAlpha: alpha,
+      noiseImage: noise ? noise.backgroundImage : "",
+      noiseOpacity: noise ? Number(noise.opacity) : NaN,
+      edgeBorder: edgeStyle ? `${edgeStyle.borderTopWidth} ${edgeStyle.borderTopStyle}` : "",
+      edgeBackdrop: edgeStyle ? edgeStyle.backdropFilter || edgeStyle.webkitBackdropFilter : "",
+      edgePointerEvents: edgeStyle ? edgeStyle.pointerEvents : "",
+      hasDepth: Boolean(panel.querySelector(".maslingo-glass__depth")),
+      hasSpecular: Boolean(panel.querySelector(".maslingo-glass__specular")),
     };
   });
-  check("base 层承担主模糊", /blur\(2[0-9]px\)/.test(layers.base?.backdrop || ""), layers.base?.backdrop);
-  check("edge 层用不同的滤镜（边缘折射的来源）",
-    Boolean(layers.edge?.backdrop) && layers.edge.backdrop !== layers.base?.backdrop,
-    `${layers.edge?.backdrop} vs ${layers.base?.backdrop}`);
-  check("depth 层提供厚度（渐变+内阴影）", layers.depth?.shadow === true);
-  check("所有材质层都不拦鼠标", layers.pointerEvents === "none", layers.pointerEvents);
+  check("base 层承担模糊（亚克力）", /blur\((2[5-9]|3\d)px\)/.test(layers.baseBackdrop || ""), layers.baseBackdrop);
+  check("base 是纯色填充，不是渐变（平面）", layers.baseFillIsFlat === true, "base 仍在用渐变");
+  check("base 的填充密度在亚克力区间（.65–.95）",
+    layers.baseAlpha !== null && layers.baseAlpha >= .65 && layers.baseAlpha <= .95,
+    String(layers.baseAlpha));
+  check("base 带噪点层（亚克力的标志）",
+    /data:image\/svg/.test(layers.noiseImage || "")
+      && layers.noiseOpacity > 0 && layers.noiseOpacity <= .08,
+    `image=${String(layers.noiseImage).slice(0, 60)} opacity=${layers.noiseOpacity}`);
+  check("edge 是 1px 平面描边", layers.edgeBorder === "1px solid", layers.edgeBorder);
+  check("edge 不再有自己的滤镜（不做边缘折射）",
+    !layers.edgeBackdrop || layers.edgeBackdrop === "none", layers.edgeBackdrop);
+  check("旧的 depth 层已移除", layers.hasDepth === false);
+  check("旧的 specular 层已移除", layers.hasSpecular === false);
+  check("材质层不拦鼠标", layers.edgePointerEvents === "none", layers.edgePointerEvents);
 
-  // ==== C: the specular follows the pointer, then stops ===================
-  console.log("\nC 高光跟随鼠标并自行停止");
-  const readSpec = () => page.evaluate(() => {
+  // ==== C: flat — no light follows the pointer ============================
+  console.log("\nC 平面材质：指针不再驱动光斑");
+  const readState = () => page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
+    const base = panel.querySelector(".maslingo-glass__base");
     return {
-      mx: parseFloat(panel.style.getPropertyValue("--maslingo-mx")) || 0,
-      my: parseFloat(panel.style.getPropertyValue("--maslingo-my")) || 0,
       state: panel.dataset.state,
+      written: panel.style.getPropertyValue("--maslingo-mx")
+        || panel.style.getPropertyValue("--maslingo-my"),
+      animation: base ? getComputedStyle(base).animationName : "",
     };
   });
   await page.mouse.move(10, 10);
   await new Promise((r) => setTimeout(r, 120));
-  const whatIsThere = await page.evaluate((box) => {
-    const node = document.elementFromPoint(box.x + 10, box.y + 10);
-    return { tag: node?.tagName, cls: String(node?.className || "").slice(0, 60) };
-  }, panelBox);
-  console.log(`      鼠标落点命中：${whatIsThere.tag}.${whatIsThere.cls}`);
   await page.mouse.move(panelBox.x + 10, panelBox.y + 10, { steps: 4 });
   await new Promise((r) => setTimeout(r, 150));
-  const beforeMove = await readSpec();
-  await page.mouse.move(panelBox.x + panelBox.width - 20, panelBox.y + panelBox.height - 30, { steps: 12 });
-  await new Promise((r) => setTimeout(r, 700));
-  const afterMove = await readSpec();
+  const hovered = await readState();
+  await page.mouse.move(10, 10);
+  await new Promise((r) => setTimeout(r, 150));
+  const left = await readState();
 
-  check("高光位置随鼠标改变", Math.abs(afterMove.mx - beforeMove.mx) > 80,
-    `${r(beforeMove.mx)} -> ${r(afterMove.mx)}`);
-  check("鼠标悬停时材质进入 hover 状态", afterMove.state === "hover", afterMove.state);
-  await new Promise((r) => setTimeout(r, 500));
-  const settledA = await readSpec();
-  await new Promise((r) => setTimeout(r, 500));
-  const settledB = await readSpec();
-  check("鼠标停止后高光稳定下来（没有持续动画）",
-    Math.abs(settledA.mx - settledB.mx) < 0.6 && Math.abs(settledA.my - settledB.my) < 0.6,
-    `${r(settledA.mx)} -> ${r(settledB.mx)}`);
-
-  check("高光不依赖无限循环动画（没有 drift 类 keyframes）",
-    await page.evaluate(() => {
-      const style = getComputedStyle(document.querySelector(".maslingo-glass__specular i"));
-      return style.animationName === "none";
-    }));
+  check("悬停进入 hover 状态", hovered.state === "hover", hovered.state);
+  check("指针离开回到 idle", left.state === "idle", left.state);
+  check("不再写指针位置 custom property（没有光斑可跟）",
+    !hovered.written && !left.written, String(hovered.written || left.written));
+  check("材质层没有常驻动画", hovered.animation === "none", hovered.animation);
 
   // ==== D: the collapse is a morph, not a swap ===========================
   console.log("\nD 收起是同一材质的连续变形");
@@ -336,17 +320,25 @@ try {
       await new Promise((r) => requestAnimationFrame(r));
       samples.push(parseFloat(getComputedStyle(panel).getPropertyValue("--maslingo-morph")) || 0);
     }
-    return samples;
+    // Frame count is not a clock: under load, 16 frames can be less than the
+    // transition's 320ms, so the end state is read after the transition would
+    // have finished rather than from the last sample.
+    await new Promise((r) => setTimeout(r, 400));
+    const settled = parseFloat(getComputedStyle(panel).getPropertyValue("--maslingo-morph")) || 0;
+    return { samples, settled };
   });
-  const mid = morphSamples.filter((value) => value > 0.02 && value < 0.98);
-  console.log(`      morph 采样：${morphSamples.map((v) => v.toFixed(2)).join(" ")}`);
+  const mid = morphSamples.samples.filter((value) => value > 0.02 && value < 0.98);
+  console.log(`      morph 采样：${morphSamples.samples.map((v) => v.toFixed(2)).join(" ")}  终态 ${morphSamples.settled.toFixed(3)}`);
   check("收起过程中 morph 出现中间值（连续插值，不是切换）", mid.length >= 2,
     `只有 ${mid.length} 个中间值`);
-  check("收起后 morph 到达 1", morphSamples[morphSamples.length - 1] > 0.98,
-    String(morphSamples[morphSamples.length - 1]));
+  check("收起后 morph 到达 1", morphSamples.settled > 0.98, String(morphSamples.settled));
   check("收起不使用 display:none", await page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
-    return [...panel.querySelectorAll("*")].every((node) => getComputedStyle(node).display !== "none");
+    // Scoped to the collapse machinery: the status line is hidden with the
+    // `hidden` attribute whenever there is no message, which is content
+    // visibility and unrelated to the collapse.
+    return [...panel.querySelectorAll(".maslingo-sec, .maslingo-sec-in, .maslingo-glass__content")]
+      .every((node) => getComputedStyle(node).display !== "none");
   }));
 
   await new Promise((r) => setTimeout(r, 600));
@@ -369,12 +361,16 @@ try {
     // threshold stops testing that the moment the resting alpha is retuned: this
     // check failed on a correct build purely because idle alpha moved from .52 to
     // .34 and the drag value .40 fell below a hard-coded .55.
+    // The flat material paints its fill as a single backgroundColor; every
+    // var() and calc() in it is resolved by the time it is read.
+    const alphaOf = (node) => {
+      const match = getComputedStyle(node).backgroundColor.match(/rgba?\(([^)]+)\)/);
+      if (!match) return null;
+      const parts = match[1].split(",").map((value) => Number(value.trim()));
+      return parts.length === 4 ? parts[3] : 1;
+    };
     let draggingAlpha = 0;
-    const restingAlpha = (() => {
-      const painted = getComputedStyle(panel.querySelector(".maslingo-glass__base")).backgroundImage;
-      const found = [...painted.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\s*\)/g)].map((m) => Number(m[1]));
-      return found.length ? Math.max(...found) : null;
-    })();
+    const restingAlpha = alphaOf(panel.querySelector(".maslingo-glass__base"));
     const leftBefore = panel.style.left;
 
     bar.dispatchEvent(new PointerEvent("pointerdown", {
@@ -389,13 +385,9 @@ try {
       if (panel.style.transform.includes("translate3d")) sawTransform = true;
       if (panel.dataset.state === "dragging") sawDraggingState = true;
       // Read the alpha that is actually painted, not the custom property: the
-      // property holds a calc() expression, so parseFloat on it is NaN. The base
-      // layer's computed gradient has every var() and calc() resolved.
-      const painted = getComputedStyle(panel.querySelector(".maslingo-glass__base")).backgroundImage;
-      const alphas = [...painted.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\s*\)/g)].map((m) => Number(m[1]));
-      if (alphas.length) {
-        draggingAlpha = Math.max(draggingAlpha, Math.max(...alphas));
-      }
+      // property holds a calc() expression, so parseFloat on it is NaN.
+      const alpha = alphaOf(panel.querySelector(".maslingo-glass__base"));
+      if (alpha !== null) draggingAlpha = Math.max(draggingAlpha, alpha);
     }
     window.dispatchEvent(new PointerEvent("pointerup", {
       bubbles: true, clientX: x - 96, clientY: y + 32, pointerId: 9,
@@ -428,7 +420,7 @@ try {
         const min = Math.min(rr, gg, bb);
         // Saturation of the pixel colour; status dots are excluded by name so the
         // four permitted colours do not count as chrome.
-        if (node.closest(".maslingo-dot, .maslingo-status-dot") && prop === "backgroundColor") continue;
+        if (node.closest(".maslingo-dot, .maslingo-line-dot") && prop === "backgroundColor") continue;
         const sat = max === 0 ? 0 : (max - min) / max;
         if (sat > 0.35 && max > 60) {
           worst.push({ cls: node.className || node.tagName, prop, value: style[prop], sat: r2(sat) });

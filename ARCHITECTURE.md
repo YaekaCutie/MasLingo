@@ -56,6 +56,11 @@ Translation modes:
   per-IP request limit, a cap on concurrent OCR jobs, a 15 MB upload limit, and
   inference on a worker thread so `/health` stays responsive. See
   `deploy/README.md` section 8.
+- The OpenAI-compatible translation relay refuses link-local and reserved
+  targets both as IP literals and as resolved hostnames, and re-validates every
+  redirect hop before following it; private and loopback addresses stay allowed
+  because a backend on the user's own machine is the normal case. See
+  `backend/net_guard.py`.
 - Cloud translation is not part of the default OCR flow. Selecting a remote
   translator sends recognized text and, when provided, its key to that service.
 - Automatic detection covers only the currently visible viewport. It groups

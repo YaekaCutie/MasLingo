@@ -6,6 +6,9 @@ const autoStateText = document.getElementById("autoStateText");
 let statusTimer = null;
 let activeTabId = null;
 let lastTabUrl = "";
+// Mirrors the "显示识别到的日文原文" setting, so the status line below only
+// claims the source is being displayed when it actually is.
+let showsSourceText = true;
 
 function setStatusText(text, state = "idle") {
   autoState.dataset.state = state;
@@ -20,12 +23,18 @@ async function fetchBackend(path, options = {}) {
   const backends = await globalThis.MAS_backendCandidates();
   let lastError = null;
   for (const base of backends) {
+    // A popup that says "正在检查…" forever is worse than one that says the
+    // backend did not answer: /health is answered in milliseconds or not at all.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const resp = await fetch(`${base}${path}`, options);
+      const resp = await fetch(`${base}${path}`, { ...options, signal: controller.signal });
+      clearTimeout(timer);
       if (resp.ok || resp.status >= 400) return { resp, base };
       lastError = new Error(`${base} 响应失败: ${resp.status}`);
     } catch (error) {
-      lastError = error;
+      clearTimeout(timer);
+      lastError = error?.name === "AbortError" ? new Error(`${base}: 连接超时`) : error;
     }
   }
   throw lastError || new Error("未配置后端且本机后端未运行");
@@ -62,10 +71,11 @@ async function diagnoseFrame(tabId) {
       func: () => Boolean(globalThis.__MAS_LOADED__),
     });
     return probe?.result ? "stale" : "missing";
-  } catch (error) {
-    return /Cannot access|chrome:\/\/|extensions gallery|The extensions gallery/i.test(error.message)
-      ? "restricted"
-      : "restricted";
+  } catch {
+    // chrome://, the Web Store, other extensions' pages and the PDF viewer all
+    // refuse injection; from here they are one state, and the regex that used
+    // to live here returned "restricted" from both of its branches anyway.
+    return "restricted";
   }
 }
 
@@ -78,7 +88,6 @@ const CONTENT_SCRIPTS = [
   "config.js",
   "translation/providers.js",
   "content/glass.js",
-  "content/status.js",
   "content/overlay.js",
   "content/auto.js",
   "content/panel.js",
@@ -164,7 +173,12 @@ async function refreshAutoStatus({ allowInject = true } = {}) {
       // The regions were read and painted, but with their original text: no
       // translation source is configured. Reporting a plain success here would
       // hide the one thing the user has to do.
-      setStatusText(`✓ 已识别 ${stats.translated} 处 · 翻译来源未设置，显示的是原文`, "error");
+      setStatusText(
+        showsSourceText
+          ? `✓ 已识别 ${stats.translated} 处 · 翻译来源未设置，显示的是原文`
+          : `✓ 已识别 ${stats.translated} 处 · 翻译来源未设置`,
+        "error",
+      );
     } else if (stats.translated > 0 && stats.failed === 0) {
       setStatusText(`✓ 当前页面翻译完成（${stats.translated} 处）`, "done");
     } else if (stats.translated > 0) {
@@ -306,7 +320,8 @@ document.getElementById("autoPage").onclick = async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id ?? null;
   lastTabUrl = tab?.url || "";
-  const cfg = await chrome.storage.local.get(["autoTranslate"]);
+  const cfg = await chrome.storage.local.get(["autoTranslate", "debugMode"]);
   autoToggle.checked = Boolean(cfg.autoTranslate);
+  showsSourceText = cfg.debugMode !== false;
   pollWhileOpen();
 })();

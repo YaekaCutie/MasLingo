@@ -13,10 +13,9 @@
  * Collapse is a shape change of one material, not a swap between two views. The
  * whole thing is driven by a single registered custom property, --maslingo-morph,
  * running 0 (expanded) to 1 (collapsed). Because glass.css registers it with
- * @property it interpolates, and every layer reads it: width, radius, the rim's
- * opacity and the specular spot's gain all travel together. That is what §8 asks
- * for — the highlight redistributing as the shape changes — rather than a resize
- * with the lighting bolted on afterwards.
+ * @property it interpolates, and the pane's width and radius both read it, so the
+ * card morphs into the pill as one continuous movement rather than resizing in
+ * steps.
  *
  * The height still collapses by animating grid tracks. That is a layout property
  * and the spec steers away from animating width/height; the honest reason it is
@@ -29,11 +28,10 @@
 .maslingo-panel {
   position: fixed;
   right: 16px;
-  /* Sits above the status surface rather than under it. Both occupy the lower
-     right corner by design, and the status pane outranks the panel in z-order
-     because it has to stay readable when the panel is collapsed — so the space
-     is reserved here instead of fought over at paint time. */
-  bottom: calc(16px + var(--maslingo-status-reserve));
+  /* Flush to its own corner. The panel used to sit 48px higher to leave room
+     for the status popup; that popup is gone and the messages live inside the
+     panel now, so nothing shares this corner. */
+  bottom: 16px;
   z-index: 2147483645;
 
   width: calc(var(--maslingo-w-panel) - (var(--maslingo-w-panel) - var(--maslingo-w-widget)) * var(--maslingo-morph));
@@ -48,7 +46,10 @@
 }
 /* Used when a stored state is applied on mount: no transition, no flash. */
 .maslingo-panel-instant,
-.maslingo-panel-instant .maslingo-sec { transition: none !important; }
+.maslingo-panel-instant .maslingo-sec,
+.maslingo-panel-instant .maslingo-fold,
+.maslingo-panel-instant #maslingo-rule-top,
+.maslingo-panel-instant #maslingo-rule-ai { transition: none !important; }
 
 .maslingo-panel-expanding {
   transition:
@@ -59,9 +60,7 @@
 /* The pane is clipped, so the layers inherit its radius; this is also what makes
    the collapse read as one material rather than several boxes shrinking. */
 .maslingo-panel > .maslingo-glass__base,
-.maslingo-panel > .maslingo-glass__depth,
-.maslingo-panel > .maslingo-glass__edge,
-.maslingo-panel > .maslingo-glass__specular { border-radius: inherit; }
+.maslingo-panel > .maslingo-glass__edge { border-radius: inherit; }
 
 /* --- bands --------------------------------------------------------------- */
 /*
@@ -107,8 +106,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--maslingo-line);
   cursor: grab;
   touch-action: none;
@@ -141,33 +140,133 @@
 .maslingo-panel-btn:hover { background: var(--maslingo-fill); color: var(--maslingo-ink); }
 
 /* --- body ---------------------------------------------------------------- */
-.maslingo-panel-body { padding-top: 12px; padding-bottom: 12px; }
+/*
+ * The body is a fixed-height window (the brief: 悬浮窗窗口大小永远不变). The
+ * height is one constant rather than content-driven, so nothing the panel says
+ * or swaps can resize it: switching to an AI source, a longer error, a level
+ * name — none of them move the edges. Inside, the content is a flex column and
+ * the bottom divider + footer are pinned to the lower edge (margin-top: auto),
+ * so the slack collects in one place instead of stretching every gap.
+ */
+.maslingo-panel-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: var(--maslingo-h-body);
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+/* Any slack the fixed height ends up with collects above the footer's divider
+   rather than leaving the footer floating mid-pane. */
+#maslingo-rule-foot { margin-top: auto; }
 
 /* A rule that ignores the gutter and reaches both edges. */
-.maslingo-rule { margin: 12px calc(-1 * var(--maslingo-gutter)); }
+.maslingo-rule { margin: 15px calc(-1 * var(--maslingo-gutter)); }
 
 .maslingo-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 2px 0;
+  padding: 4px 0;
 }
 .maslingo-row-tight { padding: 0; }
 .maslingo-label { font-size: 12px; color: var(--maslingo-muted); }
 .maslingo-label + .maslingo-row,
 .maslingo-row + .maslingo-btn { margin-top: 6px; }
 
-/* The one-liner. Fixed height so the panel does not jump as lines of different
-   lengths type themselves in. */
+/* The message line. Everything the panel reports shares this one line — the
+   sample sentence, loading states like "正在 OCR……", connectivity results and
+   errors — with the status dot appearing only for messages. Fixed height so
+   the panel does not jump as messages and lengths come and go. */
 .maslingo-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-top: 10px;
   min-height: 17px;
   font-size: 12px;
   color: var(--maslingo-muted);
   white-space: nowrap;
+}
+/* The dot marks a message; the idle sample sentence has none. panel.js toggles
+   the `hidden` attribute with the message kind. */
+.maslingo-line-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--maslingo-dot-idle);
+  transition: background .2s ease;
+}
+.maslingo-line-dot[hidden] { display: none; }
+/* Working breathes; the keyframes live in status.css with the other dots. */
+.maslingo-line[data-kind="working"] .maslingo-line-dot {
+  background: var(--maslingo-dot-working);
+  animation: maslingo-breathe 1.75s ease-in-out infinite;
+}
+.maslingo-line[data-kind="ok"] .maslingo-line-dot { background: var(--maslingo-dot-ok); }
+.maslingo-line[data-kind="error"] .maslingo-line-dot { background: var(--maslingo-dot-bad); }
+/* A stationary window that clips; the text inside it is what moves. The window
+   is what sits next to the dot, so the glyphs can never reach it. */
+.maslingo-line-clip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+/* The 来源 note: the current translation source, small and grey, at the right
+   end of the message line and nudged below its baseline (all pages — the line
+   is shared). */
+.maslingo-source {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--maslingo-muted);
+  opacity: .7;
+  transform: translateY(3px);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.maslingo-line-text {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Message colours: errors red, the rest in ink; the sample stays muted. */
+.maslingo-line[data-kind="error"] { color: var(--maslingo-err-text); }
+.maslingo-line[data-kind="working"],
+.maslingo-line[data-kind="ok"],
+.maslingo-line[data-kind="info"] { color: var(--maslingo-ink); }
+
+/* --- horizontal marquee ----------------------------------------------------
+ *
+ * For a single line that cannot fit: the panel is 268px wide and a full error
+ * reason is not, and an ellipsis hides exactly the part that says what to do.
+ * panel.js measures the overflow and only then sets the distance/duration
+ * (both depend on the text); the keyframes spend a fifth of the cycle paused
+ * at each end so the beginning and the end are both readable.
+ *
+ * The move is a transform on the text layer inside a stationary clipping
+ * window: the compositor handles it, where `text-indent` re-shaped the line on
+ * the main thread every frame and stuttered ("一卡一卡的"). The window itself
+ * never moves, so the glyphs cannot slide over the status dot — that was the
+ * original transform version's defect, and the clip window is what lets both
+ * properties hold at once.
+ */
+@keyframes maslingo-marquee {
+  0%, 10% { transform: translateX(0); }
+  50%, 60% { transform: translateX(calc(-1 * var(--maslingo-marquee-distance, 0px))); }
+  100% { transform: translateX(0); }
+}
+.maslingo-scrolling .maslingo-line-text {
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  will-change: transform;
+  animation: maslingo-marquee var(--maslingo-marquee-duration, 6s) linear infinite;
 }
 
 .maslingo-foot {
@@ -176,7 +275,317 @@
   justify-content: space-between;
   gap: 8px;
 }
+.maslingo-ai-only { display: none; }
+.maslingo-panel-ai .maslingo-ai-only { display: inline-flex; align-items: center; }
+.maslingo-panel-ai .maslingo-main-only { display: none; }
+/* 保存 wears the accent — this product's primary is ink, not a hue (colour
+   stays reserved for status), and 取消 is a plain link. */
+.maslingo-save {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(28, 30, 33, .92);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--maslingo-hover) ease;
+}
+.maslingo-save:hover { background: rgba(28, 30, 33, 1); }
 .maslingo-version { font-size: 11px; color: var(--maslingo-muted); }
+
+/* --- AI mode --------------------------------------------------------------
+ *
+ * The brief, second pass: while an "AI 大模型" source is chosen, 自动识别 /
+ * 框选翻译 fold away upward as a block, and 翻译类型 gives its slot to API Key
+ * with 反应强度 unfolding below the message line — while the window itself
+ * never changes size. The two rows are the same height, so the swap is height
+ * neutral by construction: no holes in either mode, no placeholder standing in
+ * for content that is not there.
+ *
+ * Same mechanism as collapse: a grid track animating 1fr → 0fr is a genuine
+ * continuous height change, the inner element clips, and `visibility` steps
+ * after the animation so a folded block leaves the tab order (opacity and a
+ * clipped height alone leave its controls focusable). JS flips one class on
+ * the root; everything here is the stylesheet's.
+ */
+.maslingo-fold {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--maslingo-morph-out) var(--maslingo-ease),
+    opacity 220ms ease,
+    visibility 0s linear;
+}
+.maslingo-fold-in {
+  min-height: 0;
+  overflow: hidden;
+  transition: transform var(--maslingo-morph-out) var(--maslingo-ease);
+}
+
+/* Folded by default; syncAiMode() adds .maslingo-panel-ai to the root. */
+.maslingo-key,
+.maslingo-strength-fold {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0ms, 0ms, var(--maslingo-morph-out);
+}
+.maslingo-key .maslingo-fold-in,
+.maslingo-strength-fold .maslingo-fold-in { transform: translateY(8px); }
+
+.maslingo-panel-ai .maslingo-basic,
+.maslingo-panel-ai .maslingo-provider {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition-delay: 0ms, 0ms, var(--maslingo-morph-out);
+}
+.maslingo-panel-ai .maslingo-basic .maslingo-fold-in,
+.maslingo-panel-ai .maslingo-provider .maslingo-fold-in { transform: translateY(-8px); }
+.maslingo-panel-ai .maslingo-key,
+.maslingo-panel-ai .maslingo-strength-fold {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0ms;
+}
+.maslingo-panel-ai .maslingo-key .maslingo-fold-in,
+.maslingo-panel-ai .maslingo-strength-fold .maslingo-fold-in { transform: none; }
+
+/* The divider between 框选翻译 and 翻译类型 exists to close the basic block.
+   With that block folded away in AI mode the divider has nothing left to
+   divide, and the 15px it carried on each side read as a hole under the status
+   dots — it folds up with its block (margins animate; opacity hides the 1px
+   that remains). */
+#maslingo-rule-top {
+  transition:
+    margin var(--maslingo-morph-out) var(--maslingo-ease),
+    opacity 180ms ease;
+}
+.maslingo-panel-ai #maslingo-rule-top {
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+}
+
+/* The divider the brief asks for between 反应强度 and API Key. It belongs to
+   the AI page only; on the main page it folds to an invisible hairline, the
+   same way #maslingo-rule-top does on the AI page. */
+#maslingo-rule-ai {
+  margin-top: 0;
+  margin-bottom: 0;
+  opacity: 0;
+  transition:
+    margin var(--maslingo-morph-out) var(--maslingo-ease),
+    opacity 180ms ease;
+}
+.maslingo-panel-ai #maslingo-rule-ai {
+  margin-top: 10px;
+  margin-bottom: 10px;
+  opacity: 1;
+}
+
+/* --- the AI module: key + strength --------------------------------------- */
+.maslingo-key .maslingo-label {
+  display: block;
+}
+.maslingo-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  /* Same fixed height as .maslingo-select: the two rows trade places with the
+     provider slot in AI mode, and the swap is height-neutral only if the row
+     heights really are equal. */
+  height: 36px;
+  padding: 8px 10px;
+  border: 1px solid rgba(28, 30, 33, .10);
+  border-radius: var(--maslingo-radius-sm);
+  background: rgba(255, 255, 255, .66);
+  color: var(--maslingo-ink);
+  font-size: 12px;
+  line-height: 1.2;
+  font-family: inherit;
+}
+.maslingo-input::placeholder { color: var(--maslingo-muted); opacity: .72; }
+
+.maslingo-strength { margin-top: 6px; }
+.maslingo-strength-level {
+  margin-top: 0;
+  line-height: 1.3;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  color: var(--maslingo-ink);
+}
+/* The concrete model under the level name — "max 下面是选择具体模型". The row
+   shows the model's own name; clicking it opens the 选择框 (#maslingo-modelbox),
+   an absolutely positioned listbox inside the panel. It overlays the content
+   below instead of pushing it, so opening the list cannot resize the window. */
+.maslingo-strength-modelrow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  margin-top: 0;
+}
+.maslingo-strength-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--maslingo-muted);
+  font-size: 11.5px;
+  line-height: 1.3;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--maslingo-hover) ease;
+}
+.maslingo-strength-model:hover,
+.maslingo-strength-model-open { color: var(--maslingo-ink); }
+#maslingo-strength-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.maslingo-strength-chevron {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--maslingo-muted);
+  pointer-events: none;
+}
+
+/* The 选择框 itself: a flat acrylic panel with one row per concrete model
+   (name on top, api id under it when the two differ) and 自定义… at the end. */
+.maslingo-modelbox {
+  position: absolute;
+  left: var(--maslingo-gutter);
+  right: var(--maslingo-gutter);
+  top: 0;
+  z-index: 6;
+  max-height: 192px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid rgba(28, 30, 33, .12);
+  border-radius: var(--maslingo-radius-sm);
+  background: rgba(255, 255, 255, .97);
+}
+.maslingo-modelbox[hidden] { display: none; }
+.maslingo-modelbox-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--maslingo-ink);
+  font-size: 12px;
+  line-height: 1.25;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.maslingo-modelbox-item:hover { background: var(--maslingo-fill); }
+.maslingo-modelbox-item-on { background: var(--maslingo-fill); }
+.maslingo-modelbox-item-on .maslingo-modelbox-name { font-weight: 600; }
+.maslingo-modelbox-id { font-size: 10.5px; color: var(--maslingo-muted); }
+.maslingo-modelbox-custom { color: var(--maslingo-muted); }
+
+/* The slider: four stops (Off / Low / High / Max), the thumb marking the
+   current one. The thumb is inscribed — its diameter equals the track height,
+   tangent top and bottom — and the fill runs to its centre, so the knob reads
+   as riding inside the bar rather than capping its end. The track is kept
+   visible across its full width so the bar is a bar in every state. Ink rather
+   than a hue: the mock-up's accent loses to this panel's rule that colour
+   means status, so "how strong" is expressed with luminance and motion. */
+.maslingo-strength-slider {
+  margin-top: 6px;
+  padding: 3px 0;
+  cursor: pointer;
+  touch-action: none;
+}
+.maslingo-strength-track {
+  position: relative;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--maslingo-fill-strong);
+  box-shadow: inset 0 0 0 1px rgba(28, 30, 33, .06);
+}
+.maslingo-strength-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  /* The fill always ends at the thumb's far edge, never at its centre: at Off
+     it is exactly the thumb's disc, so no dark wedge of fill can peek out from
+     behind the knob's curve (the "最左面漏一小节黑色" defect). */
+  width: calc(22px + (100% - 22px) * var(--maslingo-strength-p, 0));
+  border-radius: 999px;
+  background: rgba(28, 30, 33, .85);
+  overflow: hidden;
+  /* 320ms for the glide; the curve deliberately does not overshoot — a
+     springy one poked the thumb a couple of px past the bar's ends, which is
+     the "漏出" defect the brief called out. */
+  transition: width 320ms cubic-bezier(.22, 1, .36, 1);
+}
+/* The meteors, per the brief: sparks leave the thumb for the stop behind it
+   and fade out on arrival. panel.js spawns them (rate and speed follow the
+   level); each one is a short streak with its bright head on the left, the way
+   it travels. Composited transform + opacity only. */
+.maslingo-meteor {
+  position: absolute;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, 0));
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.maslingo-strength-dot {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .88);
+  box-shadow: 0 0 0 1px rgba(28, 30, 33, .16);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.maslingo-strength-dot[data-stop="0"] { left: calc(11px + (100% - 22px) * 0); }
+.maslingo-strength-dot[data-stop="1"] { left: calc(11px + (100% - 22px) * .3333); }
+.maslingo-strength-dot[data-stop="2"] { left: calc(11px + (100% - 22px) * .6667); }
+.maslingo-strength-dot[data-stop="3"] { left: calc(11px + (100% - 22px) * 1); }
+.maslingo-strength-thumb {
+  position: absolute;
+  top: 50%;
+  left: calc(11px + (100% - 22px) * var(--maslingo-strength-p, 0));
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px rgba(28, 30, 33, .14);
+  transform: translate(-50%, -50%);
+  transition: left 320ms cubic-bezier(.22, 1, .36, 1);
+  pointer-events: none;
+}
+/* While dragging, a short linear glide keeps the fill and thumb on the
+   pointer without the jitter of a hard snap between stops. */
+.maslingo-strength-slider[data-dragging] .maslingo-strength-fill,
+.maslingo-strength-slider[data-dragging] .maslingo-strength-thumb {
+  transition-duration: 90ms;
+  transition-timing-function: linear;
+}
 
 /* --- the collapsed widget ------------------------------------------------- */
 .maslingo-widget {
@@ -209,7 +618,14 @@
   background: var(--maslingo-dot-idle);
   transition: background .2s ease;
 }
-.maslingo-widget span { overflow: hidden; text-overflow: ellipsis; }
+/* The label fades when a "翻译成功" expires (panel.js swaps the text mid-fade);
+   every other label is replaced outright. */
+.maslingo-widget span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity .25s ease;
+}
+.maslingo-widget-text-out { opacity: 0; }
 
 /*
  * Progress, in the one place a collapsed control can show it.
@@ -255,12 +671,11 @@
 
 /* --- collapsed ----------------------------------------------------------- */
 /*
- * This one declaration is the whole morph. Every material layer in glass.css
- * reads --maslingo-morph: the pane's width and radius, the rim's opacity, the
- * specular spot's gain. Setting it here instead of toggling each property
- * individually is what makes the lighting follow the shape rather than lag
- * behind it — and forgetting it is what made the first version of this file
- * collapse its contents while the pane itself stayed 268px wide.
+ * This one declaration is the whole morph. glass.css reads --maslingo-morph for
+ * the pane's width and radius; setting it here instead of toggling each property
+ * individually is what makes the shape change as one movement — and forgetting
+ * it is what made an early version of this file collapse its contents while the
+ * pane itself stayed 268px wide.
  */
 .maslingo-panel-collapsed { --maslingo-morph: 1; }
 
@@ -298,9 +713,9 @@
  * drag and one that forces layout on every pointer event. The final position is
  * committed to left/top once, on release.
  *
- * The material responds while it moves: the rim and the specular lift and the
- * base thickens (see [data-state="dragging"] in glass.css). That is what makes it
- * feel like a piece of glass being carried rather than a div being repositioned.
+ * The material responds while it moves: the border steps up and the acrylic
+ * fill thickens (see [data-state="dragging"] in glass.css). That is what makes
+ * it feel like a surface being carried rather than a div being repositioned.
  */
 .maslingo-panel-dragging,
 .maslingo-panel-dragging * { cursor: grabbing !important; }
@@ -317,10 +732,22 @@
   .maslingo-panel,
   .maslingo-panel-expanding,
   .maslingo-sec,
+  .maslingo-basic,
+  .maslingo-fold,
+  .maslingo-fold-in,
+  .maslingo-strength-fill,
+  .maslingo-strength-thumb,
+  #maslingo-rule-top,
+  #maslingo-rule-ai,
   .maslingo-widget i { transition-duration: .01ms; }
-  .maslingo-sec { transition-delay: 0ms !important; }
+  .maslingo-sec,
+  .maslingo-basic,
+  .maslingo-fold { transition-delay: 0ms !important; }
   .maslingo-panel-settling { animation: none; }
   .maslingo-panel-collapsed .maslingo-widget i { animation: none !important; }
+  .maslingo-meteor { display: none !important; }
+  .maslingo-scrolling .maslingo-line-text,
+  .maslingo-scrolling .maslingo-status-text { animation: none; }
 }
 
 /* --- docked (collapsed) --------------------------------------------------- */

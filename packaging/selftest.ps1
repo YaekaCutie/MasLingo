@@ -49,7 +49,7 @@ Section "1. 程序文件"
 if (-not (Test-Path $InstallDir)) {
     Check "安装目录存在" $false $InstallDir
     Write-Host "`n未检测到安装。如果你还没运行安装包，这是正常的。" -ForegroundColor Yellow
-    Write-Host "安装包：build\output\MasLingo-Setup-1.1.5.exe"
+    Write-Host "安装包：build\output\MasLingo-Setup-1.1.6.exe"
     exit 2
 }
 Check "安装目录存在" $true $InstallDir

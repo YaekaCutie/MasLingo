@@ -1,4 +1,5 @@
 import io
+import socket
 import unittest
 from unittest.mock import patch
 
@@ -265,6 +266,58 @@ class AppTests(unittest.TestCase):
             "local-model",
             "",
         )
+
+    def test_openai_compatible_refuses_link_local_literal(self):
+        response = self.client.post(
+            "/api/translate-text",
+            json={
+                "texts": ["こんにちは"],
+                "mode": "openai-compatible",
+                "endpoint": "http://169.254.169.254/v1/chat/completions",
+                "model": "local-model",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("链路本地", response.json()["detail"])
+
+    @patch("backend.app.translate_openai_compatible", return_value=["你好"])
+    def test_openai_compatible_refuses_hostname_that_resolves_to_link_local(self, translate_mock):
+        """The literal check alone let `metadata.internal`-style names through."""
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+        with patch("backend.net_guard.socket.getaddrinfo", return_value=answers):
+            response = self.client.post(
+                "/api/translate-text",
+                json={
+                    "texts": ["こんにちは"],
+                    "mode": "openai-compatible",
+                    "endpoint": "http://metadata.internal/v1/chat/completions",
+                    "model": "local-model",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("链路本地", response.json()["detail"])
+        translate_mock.assert_not_called()
+
+    @patch("backend.app.translate_openai_compatible", return_value=["你好"])
+    def test_openai_compatible_allows_hostname_resolving_to_public_address(self, translate_mock):
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+        with patch("backend.net_guard.socket.getaddrinfo", return_value=answers):
+            response = self.client.post(
+                "/api/translate-text",
+                json={
+                    "texts": ["こんにちは"],
+                    "mode": "openai-compatible",
+                    "endpoint": "https://gateway.example.com/v1/chat/completions",
+                    "model": "local-model",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        translate_mock.assert_called_once()
 
     @patch("backend.app.detect_text_regions", return_value=[(10, 12, 60, 55)])
     @patch("backend.app.recognize_detailed", return_value=detailed("こんにちは"))

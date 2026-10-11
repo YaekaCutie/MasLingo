@@ -152,18 +152,35 @@ try {
   check("每条分割线都通栏到边缘", insetRules.length === 0,
     insetRules.map((rule) => `${rule.label} 左${rule.left} 右${rule.right}`).join("; "));
 
-  // --- a stored position from another window must not hide the panel --------
+  // --- position limits are gone; only a fully invisible pane is rescued -----
   //
-  // A saved `left`/`top` is only meaningful for the window it was saved in. Drag
-  // the panel to the far right of a wide monitor, reopen on a laptop, and the raw
-  // value puts it past the right edge: mounted, running, invisible. That reads as
-  // "the panel disappeared" — and it did, off the screen.
-  console.log("\n恢复的位置必须落在可视区内");
+  // The panel may be placed anywhere, including partly past an edge, and a
+  // saved position is applied as saved. The one correction left is for a pane
+  // that is *entirely* off screen — a position from a much larger monitor, or
+  // a window that shrank around it — which would otherwise be mounted but
+  // unreachable, reading as "the panel disappeared".
+  console.log("\n自由摆放：部分出界按原样恢复");
   const workerTarget = await browser.waitForTarget(
     (t) => t.type() === "service_worker" && t.url().includes("service-worker.js"),
     { timeout: 30000 },
   );
   const sw = await workerTarget.worker();
+  await sw.evaluate(() => chrome.storage.local.set({ panelPosition: { left: 950, top: 800 } }));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const partlyOff = await page.evaluate(() => {
+    const panel = document.getElementById("maslingo-panel");
+    if (!panel) return { mounted: false };
+    const rect = panel.getBoundingClientRect();
+    return { mounted: true, x: Math.round(rect.x), y: Math.round(rect.y) };
+  });
+  console.log(`      存了 (950,800)，恢复后落在 (${partlyOff.x},${partlyOff.y})`);
+  check("部分出界的位置按存档原样恢复（不再被 clamp）",
+    partlyOff.mounted && partlyOff.x === 950 && partlyOff.y === 800,
+    JSON.stringify(partlyOff));
+
+  console.log("\n完全出界时被拉回可视区（只救这一种情况）");
   await sw.evaluate(() => chrome.storage.local.set({ panelPosition: { left: 4000, top: 3000 } }));
   await page.reload({ waitUntil: "domcontentloaded" });
   await new Promise((r) => setTimeout(r, 2500));
@@ -176,41 +193,50 @@ try {
       mounted: true,
       x: Math.round(rect.x),
       y: Math.round(rect.y),
-      visible: rect.right > 0 && rect.bottom > 0
-        && rect.left < window.innerWidth && rect.top < window.innerHeight,
+      // Something grabbable must be on screen: at least 16px on both axes.
+      reachable: (() => {
+        const visibleX = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+        const visibleY = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
+        return Math.max(visibleX, 0) >= 16 && Math.max(visibleY, 0) >= 16;
+      })(),
       viewport: [window.innerWidth, window.innerHeight],
     };
   });
   console.log(`      存了 (4000,3000)，恢复后落在 (${restored.x},${restored.y})，`
     + `视口 ${JSON.stringify(restored.viewport)}`);
-  check("存档位置越界时被拉回可视区", restored.mounted && restored.visible === true,
+  check("完全出界的位置被拉回可视区", restored.mounted && restored.reachable === true,
     JSON.stringify(restored));
 
-  // --- the status surface must not cover the panel -------------------------
+  // --- the message text lives inside the panel ------------------------------
   //
-  // Both live in the lower right corner on purpose, and the status pane outranks
-  // the panel so it stays readable while the panel is collapsed. Without a
-  // reserved strip the two overlap by ~4400px², which buries the panel's footer.
-  console.log("\n状态窗不覆盖面板");
+  // It used to be an independent surface sharing this corner, then a separate
+  // row inside the panel. Everything now shares the panel's one message line.
+  console.log("\n消息文字在面板内，没有第二个浮层");
+  // The reachability test left the pane at the edge it was rescued to; clear
+  // the stored position so the panel returns to its own corner for this part.
+  await sw.evaluate(() => chrome.storage.local.remove("panelPosition"));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await new Promise((r) => setTimeout(r, 2000));
   await sw.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
-  await new Promise((r) => setTimeout(r, 4000));
-  const stacked = await page.evaluate(() => {
+  await new Promise((r) => setTimeout(r, 1500));
+  const placement = await page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
-    const status = document.getElementById("maslingo-status");
-    if (!panel || !status) return { present: Boolean(panel) && Boolean(status) };
-    const a = panel.getBoundingClientRect();
-    const b = status.getBoundingClientRect();
-    const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
-    const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    const line = document.getElementById("maslingo-line");
     return {
-      present: true,
-      overlap: width > 0 && height > 0 ? Math.round(width * height) : 0,
-      panelBottom: Math.round(window.innerHeight - a.bottom),
-      statusTop: Math.round(b.top),
+      legacySurfaces: Boolean(
+        document.getElementById("maslingo-status")
+          || document.getElementById("maslingo-status-line"),
+      ),
+      lineInPanel: Boolean(panel && line && panel.contains(line)),
+      panelBottom: panel ? Math.round(window.innerHeight - panel.getBoundingClientRect().bottom) : -1,
     };
   });
-  console.log(`      面板下沿距底 ${stacked.panelBottom}px，状态窗顶边 y=${stacked.statusTop}`);
-  check("状态窗与面板零重叠", stacked.overlap === 0, JSON.stringify(stacked));
+  console.log(`      旧浮层存在：${placement.legacySurfaces}  消息行在面板内：${placement.lineInPanel}`
+    + `  面板下沿距底 ${placement.panelBottom}px`);
+  check("不再有独立的状态浮层/状态行", placement.legacySurfaces === false);
+  check("消息行在面板内部", placement.lineInPanel === true);
+  check("面板贴住底部（不再预留状态窗空间）",
+    placement.panelBottom >= 8 && placement.panelBottom < 40, String(placement.panelBottom));
 } finally {
   await browser.close();
   rmSync(workDir, { recursive: true, force: true });

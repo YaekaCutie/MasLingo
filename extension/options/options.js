@@ -53,6 +53,9 @@ document.getElementById("revealKey").onclick = (event) => {
 
 let savedApiKeyExists = false;
 let savedAppIdExists = false;
+// Which provider the stored model id was chosen for (see resolveModel in
+// providers.js) — switching sources must not carry it over.
+let savedModelOwner = "";
 
 // --- 翻译来源选择 -----------------------------------------------------------
 
@@ -93,7 +96,7 @@ function describeProvider() {
   }
 
   fieldEndpoint.hidden = !provider.endpointEditable;
-  fieldModel.hidden = !(provider.adapter === registry.list.find((p) => p.id === "openai").adapter);
+  fieldModel.hidden = !provider.modelEditable;
   fieldAppId.hidden = !provider.appIdRequired;
   fieldKey.hidden = !provider.keyRequired;
   fieldTarget.hidden = provider.targetKind !== "name";
@@ -148,7 +151,12 @@ function showResult(text, kind = "ok") {
   result.dataset.kind = kind;
 }
 
-providerSelect.addEventListener("change", describeProvider);
+providerSelect.addEventListener("change", () => {
+  if (savedModelOwner && savedModelOwner !== providerSelect.value) {
+    translationModel.value = "";
+  }
+  describeProvider();
+});
 
 document.getElementById("save").onclick = async () => {
   const provider = selectedProvider();
@@ -175,13 +183,24 @@ document.getElementById("save").onclick = async () => {
       : "openai-compatible",
     translationEndpoint: endpoint,
     translationModel: translationModel.value.trim(),
+    // Which provider the model box was filled in for. The panel has its own
+    // model picker now, and this is what keeps one vendor's model id from
+    // being sent to the next vendor after a source switch.
+    translationModelProvider: provider.id,
     translationAppId: translationAppId.value.trim(),
-    targetLanguage: targetLanguage.value.trim(),
     autoTranslate: autoTranslate.checked,
     autoConcurrency: Number(autoConcurrency.value) || 1,
     fontScale: Number(fontScale.value) / 100,
     overlayOpacity: Number(overlayOpacity.value) / 100
   };
+  // Only the chat-based providers use the language *name*; saving the box's
+  // leftover value while it is hidden is how a code-based provider (DeepL,
+  // Baidu, Google) ended up being sent "繁體中文" as a language code. Leaving
+  // the key out preserves whatever was last typed for the providers that do
+  // use it.
+  if (provider.targetKind === "name") {
+    cfg.targetLanguage = targetLanguage.value.trim();
+  }
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
   else if (clearApiKey.checked) cfg.translationApiKey = "";
@@ -189,6 +208,7 @@ document.getElementById("save").onclick = async () => {
   await chrome.storage.local.set(cfg);
   savedApiKeyExists = Boolean(newKey) || (savedApiKeyExists && !clearApiKey.checked);
   savedAppIdExists = Boolean(cfg.translationAppId) || savedAppIdExists;
+  savedModelOwner = provider.id;
   translationApiKey.value = "";
   clearApiKey.checked = false;
   describeProvider();
@@ -229,7 +249,7 @@ async function load() {
   const cfg = await chrome.storage.local.get([
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
-    "translationApiKey", "targetLanguage",
+      "translationModelProvider", "translationApiKey", "targetLanguage",
     "autoTranslate", "autoConcurrency", "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
@@ -255,7 +275,12 @@ async function load() {
   providerSelect.value = registry.byId(providerId) ? providerId : "none";
 
   translationEndpoint.value = cfg.translationEndpoint || "";
-  translationModel.value = cfg.translationModel || "";
+  savedModelOwner = cfg.translationModelProvider || "";
+  // A model id chosen for a different source is not shown here: saving it as
+  // this provider's model is exactly the cross-source leak resolveModel blocks.
+  translationModel.value = savedModelOwner && savedModelOwner !== providerSelect.value
+    ? ""
+    : (cfg.translationModel || "");
   translationAppId.value = cfg.translationAppId || "";
   targetLanguage.value = cfg.targetLanguage || "";
   savedApiKeyExists = Boolean(cfg.translationApiKey);

@@ -63,6 +63,23 @@ jobs:
       - name: Score the background reconstruction
         run: xvfb-run -a node deploy/check-inpaint.mjs
 
+      # Page-level chrome must appear once, in the top frame; auto translate runs
+      # in every frame, and the notice used to be duplicated into each one.
+      - name: The page-level notice appears exactly once
+        run: xvfb-run -a node deploy/check-notice-once.mjs
+
+      # A long status message scrolls; repeating the same message (auto.js says
+      # one per failing picture) must not restart that scroll.
+      - name: The status line marquee runs and survives repeated messages
+        run: xvfb-run -a node deploy/check-status-marquee.mjs
+
+      # Choosing an "AI 大模型" source folds 自动识别 / 框选翻译 away and unfolds
+      # the API Key + 翻译强度 modules; the connectivity probe must forward the
+      # very text it asked about — 必应 once translated the literal "undefined"
+      # and the panel displayed 未定义 as a success.
+      - name: The AI-mode morph and the probe's text forwarding
+        run: xvfb-run -a node deploy/check-ai-panel.mjs
+
       # Settings and popup wiring, plus a real translation round trip against a
       # local stand-in for an OpenAI-compatible service. Port 8001 is reused
       # because it is already in host_permissions and nothing else runs in this
@@ -90,6 +107,13 @@ jobs:
 
       - name: Build the backend image
         run: docker build -f deploy/Dockerfile -t mas-backend:test .
+
+      # The unit tests are the cheapest signal in the repo, and until now they
+      # ran nowhere but a developer machine. Running them inside the image that
+      # was just built needs no extra install and checks them against the exact
+      # dependency set that ships. No model is loaded: the lifespan never runs.
+      - name: Backend unit tests
+        run: docker run --rm mas-backend:test python -m unittest discover -s backend/tests
 
       - name: Start the container with production-like settings
         run: |

@@ -11,6 +11,16 @@ importScripts("../config.js", "../translation/providers.js");
  * A timeout is reported as such so it can be told apart from a refusal.
  */
 const REQUEST_TIMEOUT_MS = 120000;
+/**
+ * Deadline for page-level OCR.
+ *
+ * `/api/recognize-page` reads up to 24 regions one after another, and on a
+ * small shared VM that legitimately takes minutes — the README says so, the
+ * content script waits six minutes for the answer, and CI allows curl ten.
+ * With the ordinary 120s deadline the extension was the one giving up on work
+ * the backend would have finished, and reported it as a timeout.
+ */
+const PAGE_REQUEST_TIMEOUT_MS = 300000;
 
 /**
  * Fetch with a deadline, reporting a timeout as such.
@@ -58,12 +68,12 @@ async function readError(response, fallback) {
   return detail ? `${fallback}：${detail}` : `${fallback}（HTTP ${response.status}）`;
 }
 
-async function fetchBackend(path,options={}){
+async function fetchBackend(path,options={},timeoutMs=REQUEST_TIMEOUT_MS){
   const backends=await globalThis.MAS_backendCandidates();
   let lastError=null;
   for(const base of backends){
     try{
-      const resp=await timedFetch(`${base}${path}`,options);
+      const resp=await timedFetch(`${base}${path}`,options,timeoutMs);
       if(resp.ok || resp.status >= 400){
         return resp;
       }
@@ -86,7 +96,11 @@ async function autoRecognize(imageDataUrl) {
   const blob = await (await fetch(imageDataUrl)).blob();
   const form = new FormData();
   form.append("image", blob, "region.png");
-  const response = await fetchBackend("/api/recognize-page", { method: "POST", body: form });
+  const response = await fetchBackend(
+    "/api/recognize-page",
+    { method: "POST", body: form },
+    PAGE_REQUEST_TIMEOUT_MS,
+  );
   // Status first, body second — see readError.
   if (!response.ok) throw new Error(await readError(response, "OCR 失败"));
   const payload = await response.json().catch(() => ({}));
@@ -217,28 +231,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
           return;
         }
-        // Awaited: 有道 is the one async adapter (its signature is a SHA-256), so
-        // calling it synchronously yielded a Promise and `fetch(undefined, …)`
-        // rejected — the connectivity check reported a failure for a perfectly
-        // good key. runTranslation always awaited it, which is why only this path
-        // was broken.
+        // Awaited: some adapters are async (有道's signature is a SHA-256, and
+        // 必应 fetches its page tokens first), so calling one synchronously
+        // yielded a Promise and `fetch(undefined, …)` rejected — the
+        // connectivity check reported a failure for a perfectly good key.
+        // runTranslation always awaited it, which is why only this path broke.
         const built = await provider.adapter({
           endpoint: cfg.translationEndpoint || provider.endpoint || "",
           apiKey: cfg.translationApiKey || "",
           appId: cfg.translationAppId || "",
-          model: cfg.translationModel || provider.model || "",
-          target: provider.targetKind === "code"
-            ? (provider.target || cfg.targetLanguage || "简体中文")
-            : (cfg.targetLanguage || provider.target || "简体中文"),
+          model: globalThis.MAS_providers.resolveModel(provider, cfg),
+          // The probe used to pass only `texts`, and the one-text-per-request
+          // adapters read `request.text` — Bing's form then carried the literal
+          // string "undefined" and the check showed Bing's translation of that
+          // word (未定义) as if it were a success.
+          text: message.text,
+          target: globalThis.MAS_providers.resolveTarget(provider, cfg),
           source: provider.source || "ja",
           texts: [message.text],
+          strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
           // Baidu signs with a random salt and a timestamp; without them the
           // signature is built over the literal string "undefined" and the
           // probe can never pass.
           salt: String(Date.now()),
           now: Date.now(),
         });
-        const response = await timedFetch(built.url, built.init, 30000);
+        let response;
+        try {
+          response = await timedFetch(built.url, built.init, 30000);
+        } catch (error) {
+          // Same wording as the real translation path. A bare "Failed to
+          // fetch" names neither the service nor a cause, and this probe is
+          // exactly where the user comes to find out what is wrong.
+          sendResponse({
+            ok: false,
+            reason: describeConnectFailure(error, built.url, provider).slice(0, 200),
+          });
+          return;
+        }
         const payload = await response.json().catch(() => null);
         if (!response.ok) {
           sendResponse({
@@ -296,14 +326,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "translationMode", "translationProvider", "translationEndpoint",
           "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
         ]);
-        if (!resolveProvider(cfg)) {
+        const provider = resolveProvider(cfg);
+        if (!provider) {
           sendResponse({ ok: true, mode: "none", items: [] });
           return;
         }
         const translated = await runTranslation(message.texts || [], cfg);
         sendResponse({
           ok: true,
-          mode: cfg.translationMode || "none",
+          mode: effectiveMode(provider),
           items: (message.texts || []).map((text, index) => ({
             text, translated: translated[index],
           })),
@@ -320,6 +351,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const cfg = await chrome.storage.local.get([
         "translationMode", "translationProvider", "translationEndpoint",
         "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+        "translationStrength", "translationModelProvider",
       ]);
       const translated = await runTranslation(["おはよう"], cfg);
       sendResponse({ ok: true, translated: translated[0] });
@@ -507,9 +539,18 @@ async function recognizePage(msg,tabId,port){
     const image=await canvas.convertToBlob({type:"image/png"});
     const fd=new FormData();
     fd.append("image",image,"manga-image.png");
-    const resp=await fetchBackend("/api/recognize-page",{method:"POST",body:fd});
+    const cfg=await chrome.storage.local.get(["debugMode"]);
+    const resp=await fetchBackend(
+      "/api/recognize-page",
+      {method:"POST",body:fd},
+      PAGE_REQUEST_TIMEOUT_MS
+    );
     if(!resp.ok)throw new Error(await readError(resp,"后端错误"));
     const result=await resp.json().catch(()=>({}));
+    // Same field the manual path sets: without it the content script cannot
+    // tell "show the recognised Japanese" from "the setting is off" and painted
+    // the source text even when the user had switched it off.
+    result.debug_mode=cfg.debugMode!==false;
     result.items=(result.items||[]).map(item=>({
       ...item,
       rect:{
@@ -550,6 +591,62 @@ function resolveProvider(cfg) {
   return cfg.translationEndpoint ? usable(registry.byId("custom")) : usable(registry.byId("openai"));
 }
 
+/**
+ * The mode a resolved provider effectively runs in, for status reporting.
+ *
+ * Only "none" is load-bearing: the content script uses it to decide whether the
+ * text it received is OCR output to display or a real translation. Deriving it
+ * from the resolved provider — instead of echoing the legacy `translationMode`
+ * storage field — means an upgraded profile whose stored mode is stale ("none"
+ * while a provider is selected) still gets its translations painted.
+ */
+function effectiveMode(provider) {
+  if (!provider) return "none";
+  if (provider.id === "google-free" || provider.id === "backend") return "free-translate";
+  return "openai-compatible";
+}
+
+/**
+ * Services that are, as a rule, unreachable from mainland China without a
+ * proxy. Kept as one list so the advice stays in one place.
+ */
+const UNREACHABLE_IN_MAINLAND = new RegExp(
+  [
+    "translate\\.googleapis\\.com",
+    "generativelanguage\\.googleapis\\.com",
+    "api\\.openai\\.com",
+    "api\\.anthropic\\.com",
+    "openrouter\\.ai",
+  ].map((host) => `(^|\\.)${host}$`).join("|"),
+  "i",
+);
+
+/**
+ * Turn a transport-level failure into something a user can act on.
+ *
+ * `fetch` collapses DNS failure, TLS failure, a blocked domain and a refused
+ * request into the same "Failed to fetch", so the message has to carry the two
+ * things `fetch` threw away: which service was being reached, and which of the
+ * causes is plausible. Observed in the wild as "翻译失败：无法连接翻译服务
+ * （Failed to fetch）" with no way to tell Google apart from a typo'd endpoint —
+ * the user's profile had Google selected on a network that cannot reach it.
+ */
+function describeConnectFailure(error, url, provider) {
+  let host = "";
+  try {
+    host = new URL(url).host;
+  } catch {
+    /* keep it empty; the message still names the provider */
+  }
+  const label = provider?.label ? `「${provider.label}」` : "翻译服务";
+  const at = host ? `${label}（${host}）` : label;
+  const detail = String(error?.message || error);
+  if (host && UNREACHABLE_IN_MAINLAND.test(host)) {
+    return `无法连接${at}：${detail}。该服务在国内网络通常无法直连（需要代理）；可在设置里改用 DeepSeek、通义千问等可直连的来源。`;
+  }
+  return `无法连接${at}：${detail}。请检查网络、接口地址，以及该域名是否已授权。`;
+}
+
 /** Fetch a provider endpoint, turning HTTP errors into readable messages. */
 async function providerFetch(url, init, provider) {
   let response;
@@ -571,8 +668,7 @@ async function providerFetch(url, init, provider) {
     try {
       response = await timedFetch(url, init);
     } catch (error) {
-      // A bare "Failed to fetch" tells the user nothing about which service died.
-      throw new Error(`无法连接翻译服务（${error.message}）。请检查网络、接口地址，以及该域名是否已授权。`);
+      throw new Error(describeConnectFailure(error, url, provider));
     }
   }
 
@@ -609,10 +705,12 @@ async function runTranslation(texts, cfg) {
     endpoint: (cfg.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),
     apiKey: cfg.translationApiKey || "",
     appId: cfg.translationAppId || "",
-    model: cfg.translationModel || provider.model || "",
+    model: globalThis.MAS_providers.resolveModel(provider, cfg),
     mode: cfg.translationMode || "openai-compatible",
+    strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
     source: provider.source || "ja",
-    target: cfg.targetLanguage || provider.target || "zh-CN",
+    // One resolution rule, shared with the connectivity probe above.
+    target: globalThis.MAS_providers.resolveTarget(provider, cfg),
     salt: Math.floor(Math.random() * 1e9),
   };
   if (!common.endpoint && provider.endpointEditable) {
@@ -620,11 +718,14 @@ async function runTranslation(texts, cfg) {
   }
 
   // Google's public endpoint takes one query per request, so it is called once
-  // per text rather than in a batch.
+  // per text rather than in a batch. Awaited: adapters may be async (必应
+  // fetches its page tokens first), and without the await a Promise was passed
+  // to providerFetch — url undefined, fetch("undefined") failing as a bogus
+  // network error.
   if (provider.perRequest) {
     const out = [];
     for (const text of texts) {
-      const request = provider.adapter({ ...common, text, texts: [text] });
+      const request = await provider.adapter({ ...common, text, texts: [text] });
       const json = await providerFetch(request.url, request.init, provider);
       out.push(...provider.parse(json, 1));
     }
@@ -640,14 +741,15 @@ async function translateTexts(msg, port) {
   const cfg = await chrome.storage.local.get([
     "translationMode", "translationProvider", "translationEndpoint",
     "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+    "translationStrength", "translationModelProvider",
   ]);
-  const configuredMode = cfg.translationMode || "none";
+  const provider = resolveProvider(cfg);
   try {
     // "Switched off" is a normal state, not a failure. It used to reach
     // runTranslation, throw, and be reported as an error — which made every
     // recognition look like something had gone wrong, and meant the content
     // script's translation-off branch never ran at all.
-    if (!resolveProvider(cfg)) {
+    if (!provider) {
       postPortMessage(port, {
         type: "TRANSLATION_RESULT",
         requestId: msg.requestId,
@@ -660,7 +762,7 @@ async function translateTexts(msg, port) {
     postPortMessage(port, {
       type: "TRANSLATION_RESULT",
       requestId: msg.requestId,
-      mode: configuredMode,
+      mode: effectiveMode(provider),
       result: {
         ok: true,
         items: (msg.texts || []).map((text, index) => ({ text, translated: translated[index] })),

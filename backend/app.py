@@ -29,6 +29,7 @@ from PIL import UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from .image.decode import decode_image
+from .net_guard import assert_safe_endpoint
 from .ocr.bubble_detector import MAX_TEXT_REGIONS, detect_text_regions
 from .ocr.manga_ocr_engine import (
     get_engine,
@@ -114,22 +115,16 @@ def _check_endpoint_allowed(endpoint: str) -> None:
     way to convert an open relay into stolen credentials. Private and loopback
     addresses stay allowed because local backends are the normal case; only
     link-local and non-HTTP schemes are refused.
-    """
-    from urllib.parse import urlparse
-    import ipaddress
 
-    parsed = urlparse(endpoint or "")
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(400, "接口地址必须是 http 或 https。")
-    host = parsed.hostname or ""
-    if not host:
-        raise HTTPException(400, "接口地址缺少主机名。")
+    The address check now also resolves hostnames (in ``net_guard``), and
+    ``openai_compatible`` re-validates every redirect hop — urllib follows 3xx by
+    default, so without that a friendly-looking endpoint could bounce the request
+    to a blocked address after passing this check.
+    """
     try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        return  # a hostname; DNS resolution is left to the fetch
-    if address.is_link_local or address.is_multicast or address.is_reserved:
-        raise HTTPException(400, "不允许访问链路本地或保留地址。")
+        assert_safe_endpoint(endpoint)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 class TranslationRequest(BaseModel):
@@ -179,7 +174,16 @@ async def limit_requests(request, call_next):
     now = time.monotonic()
     async with _rate_lock:
         if len(_rate_hits) > 20000:
-            _rate_hits.clear()
+            # Evict only buckets whose window has already expired. Clearing the
+            # whole table — the earlier behaviour — also wiped the counters of
+            # clients being throttled right then, handing each of them a free
+            # burst at exactly the moment the table was under pressure.
+            stale = [
+                ip for ip, hits in _rate_hits.items()
+                if not hits or now - hits[-1] > RATE_LIMIT_WINDOW
+            ]
+            for ip in stale:
+                _rate_hits.pop(ip, None)
         bucket = _rate_hits[client]
         while bucket and now - bucket[0] > RATE_LIMIT_WINDOW:
             bucket.popleft()
@@ -239,7 +243,8 @@ async def translate_text(request: TranslationRequest):
                 )
             translated = await run_in_threadpool(translate_texts, items)
         elif request.mode == "openai-compatible":
-            _check_endpoint_allowed(request.endpoint)
+            # Resolution is a blocking DNS lookup, so it belongs off the loop.
+            await run_in_threadpool(_check_endpoint_allowed, request.endpoint)
             translated = await run_in_threadpool(
                 translate_openai_compatible,
                 items,

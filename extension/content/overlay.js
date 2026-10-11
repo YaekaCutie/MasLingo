@@ -256,7 +256,25 @@ const MAS_notice = (() => {
   let shown = false;
   let timer = null;
 
+  /** Whether this is the frame the user is looking at. */
+  function isTopFrame() {
+    try {
+      return window.top === window;
+    } catch {
+      return false;   // cross-origin parent: a subframe by definition
+    }
+  }
+
   function show(text, { once = true, kind = "info" } = {}) {
+    // Page-level chrome belongs to the top frame.
+    //
+    // Auto translate runs in every frame, so a reader that hosts the manga in
+    // an iframe produced a notice inside that iframe as well — clipped to it
+    // and parked wherever the iframe sits — on top of the top frame's own.
+    // Seen live: two "已检测到漫画，正在自动翻译" banners a few pixels apart.
+    // The top frame starts scanning whenever the feature is on, so gating here
+    // still announces the run exactly once, in the one place the corner is real.
+    if (!isTopFrame()) return;
     if (once && shown) return;
     shown = true;
     let node = document.getElementById("maslingo-notice");

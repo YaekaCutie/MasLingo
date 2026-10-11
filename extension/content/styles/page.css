@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border: 1px solid var(--maslingo-glass-edge);
+  border: 1px solid var(--maslingo-border);
   border-radius: 8px;
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha-strong));
   -webkit-backdrop-filter: blur(8px) saturate(120%);
@@ -95,10 +95,10 @@
 /*
  * Top right, once per page, and only to explain that something started.
  *
- * A lightweight glass of its own rather than the five-layer material: §17 asks
- * the expensive effect to stay on the main window and the state surfaces, and
- * this is a message that lives for four seconds. One blur, the same tint, the
- * same edge hairline — recognisably the same family, a fraction of the cost.
+ * A lightweight acrylic of its own: the blur stays on the main window and the
+ * state surfaces, and this is a message that lives for four seconds. One blur,
+ * the same tint, the same hairline border — recognisably the same family, a
+ * fraction of the cost.
  */
 .maslingo-notice {
   position: fixed;
@@ -108,16 +108,12 @@
   max-width: min(340px, calc(100vw - 32px));
   padding: 11px 15px;
   border-radius: 14px;
-  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .60));
+  border: 1px solid var(--maslingo-border);
   border-left-width: 3px;
   border-left-color: var(--maslingo-dot-ok);
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
   -webkit-backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
   backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
-  /* Top edge only. The 32px drop shadow that used to sit here was the same
-     hard-coded value the panel carried, and it survived the token change meant to
-     remove it — a token set to `none` does not touch a literal written beside it. */
-  box-shadow: inset 0 1px 0 var(--maslingo-inner-hi);
   color: var(--maslingo-ink);
   font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   pointer-events: none;
@@ -128,9 +124,9 @@
 .maslingo-notice-in { opacity: 1; transform: translate3d(0, 0, 0); }
 
 /* --- transient message --------------------------------------------------- */
-/* The last resort when status.js could not load at all. Same material and the
-   same entry curve as the status surface, so a page that falls back to it does
-   not look like a different product. */
+/* The last resort when panel.js could not load at all, so an error message is
+   never silently lost. Same material and entry curve as the rest of the
+   product, so a page that falls back to it does not look like a different one. */
 .maslingo-toast {
   position: fixed;
   z-index: 2147483647;
@@ -139,14 +135,10 @@
   max-width: min(360px, calc(100vw - 32px));
   padding: 10px 14px;
   border-radius: 14px;
-  border: 1px solid var(--maslingo-glass-edge, rgba(255, 255, 255, .60));
+  border: 1px solid var(--maslingo-border);
   background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
   -webkit-backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
   backdrop-filter: blur(16px) saturate(var(--maslingo-sat));
-  /* Top edge only. The 32px drop shadow that used to sit here was the same
-     hard-coded value the panel carried, and it survived the token change meant to
-     remove it — a token set to `none` does not touch a literal written beside it. */
-  box-shadow: inset 0 1px 0 var(--maslingo-inner-hi);
   color: var(--maslingo-ink);
   font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   pointer-events: none;

@@ -122,6 +122,62 @@ try {
       fail(`backend candidates look wrong: ${JSON.stringify(candidates)}`);
     }
 
+    // --- keyless providers through the real pipeline -----------------------
+    //
+    // Both new providers are driven end to end through runTranslation, the
+    // same path a page translation takes: 必应's async page-token flow and
+    // MyMemory's plain GET. The two vendor hosts are intercepted so this is
+    // deterministic and is about the pipeline — including the `await` on
+    // per-request adapters, whose absence let a Promise reach providerFetch as
+    // `fetch(undefined)` — not about the vendors' uptime.
+    const cdp = await target.createCDPSession();
+    await cdp.send("Fetch.enable", {
+      patterns: [
+        { urlPattern: "https://cn.bing.com/*" },
+        { urlPattern: "https://api.mymemory.translated.net/*" },
+      ],
+    });
+    cdp.on("Fetch.requestPaused", (event) => {
+      const url = event.request.url;
+      const payload = url.includes("cn.bing.com/translator")
+        ? '<!doctype html><script>var _G={IG:"ABC123DEF456"};'
+          + 'params_AbusePreventionHelper=[1791710657099,"TOKENVALUE",3600000];</script>'
+        : url.includes("ttranslatev3")
+          ? JSON.stringify([{ translations: [{ text: "FIXTUREOK" }] }])
+          : JSON.stringify({ responseStatus: 200, responseData: { translatedText: "FIXTUREOK" } });
+      cdp.send("Fetch.fulfillRequest", {
+        requestId: event.requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: "Content-Type", value: "text/html; charset=utf-8" }],
+        body: Buffer.from(payload, "utf8").toString("base64"),
+      }).catch(() => {});
+    });
+
+    const keyless = await worker.evaluate(async () => {
+      const out = {};
+      for (const id of ["bing-free", "mymemory"]) {
+        try {
+          out[id] = await runTranslation(["おはよう"], {
+            translationProvider: id,
+            translationMode: "openai-compatible",
+            targetLanguage: "",
+          });
+        } catch (error) {
+          out[id] = `ERR: ${error.message}`;
+        }
+      }
+      return out;
+    });
+    // The fixture text is deliberately not a real translation: seeing it back
+    // proves the request went through the intercepted host and was parsed.
+    const bingOk = Array.isArray(keyless["bing-free"]) && keyless["bing-free"][0] === "FIXTUREOK";
+    const memoryOk = Array.isArray(keyless["mymemory"]) && keyless["mymemory"][0] === "FIXTUREOK";
+    if (bingOk) pass("bing-free runs through the real pipeline (async page tokens + per-request await)");
+    else fail(`bing-free through the pipeline: ${JSON.stringify(keyless["bing-free"])}`);
+    if (memoryOk) pass("mymemory runs through the real pipeline");
+    else fail(`mymemory through the pipeline: ${JSON.stringify(keyless["mymemory"])}`);
+    cdp.send("Fetch.disable").catch(() => {});
+
     // --- content script path ----------------------------------------------
     const page = await browser.newPage();
     await page.goto(pageUrl, { waitUntil: "domcontentloaded" });

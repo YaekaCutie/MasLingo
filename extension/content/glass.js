@@ -1,138 +1,49 @@
 /* MasLingo — the material engine.
  *
- * Everything that makes the glass behave like glass rather than like a styled
- * div lives here: where the light is, what the material is currently doing, and
- * when it should stop doing anything at all.
+ * The material is flat acrylic now: a tinted, blurred fill with a noise pass,
+ * closed by a 1px border, with no light of its own. What remains here is the
+ * behaviour rather than the paint:
  *
- * ==== Why a RAF loop instead of a CSS transition ====
+ *   track      bind the pane's hover state; there is no highlight to move
+ *   setState   one vocabulary for idle / hover / dragging
+ *   settle     the short recovery after a drag
+ *   setMorph   the expanded/collapsed shape, read by CSS
  *
- * §5 of the specification asks for target → rAF → lerp(current, target) →
- * custom property, with inertia, no jump, and settling within 150–350ms of the
- * pointer stopping. A CSS transition cannot do that: it is a fixed curve starting
- * from wherever the value happened to be, so a fast flick and a slow drift ease
- * identically and the "inertia" is not inertia. The loop below carries velocity
- * implicitly — each frame closes a fixed fraction of the remaining gap, which is
- * an exponential approach that decelerates on its own.
- *
- * It also stops. When the gap closes below half a pixel the loop cancels itself
- * and writes one final value. An idle panel therefore runs no animation frames at
- * all, which is the other half of §19: the material should be still when nothing
- * is happening, rather than looping a highlight forever.
+ * The previous version ran a requestAnimationFrame loop that eased a specular
+ * spot toward the pointer. That loop is gone with the specular: a flat surface
+ * answers interaction with a fill step and a border step (see [data-state] in
+ * glass.css), which are plain CSS transitions — an idle panel now runs no
+ * frames for its material at all.
  */
 
 globalThis.MAS_glass = (() => {
-  /** Fraction of the remaining distance closed per frame (~250ms to settle). */
-  const SMOOTHING = 0.18;
-  const SETTLED_PX = 0.5;
-
-  /** Whether the user asked for less movement (§21). */
-  function reduced() {
-    try {
-      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    } catch {
-      return false;
-    }
-  }
-
-  /** The material's resting light position: upper third, horizontally centred. */
-  function rest(element) {
-    const rect = element.getBoundingClientRect();
-    return { x: rect.width / 2, y: rect.height * 0.18 };
-  }
-
   /**
-   * Drive the specular spot from the pointer.
+   * Bind the pane's interaction states.
    *
-   * Writes two custom properties per frame on one decorative element. Nothing
-   * here reads layout per frame: the element's box is measured on pointer entry
-   * and whenever the caller says it moved, so the page scrolling underneath the
-   * panel costs nothing.
-   *
-   * Returns `{ refresh, dispose }`. `refresh` matters: the panel is dragged and
-   * re-clamped without ever re-entering the pointer, so a rect captured at
-   * `pointerenter` goes stale the moment the pane moves, and every later move
-   * computes the light's target from the wrong origin — far enough off that the
-   * spot lands outside the clipping layer and simply disappears.
+   * Nothing here measures or schedules: hover and drag are answered by tint and
+   * border changes in the stylesheet. `refresh` is kept because callers have
+   * always been able to say "the pane moved" after a layout change; on a flat
+   * material that is a no-op rather than a stale measurement.
    */
   function track(element) {
     if (!element) return { refresh() {}, dispose() {} };
 
-    let rect = element.getBoundingClientRect();
-    const start = rest(element);
-    const state = { tx: start.x, ty: start.y, cx: start.x, cy: start.y, raf: 0 };
+    const onEnter = () => setState(element, "hover");
+    const onMove = () => setState(element, "hover");
+    const onLeave = () => setState(element, "idle");
 
-    const write = () => {
-      element.style.setProperty("--maslingo-mx", `${state.cx.toFixed(1)}px`);
-      element.style.setProperty("--maslingo-my", `${state.cy.toFixed(1)}px`);
-    };
-
-    const frame = () => {
-      const dx = state.tx - state.cx;
-      const dy = state.ty - state.cy;
-      if (Math.abs(dx) < SETTLED_PX && Math.abs(dy) < SETTLED_PX) {
-        state.cx = state.tx;
-        state.cy = state.ty;
-        write();
-        state.raf = 0;
-        return;                       // idle: no further frames scheduled
-      }
-      state.cx += dx * SMOOTHING;
-      state.cy += dy * SMOOTHING;
-      write();
-      state.raf = requestAnimationFrame(frame);
-    };
-
-    const kick = () => {
-      if (!state.raf) state.raf = requestAnimationFrame(frame);
-    };
-
-    const measure = () => {
-      rect = element.getBoundingClientRect();
-    };
-
-    const onEnter = () => {
-      measure();
-      setState(element, "hover");
-    };
-    const onMove = (event) => {
-      // §21: under reduced motion the specular does not chase the pointer at all.
-      // It still answers hover and drag through setState, which are colour and
-      // opacity changes rather than movement.
-      if (reduced()) return;
-      // Re-asserted on every move, not only on enter. A drag leaves the pointer
-      // over the pane the whole time, so `pointerenter` never fires again, and
-      // without this the material stayed on the idle lighting after a release
-      // until the user moved the cursor away and back.
-      setState(element, "hover");
-      state.tx = event.clientX - rect.left;
-      state.ty = event.clientY - rect.top;
-      kick();
-    };
-    const onLeave = () => {
-      // Recedes rather than snapping back: the light withdraws.
-      const home = rest(element);
-      state.tx = home.x;
-      state.ty = home.y;
-      kick();
-      setState(element, "idle");
-    };
-
-    write();
-    if (reduced()) onLeave();
     element.addEventListener("pointerenter", onEnter, { passive: true });
     element.addEventListener("pointermove", onMove, { passive: true });
     element.addEventListener("pointerleave", onLeave, { passive: true });
     element.addEventListener("pointercancel", onLeave, { passive: true });
 
     return {
-      /** Re-measure after the caller moves or resizes the surface. */
-      refresh: measure,
+      refresh() {},
       dispose() {
         element.removeEventListener("pointerenter", onEnter);
         element.removeEventListener("pointermove", onMove);
         element.removeEventListener("pointerleave", onLeave);
         element.removeEventListener("pointercancel", onLeave);
-        if (state.raf) cancelAnimationFrame(state.raf);
       },
     };
   }
@@ -140,10 +51,10 @@ globalThis.MAS_glass = (() => {
   /**
    * Set the material's interaction state.
    *
-   * The stylesheet turns these into lighting changes — see `[data-state="..."]`
-   * in glass.css. Naming the states in one place is what stops a hover response
-   * and a drag response from being written twice, in two files, with slightly
-   * different values.
+   * The stylesheet turns these into fill and border changes — see
+   * `[data-state="..."]` in glass.css. Naming the states in one place is what
+   * stops a hover response and a drag response from being written twice, in two
+   * files, with slightly different values.
    */
   function setState(element, next) {
     if (!element) return;
@@ -170,7 +81,7 @@ globalThis.MAS_glass = (() => {
     // previous one. Left alone, re-grabbing the pane within the settle window let
     // the old timer fire mid-drag: it stripped the settling class the new release
     // had just added, and — worse — pushed the material to "idle" while the pane
-    // was still being moved, killing the rim lift and the thickening.
+    // was still being moved, killing the border lift and the thickening.
     if (element.__maslingoSettle) clearTimeout(element.__maslingoSettle);
     element.__maslingoSettle = setTimeout(() => {
       element.__maslingoSettle = 0;
@@ -180,7 +91,7 @@ globalThis.MAS_glass = (() => {
     }, 420);
   }
 
-  /** Flip the morph that every material layer reads (§8). */
+  /** Flip the morph the pane's width and radius read. */
   function setMorph(element, collapsed) {
     if (!element) return;
     // Expanding runs longer than collapsing, per the timing table in §20.
@@ -196,5 +107,5 @@ globalThis.MAS_glass = (() => {
     }, 700);
   }
 
-  return { reduced, track, setState, settle, setMorph };
+  return { track, setState, settle, setMorph };
 })();

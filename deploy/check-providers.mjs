@@ -70,7 +70,8 @@ const requestFor = (id, extra = {}) =>
 const openaiReq = await requestFor("openai");
 check("openai 走 POST", openaiReq.init.method === "POST");
 check("openai 带 Bearer", openaiReq.init.headers.Authorization === "Bearer KEY");
-check("openai 用配置的模型", JSON.parse(openaiReq.init.body).model === "gpt-4o-mini");
+check("openai 用配置的模型",
+  JSON.parse(openaiReq.init.body).model === providers.byId("openai").model);
 check(
   "openai 提示词里含原文数组",
   JSON.parse(openaiReq.init.body).messages[0].content.includes(JSON.stringify(TEXTS)),
@@ -96,6 +97,11 @@ const googleReq = await requestFor("google-free", { text: "おはよう" });
 check("google 免密钥", !googleReq.init.headers || !googleReq.init.headers.Authorization);
 check("google 目标语言正确", googleReq.url.includes("tl=zh-CN"));
 check("google 原文已编码", googleReq.url.includes(encodeURIComponent("おはよう")));
+const googleTextsOnly = await providers.byId("google-free").adapter({
+  texts: ["おはよう"], source: "ja", target: "zh-CN",
+});
+check("google 只给 texts 时取到原文（连通检测走这条路）",
+  googleTextsOnly.url.includes(encodeURIComponent("おはよう")), googleTextsOnly.url);
 
 const baiduReq = await requestFor("baidu");
 const baiduBody = new URLSearchParams(baiduReq.init.body);
@@ -113,9 +119,159 @@ check("youdao 签名是 64 位十六进制", /^[0-9a-f]{64}$/.test(youdaoBody.ge
 const backendReq = await requestFor("backend");
 check("backend 调用 /api/translate-text", backendReq.url.endsWith("/api/translate-text"));
 
+const myMemoryReq = await requestFor("mymemory", { text: "おはよう" });
+check("MyMemory 用公开 get 端点",
+  myMemoryReq.url.startsWith("https://api.mymemory.translated.net/get?"), myMemoryReq.url);
+check("MyMemory 带 langpair", myMemoryReq.url.includes(encodeURIComponent("ja|zh-CN")));
+
+// --- Bing's free flow: page tokens, then the translate request ---------------
+//
+// The adapter fetches the translator page for its IG/key/token pair. The fetch
+// is stubbed here so the check stays offline and deterministic; the live flow
+// was measured separately (and the extension's service worker sees the same
+// behaviour, since nothing but the page fetch is involved).
+section("必应免密钥流程（页面令牌 → 翻译请求）");
+const BING_PAGE = '<!doctype html><script>var _G={IG:"ABC123DEF456"};'
+  + 'params_AbusePreventionHelper=[1791710657099,"TOKENVALUE",3600000];</script>';
+const bingFetchCalls = [];
+sandbox.fetch = async (url) => {
+  bingFetchCalls.push(url);
+  return { ok: url === "https://cn.bing.com/translator", status: 200, text: async () => BING_PAGE };
+};
+const bingBuilt = await providers.byId("bing-free").adapter({
+  text: "おはよう", source: "ja", target: "zh-Hans",
+});
+check("bing 从翻译页取令牌", bingFetchCalls[0] === "https://cn.bing.com/translator", bingFetchCalls.join(","));
+check("bing 请求带 IG",
+  bingBuilt.url.includes("ttranslatev3") && bingBuilt.url.includes("IG=ABC123DEF456"), bingBuilt.url);
+check("bing 表单带 key / token / 目标语言",
+  bingBuilt.init.body.includes("key=1791710657099")
+    && bingBuilt.init.body.includes("token=TOKENVALUE")
+    && bingBuilt.init.body.includes("to=zh-Hans")
+    && bingBuilt.init.body.includes(encodeURIComponent("おはよう")),
+  bingBuilt.init.body);
+const bingSecond = await providers.byId("bing-free").adapter({
+  text: "ありがとう", source: "ja", target: "zh-Hans",
+});
+check("bing 令牌缓存（第二条不再请求页面）",
+  bingFetchCalls.length === 1 && bingSecond.url.includes("IG=ABC123DEF456"),
+  `fetch ${bingFetchCalls.length} 次`);
+// 一次一条的适配器也可能只拿到 `texts`：面板的连通检测曾经只传 texts，必应于是
+// 把字面量 "undefined" 当原文送出去，面板上显示的「未定义」就是必应对这个词的
+// 翻译结果。这条锁住修复。
+const bingTextsOnly = await providers.byId("bing-free").adapter({
+  texts: ["ありがとう"], source: "ja", target: "zh-Hans",
+});
+check("bing 只给 texts 时取到原文（不再翻译 undefined）",
+  bingTextsOnly.init.body.includes(encodeURIComponent("ありがとう"))
+    && !bingTextsOnly.init.body.includes("undefined"),
+  bingTextsOnly.init.body);
+
+// --- translation strength ---------------------------------------------------
+section("反应强度（Off / Low / High / Max）");
+const promptOff = providers.chatPrompt(["おはよう"], "简体中文", 0);
+const goldenOff = [
+  "你是漫画翻译引擎。把下面 JSON 数组里的每一条日文翻译成简体中文。",
+  "规则：",
+  "1. 只输出一个 JSON 字符串数组，不要解释、不要代码块标记。",
+  "2. 数组长度必须与输入完全相同，顺序一一对应。",
+  "3. 逐条独立翻译，不要合并、拆分或省略任何一条。",
+  "4. 保留原有的语气词、标点和停顿感；拟声词给出对应的中文拟声词。",
+  "5. 如果某条只是符号或无法识别，原样返回。",
+  "",
+  "输入：",
+  JSON.stringify(["おはよう"]),
+].join("\n");
+check("Off 档提示词与旧版逐字一致（默认行为不变）",
+  promptOff === goldenOff, promptOff.slice(0, 60));
+check("Low / High / Max 各带一条指令",
+  providers.chatPrompt(["おはよう"], "简体中文", 1).includes("强度 Low")
+    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("强度 High")
+    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("强度 Max"));
+const openaiMax = await requestFor("openai", { strength: 3 });
+check("强度进入实际请求（OpenAI 形状）",
+  JSON.parse(openaiMax.init.body).messages[0].content.includes("强度 Max"));
+check("默认强度是 Off（0）",
+  providers.normalizeStrength(undefined) === 0
+    && providers.normalizeStrength(null) === 0
+    && providers.normalizeStrength("") === 0);
+check("强度越界被夹到合法档位",
+  providers.normalizeStrength(9) === 3 && providers.normalizeStrength(-3) === 0);
+check("档位文案齐全",
+  providers.strengths.length === 4
+    && providers.strengthLabel(0) === "Off"
+    && providers.strengthLabel(1) === "Low"
+    && providers.strengthLabel(2) === "High"
+    && providers.strengthLabel(3) === "Max");
+
+// --- strength carries the proper-noun policy --------------------------------
+section("档位里的专有名词要求（联网核官方译名）");
+check("High / Max 要求联网核对专有名词官方译名（含人名）",
+  providers.chatPrompt(["おはよう"], "简体中文", 2).includes("联网核对官方译名")
+    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("官方译名")
+    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("人名")
+    && !providers.chatPrompt(["おはよう"], "简体中文", 1).includes("联网")
+    && !providers.chatPrompt(["おはよう"], "简体中文", 0).includes("联网"));
+
+// --- the concrete model per provider ----------------------------------------
+section("具体模型（每个来源自己的型号，不跨来源泄漏）");
+const deepseekProvider = providers.byId("deepseek");
+const openaiProvider = providers.byId("openai");
+check("没有覆盖时用来源默认型号",
+  providers.resolveModel(deepseekProvider, {}) === "deepseek-flash");
+check("覆盖属于该来源时生效",
+  providers.resolveModel(deepseekProvider, {
+    translationModel: "deepseek-reasoner", translationModelProvider: "deepseek",
+  }) === "deepseek-reasoner");
+check("覆盖属于别的来源时被忽略",
+  providers.resolveModel(openaiProvider, {
+    translationModel: "deepseek-reasoner", translationModelProvider: "deepseek",
+  }) === "gpt-6.1-sol");
+check("旧档案（没有归属标记）仍沿用存的型号",
+  providers.resolveModel(openaiProvider, { translationModel: "my-finetune" }) === "my-finetune");
+check("空白覆盖回落到来源默认",
+  providers.resolveModel(deepseekProvider, {
+    translationModel: "  ", translationModelProvider: "deepseek",
+  }) === "deepseek-flash");
+check("AI 来源都带型号清单，且第一项就是默认型号",
+  ["openai", "deepseek", "moonshot", "zhipu", "dashscope", "siliconflow", "groq",
+    "openrouter", "gemini", "claude", "ollama"].every((id) => {
+    const provider = providers.byId(id);
+    const models = providers.modelsOf(provider);
+    return models.length >= 2 && models[0].id === provider.model;
+  }));
+check("DeepSeek 的型号是当前的具体型号（V4.1 Flash / V4 Pro）",
+  providers.modelsOf(deepseekProvider).map((model) => model.id).join(",")
+    === "deepseek-flash,deepseek-v4-pro"
+    && providers.modelsOf(deepseekProvider)[0].label === "DeepSeek V4.1 Flash"
+    && providers.modelsOf(deepseekProvider)[1].label === "DeepSeek V4 Pro");
+check("ChatGPT 条目带上产品名，型号是现行 GPT-6 家族（4o 已无 API）",
+  providers.byId("openai").label.includes("ChatGPT")
+    && providers.modelsOf(providers.byId("openai")).some((m) => m.id === "gpt-6.1-sol")
+    && !providers.modelsOf(providers.byId("openai")).some((m) => m.id.includes("4o")));
+check("Claude 的型号 id 用官方连字符写法（不是版本号的点）",
+  providers.modelsOf(providers.byId("claude")).every((m) => /^claude-[a-z]+-\d+(-\d+)+$/.test(m.id)));
+check("Groq / 硅基流动也换成了现行型号",
+  providers.modelsOf(providers.byId("groq")).some((m) => m.id === "qwen/qwen3.8-27b")
+    && providers.modelsOf(providers.byId("siliconflow")).some((m) => m.id === "deepseek-ai/DeepSeek-V4-Flash"));
+check("Groq 条目有说明（它不是 Grok）",
+  (providers.byId("groq").note || "").includes("Grok"));
+check("Grok（xAI）条目存在，型号是现行 Grok 家族",
+  (providers.byId("xai")?.label || "").includes("Grok")
+    && providers.byId("xai").host === "https://api.x.ai/*"
+    && providers.byId("xai").model === "grok-4.7"
+    && providers.modelsOf(providers.byId("xai")).some((m) => m.id === "grok-4.6"));
+check("自定义模型框只开给读它的适配器（OpenAI 兼容）",
+  providers.byId("deepseek").modelEditable === true
+    && providers.byId("custom").modelEditable === true
+    && providers.byId("gemini").modelEditable === false
+    && providers.byId("claude").modelEditable === false);
+
 // --- response parsing -------------------------------------------------------
 section("响应解析");
 const count = 2;
+// Providers that translate one text per request parse a single-item result.
+const SINGLE_CALL = new Set(["google-free", "mymemory", "bing-free"]);
 const cases = [
   ["openai JSON 数组", "openai", { choices: [{ message: { content: '["甲","乙"]' } }] }],
   ["openai 带代码块", "openai", { choices: [{ message: { content: '```json\n["甲","乙"]\n```' } }] }],
@@ -127,6 +283,8 @@ const cases = [
   ["deepl", "deepL", { translations: [{ text: "甲" }, { text: "乙" }] }],
   ["baidu", "baidu", { trans_result: [{ src: "a", dst: "甲" }, { src: "b", dst: "乙" }] }],
   ["youdao", "youdao", { errorCode: "0", translation: ["甲", "乙"] }],
+  ["mymemory", "mymemory", { responseStatus: 200, responseData: { translatedText: "甲乙" } }],
+  ["bing", "bing-free", [{ translations: [{ text: "甲乙" }] }]],
   ["backend", "backend", { ok: true, items: [{ text: "a", translated: "甲" }, { text: "b", translated: "乙" }] }],
 ];
 for (const [name, id, fixture] of cases) {
@@ -134,11 +292,11 @@ for (const [name, id, fixture] of cases) {
   let parsed = null;
   let error = null;
   try {
-    parsed = provider.parse(fixture, id === "google-free" ? 1 : count);
+    parsed = provider.parse(fixture, SINGLE_CALL.has(id) ? 1 : count);
   } catch (caught) {
     error = caught;
   }
-  const expected = id === "google-free" ? ["甲乙"] : ["甲", "乙"];
+  const expected = SINGLE_CALL.has(id) ? ["甲乙"] : ["甲", "乙"];
   check(`解析 ${name}`, !error && JSON.stringify(parsed) === JSON.stringify(expected),
     error ? error.message : JSON.stringify(parsed));
 }
@@ -153,6 +311,8 @@ const mustThrow = [
   ["有道错误码", () => providers.byId("youdao").parse({ errorCode: "108" }, 2)],
   ["后端未成功", () => providers.byId("backend").parse({ ok: false, error: "boom" }, 2)],
   ["google 格式异常", () => providers.byId("google-free").parse({ unexpected: true }, 1)],
+  ["MyMemory 配额/错误", () => providers.byId("mymemory").parse({ responseStatus: 429, responseDetails: "QUERY LENGTH LIMIT" }, 1)],
+  ["bing 401 对象", () => providers.byId("bing-free").parse({ statusCode: 401, message: "InvalidRequest" }, 1)],
 ];
 for (const [name, fn] of mustThrow) {
   let threw = false;
@@ -181,6 +341,21 @@ check("对话类模型用「简体中文」这类可读写法，而不是 zh-CN"
 check("翻译 API 用语言代码",
   providers.list.filter((p) => p.targetKind === "code").every((p) => p.target.length <= 8),
   providers.list.filter((p) => p.targetKind === "code").map((p) => `${p.id}=${p.target}`).join(","));
+
+// One resolution rule for the connectivity probe and the real translation —
+// they used to disagree, so a probe against `ZH` could pass while every real
+// request sent the stored language *name* and failed.
+section("目标语言解析（检测与真实翻译共用）");
+const openAiProvider = providers.byId("openai");
+const deepLProvider = providers.byId("deepL");
+check("对话类：用户填写的语言名生效",
+  providers.resolveTarget(openAiProvider, { targetLanguage: "繁體中文" }) === "繁體中文");
+check("对话类：未填写时回落到默认语言名",
+  providers.resolveTarget(openAiProvider, {}) === "简体中文");
+check("翻译 API：沿用语言代码，忽略用户填的语言名",
+  providers.resolveTarget(deepLProvider, { targetLanguage: "繁體中文" }) === "ZH");
+check("翻译 API：未填写时也返回语言代码",
+  providers.resolveTarget(deepLProvider, {}) === "ZH");
 
 // The manifest has to declare every host the registry talks to, otherwise the
 // request is blocked at runtime with a message that looks like a network error.

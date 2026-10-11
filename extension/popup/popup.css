@@ -1,46 +1,33 @@
 /* Popup.
  *
- * Same design language as the in-page panel: liquid glass supplies the material
- * where there is something behind it, and flat supplies the styling everywhere
- * else. In practice that means controls are told apart by a translucent fill
- * rather than by outlines, radii come from one scale, and there is a single
- * shallow shadow rather than stacked ones.
- *
- * Accent: a low-saturation verdigris (#2f7d72). Not the default extension blue,
- * and deliberately not the violet gradient that reads as an AI landing page.
+ * Same design language as the in-page panel: flat surfaces on one neutral
+ * palette, no gradients, no shadows, and colour reserved for status. The popup
+ * sits on the browser's own surface, so it stays opaque — acrylic is only for
+ * what floats over page content. The teal brand hue that used to live here was
+ * the last piece of the product not speaking the panel's language; the panel
+ * keeps hue for the four status values and nothing else.
  */
 :root {
   --bg: #fbfbfa;
-  --text: #17191c;
-  --muted: #6d7370;
-  --accent: #2f7d72;
-  --accent-strong: #26655c;
-  --accent-soft: rgba(47, 125, 114, .12);
-  --err: #a33328;
+  --text: #1c1e21;            /* the panel's ink */
+  --muted: #3d434e;           /* the panel's secondary ink */
+  --accent: #1c1e21;          /* actions are ink; status owns the colour */
+  --accent-strong: #2e3033;
+  --err: #b3261e;             /* the panel's error text */
+  --ok: #248f52;              /* the panel's success dot */
+  --warn: #c98a12;            /* the panel's working dot */
+  --bad: #d33a3f;             /* the panel's failure dot */
+  --idle-dot: #8e8e93;
   /* Fills, not lines: the flat half of the design language. */
-  --fill: rgba(23, 25, 28, .05);
-  --fill-strong: rgba(23, 25, 28, .09);
-  --line: rgba(23, 25, 28, .10);
-  /* One radius scale, shared with the panel and the settings page. */
+  --fill: rgba(120, 120, 128, .13);
+  --fill-strong: rgba(120, 120, 128, .22);
+  --fill-hover: rgba(120, 120, 128, .30);
+  --line: rgba(28, 30, 33, .12);
+  --border: rgba(28, 30, 33, .10);
   --r-lg: 16px;
   --r-md: 12px;
   --r-sm: 10px;
   --r-xs: 8px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #191c1b;
-    --text: #e9ecea;
-    --muted: #9aa19e;
-    --accent: #63b8ab;
-    --accent-strong: #7fcabd;
-    --accent-soft: rgba(99, 184, 171, .16);
-    --err: #e08b80;
-    --fill: rgba(236, 238, 240, .07);
-    --fill-strong: rgba(236, 238, 240, .12);
-    --line: rgba(236, 238, 240, .12);
-  }
 }
 
 * { box-sizing: border-box; }
@@ -50,14 +37,16 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
 main { padding: 14px; }
 
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 0 2px; }
-h1 { font-size: 12px; margin: 0; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+/* A title, like the panel's brand line — it used to be a muted caption. */
+h1 { font-size: 13.5px; margin: 0; font-weight: 600; letter-spacing: .01em; color: var(--text); }
 
 .icon-btn {
   width: 26px;
@@ -88,7 +77,8 @@ h1 { font-size: 12px; margin: 0; font-weight: 600; letter-spacing: .02em; color:
 .feature-title { font-size: 14px; font-weight: 600; }
 .feature.muted .feature-title { font-size: 12px; font-weight: 600; color: var(--muted); }
 
-/* Switch: the one control that carries the accent colour when on. */
+/* Switch: the same dark "on" track as the panel's. An "on" toggle is a control
+   state, not a status, so it carries luminance rather than hue. */
 .switch { position: relative; display: inline-flex; cursor: pointer; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track {
@@ -108,38 +98,45 @@ h1 { font-size: 12px; margin: 0; font-weight: 600; letter-spacing: .02em; color:
   background: #fff;
   transition: transform .18s cubic-bezier(.3, .7, .4, 1);
 }
-.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track { background: rgba(28, 30, 33, .85); }
 .switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
-.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid rgba(28, 30, 33, .38);
+  outline-offset: 2px;
+}
 
+/* Status: the panel's four values, and the only colour in the popup. */
 .state { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; color: var(--muted); }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: #9aa19e; flex: 0 0 auto; }
-.state[data-state="scanning"] .state-dot { background: #d9a53b; animation: maslingo-pulse 1.6s ease-in-out infinite; }
-.state[data-state="working"] .state-dot { background: #d9a53b; animation: maslingo-pulse 1s ease-in-out infinite; }
-.state[data-state="done"] .state-dot { background: #3f9d63; }
-.state[data-state="error"] .state-dot { background: #c0503f; }
+.state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle-dot); flex: 0 0 auto; }
+.state[data-state="scanning"] .state-dot { background: var(--warn); animation: maslingo-pulse 1.6s ease-in-out infinite; }
+.state[data-state="working"] .state-dot { background: var(--warn); animation: maslingo-pulse 1s ease-in-out infinite; }
+.state[data-state="done"] .state-dot { background: var(--ok); }
+.state[data-state="error"] .state-dot { background: var(--bad); }
 .state[data-state="scanning"] #autoStateText,
 .state[data-state="working"] #autoStateText,
 .state[data-state="done"] #autoStateText { color: var(--text); }
-@keyframes maslingo-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes maslingo-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .state-dot { animation: none !important; } }
 
 .hint { margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--muted); }
 
-/* Controls: filled, not outlined. */
+/* Controls: filled with a hairline, the panel's recipe. */
 button:not(.icon-btn) {
   width: 100%;
   padding: 9px 12px;
-  border: 0;
+  border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--fill-strong);
   color: var(--text);
-  font-size:13px;font-weight:500;line-height:1.2;font-family:inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-family: inherit;
   cursor: pointer;
   transition: background .15s ease;
 }
 .feature.muted button:not(.icon-btn) { background: var(--fill); }
-button:not(.icon-btn):hover { filter: brightness(.96); }
+button:not(.icon-btn):hover { background: var(--fill-hover); }
 button.ghost { color: var(--muted); background: var(--fill); }
 
 details { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }

@@ -47,6 +47,19 @@ const backend = http.createServer((request, response) => {
     });
     return;
   }
+  // A working OpenAI-compatible endpoint, so the connectivity check can
+  // succeed deterministically (the timer test needs a success to arm its
+  // "restore the sample sentence" timer).
+  if (request.url === "/v1/chat/completions") {
+    request.on("data", () => {});
+    request.on("end", () => {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
+        choices: [{ message: { content: "[\"早上好\"]" } }],
+      }));
+    });
+    return;
+  }
   response.writeHead(404).end();
 });
 await new Promise((done) => backend.listen(0, "127.0.0.1", done));
@@ -110,31 +123,31 @@ try {
     const panel = document.getElementById("maslingo-panel");
     if (!panel) return null;
     const rect = panel.getBoundingClientRect();
-    const strip = document.getElementById("maslingo-status");
-    const stripRect = strip?.getBoundingClientRect();
     const panelRect = rect;
     const dots = [...panel.querySelectorAll(".maslingo-dot")].map((dot) => {
       const box = dot.getBoundingClientRect();
       return { text: dot.querySelector(".maslingo-dot-text").textContent.trim(), top: box.top, left: box.left };
     });
-    // The material is layered now, so the pane's own computed backdrop-filter is
+    // The material is layered, so the pane's own computed backdrop-filter is
     // `none` and always will be. Asking the root was the old contract.
     const baseLayer = panel.querySelector(".maslingo-glass__base");
     const edgeLayer = panel.querySelector(".maslingo-glass__edge");
-    const layers = [".maslingo-glass__base", ".maslingo-glass__depth",
-      ".maslingo-glass__edge", ".maslingo-glass__specular"]
+    const baseStyle = baseLayer ? getComputedStyle(baseLayer) : null;
+    const edgeStyle = edgeLayer ? getComputedStyle(edgeLayer) : null;
+    const layers = [".maslingo-glass__base", ".maslingo-glass__edge"]
+      .map((selector) => Boolean(panel.querySelector(selector)));
+    const removedLayers = [".maslingo-glass__depth", ".maslingo-glass__specular"]
       .map((selector) => Boolean(panel.querySelector(selector)));
     return {
       right: window.innerWidth - rect.right,
       bottom: window.innerHeight - rect.bottom,
       width: rect.width,
-      glass: baseLayer
-        ? getComputedStyle(baseLayer).backdropFilter || getComputedStyle(baseLayer).webkitBackdropFilter
-        : "none",
-      edgeGlass: edgeLayer
-        ? getComputedStyle(edgeLayer).backdropFilter || getComputedStyle(edgeLayer).webkitBackdropFilter
-        : "none",
+      glass: baseStyle ? baseStyle.backdropFilter || baseStyle.webkitBackdropFilter : "none",
+      noise: baseLayer ? getComputedStyle(baseLayer, "::after").backgroundImage : "",
+      edgeBorder: edgeStyle ? `${edgeStyle.borderTopWidth} ${edgeStyle.borderTopStyle}` : "",
+      edgeGlass: edgeStyle ? edgeStyle.backdropFilter || edgeStyle.webkitBackdropFilter : "none",
       layers,
+      removedLayers,
       position: getComputedStyle(panel).position,
       pointerEvents: getComputedStyle(panel).pointerEvents,
       dots,
@@ -147,26 +160,18 @@ try {
         const button = panel.querySelector("#maslingo-connect");
         return Boolean(select && button && select.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING);
       })(),
-      line: panel.querySelector("#maslingo-line")?.textContent || "",
+      // The line now carries a permanent 来源 note at its right end; the
+      // message itself is the inner text node.
+      line: panel.querySelector("#maslingo-line-text")?.textContent || "",
+      // A short sample sentence must not start the overflow marquee.
+      lineScrolling: Boolean(panel.querySelector("#maslingo-line.maslingo-scrolling")),
       hasSettings: Boolean(panel.querySelector("#maslingo-settings")),
       version: panel.querySelector("#maslingo-version")?.textContent || "",
       hasTerminal: Boolean(panel.querySelector("pre, .maslingo-terminal, .maslingo-log")),
-      // §11: the status surface is deliberately NOT part of the panel. It has to
-      // stay readable while the panel is collapsed, so a child of the panel would
-      // be hidden exactly when the user needs it.
-      statusInsidePanel: Boolean(panel.querySelector("#maslingo-status")),
-      statusIsSurface: Boolean(strip?.classList.contains("maslingo-surface")),
-      statusLines: (() => {
-        const line = strip?.querySelector(".maslingo-status-text") || strip;
-        return line ? line.textContent.split("\n").length : 0;
-      })(),
-      statusWhiteSpace: (() => {
-        const line = strip?.querySelector(".maslingo-status-text") || strip;
-        return line ? getComputedStyle(line).whiteSpace : null;
-      })(),
-      statusText: strip?.querySelector(".maslingo-status-text")?.textContent?.trim() || "",
-      statusRight: stripRect ? Math.round(window.innerWidth - stripRect.right) : -1,
-      statusBottom: stripRect ? Math.round(window.innerHeight - stripRect.bottom) : -1,
+      // The message line lives inside the panel; the bottom-right popup and
+      // then the separate status row were both removed, so everything shares
+      // this one line.
+      hasMessageLine: Boolean(panel.querySelector("#maslingo-line")),
       floatingSurfaces: [...document.documentElement.children]
         .filter((node) => node.id?.startsWith("maslingo-"))
         .map((node) => node.id),
@@ -174,16 +179,20 @@ try {
   });
 
   check("悬浮窗已挂载", Boolean(layout), "找不到 #maslingo-panel");
-  // Lower right, but not flush to the bottom: the status surface occupies the
-  // last 48px of that corner, so the panel sits above it. Asserting `bottom < 40`
-  // here was pinning the panel on top of the status pane.
-  check("停在右下角、并让开状态窗", layout.right < 40 && layout.bottom >= 48 && layout.bottom < 100,
+  // Flush to the corner now: the status popup that used to reserve the last
+  // 48px of this corner is gone.
+  check("停在右下角（贴住底部）", layout.right < 40 && layout.bottom >= 8 && layout.bottom < 40,
     JSON.stringify({ right: layout.right, bottom: layout.bottom }));
-  check("玻璃质感在材质层上（base 有 backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
-  check("边缘层是独立的光学层（自带 backdrop-filter）", /blur/.test(layout.edgeGlass || ""),
-    layout.edgeGlass);
-  check("材质拆成 base/depth/edge/specular 四层",
+  check("亚克力在材质层上（base 有 backdrop-filter）", /blur/.test(layout.glass || ""), layout.glass);
+  check("base 带噪点层（亚克力的标志）",
+    /data:image\/svg/.test(layout.noise || ""), String(layout.noise).slice(0, 60));
+  check("边缘是 1px 平面描边（不再自带滤镜）",
+    layout.edgeBorder === "1px solid" && !/blur/.test(layout.edgeGlass || "none"),
+    `${layout.edgeBorder} / ${layout.edgeGlass}`);
+  check("材质是 base + edge 两层（平面设计）",
     layout.layers.every(Boolean), JSON.stringify(layout.layers));
+  check("旧的 depth/specular 层已移除",
+    layout.removedLayers.every((present) => !present), JSON.stringify(layout.removedLayers));
   check("定位为 fixed", layout.position === "fixed");
   check("两个状态点横向排列", layout.dots.length === 2 && layout.dots[0].top === layout.dots[1].top,
     JSON.stringify(layout.dots));
@@ -195,22 +204,17 @@ try {
   check("有连通检测按钮", layout.hasConnect);
   check("连通检测在选择框右侧", layout.connectAfterSelect);
   check("有一言区域", layout.line.startsWith("「") && layout.line.endsWith("」"), layout.line);
+  check("短句不触发横向轮播", layout.lineScrolling === false);
   check("有设置入口", layout.hasSettings);
   check("显示版本号", /^v\d+\.\d+\.\d+$/.test(layout.version), layout.version);
   check("面板内没有终端", !layout.hasTerminal);
 
-  console.log("\n状态面不会挤进面板（§11）");
-  // Structural checks on the status surface happen further down, once a status
-  // has actually been raised — it is created lazily, so at this point it does not
-  // exist yet, and asserting its position here would compare -1 against 40 and
-  // pass while testing nothing at all.
-  check("状态面此刻尚未创建（懒挂载）", layout.statusInsidePanel === false && layout.statusRight < 0,
-    JSON.stringify({ right: layout.statusRight, bottom: layout.statusBottom }));
+  console.log("\n消息行在面板内，页面上没有第二个浮层");
+  check("面板自带消息行（一言与状态共用）", layout.hasMessageLine === true);
   // Auto translate is off at this point and nothing has reported a status, so
-  // the status surface has not been created yet. Once auto translate starts, two
-  // elements exist on purpose: the panel, the status surface, and — for a few
-  // seconds — the one-shot "detected manga" notice in the top-right corner.
-  check("未开启自动识别时不额外挂载浮层", layout.floatingSurfaces.length === 1,
+  // the panel is the only page-level surface. (The one-shot "detected manga"
+  // notice in the top-right corner appears only after auto translate starts.)
+  check("未开启自动识别时页面上只有面板", layout.floatingSurfaces.length === 1,
     JSON.stringify(layout.floatingSurfaces));
 
   console.log("\n不阻塞页面操作");
@@ -249,43 +253,70 @@ try {
   });
   check("可以拖动", dragged.movedX > 100 && dragged.movedY > 80, JSON.stringify(dragged));
 
-  const clamped = await page.evaluate(async () => {
+  // Position limits are gone on purpose: the pane follows the pointer even past
+  // the window edges. The only correction left is a failsafe for a pane that is
+  // entirely off screen (a stored position from a larger monitor), which
+  // check-panel-layout exercises separately.
+  // Let the settle animation from the drag above finish first: it scales the
+  // pane, and getBoundingClientRect during it reports the scaled box a few px
+  // off — enough to break the exact-delta assertion below.
+  await new Promise((r) => setTimeout(r, 500));
+  const free = await page.evaluate(async () => {
+    const panel = document.getElementById("maslingo-panel");
     const bar = document.getElementById("maslingo-panel-bar");
+    const before = panel.getBoundingClientRect();
     const startX = bar.getBoundingClientRect().left + 10;
     const startY = bar.getBoundingClientRect().top + 8;
     bar.dispatchEvent(new PointerEvent("pointerdown", {
-      bubbles: true, clientX: startX, clientY: startY, button: 0, pointerId: 1,
+      bubbles: true, clientX: startX, clientY: startY, button: 0, pointerId: 2,
     }));
-    for (const [x, y] of [[-500, -500], [5000, 5000]]) {
-      window.dispatchEvent(new PointerEvent("pointermove", {
-        bubbles: true, clientX: x, clientY: y, button: 0, pointerId: 1,
-      }));
-    }
-    window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, clientX: 5000, clientY: 5000, pointerId: 1 }));
-    await new Promise((r) => requestAnimationFrame(r));
-    const rect = document.getElementById("maslingo-panel").getBoundingClientRect();
-    return {
-      left: Math.round(rect.left), top: Math.round(rect.top),
-      right: Math.round(rect.right), bottom: Math.round(rect.bottom),
-      vw: window.innerWidth, vh: window.innerHeight,
-    };
-  });
-  check("拖不出可视区域",
-    clamped.left >= 0 && clamped.top >= 0 && clamped.right <= clamped.vw && clamped.bottom <= clamped.vh,
-    JSON.stringify(clamped));
+    const dx = window.innerWidth + 400;
+    const dy = window.innerHeight + 300;
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true, clientX: startX + dx, clientY: startY + dy, button: 0, pointerId: 2,
+    }));
+    window.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true, clientX: startX + dx, clientY: startY + dy, pointerId: 2,
+    }));
+    // The release starts a settle animation (a brief scale), and a scaled pane
+    // reports a box ~4px off its committed position. Measure after it ends.
+    await new Promise((r) => setTimeout(r, 400));
+    const after = panel.getBoundingClientRect();
 
-  // Dragging into the corner keeps the whole panel on screen; the status line
-  // travels with it, so there is nothing left to collide with.
-  const corner = await page.evaluate(() => {
-    const rect = document.getElementById("maslingo-panel").getBoundingClientRect();
+    // And back from wherever it now is, so the rest of the run has a panel on
+    // screen to click.
+    const backBox = bar.getBoundingClientRect();
+    const backX = backBox.left + 10;
+    const backY = backBox.top + 8;
+    bar.dispatchEvent(new PointerEvent("pointerdown", {
+      bubbles: true, clientX: backX, clientY: backY, button: 0, pointerId: 4,
+    }));
+    window.dispatchEvent(new PointerEvent("pointermove", {
+      bubbles: true, clientX: 380, clientY: 320, button: 0, pointerId: 4,
+    }));
+    window.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true, clientX: 380, clientY: 320, pointerId: 4,
+    }));
+    await new Promise((r) => setTimeout(r, 400));
+    const restored = panel.getBoundingClientRect();
+
     return {
-      inside: rect.left >= 0 && rect.top >= 0
-        && rect.right <= window.innerWidth && rect.bottom <= window.innerHeight,
-      right: Math.round(window.innerWidth - rect.right),
-      bottom: Math.round(window.innerHeight - rect.bottom),
+      movedX: Math.round(after.left - before.left),
+      movedY: Math.round(after.top - before.top),
+      dx,
+      dy,
+      offscreen: after.left > window.innerWidth || after.top > window.innerHeight,
+      backOnScreen: restored.left >= 0 && restored.top >= 0
+        && restored.left < window.innerWidth && restored.top < window.innerHeight,
+      backX: Math.round(restored.left),
+      backY: Math.round(restored.top),
     };
   });
-  check("拖到角落后整体仍在可视区内", corner.inside, JSON.stringify(corner));
+  check("拖动不再被位置限制夹住（可以拖出视口）",
+    free.offscreen === true
+      && Math.abs(free.movedX - free.dx) <= 2 && Math.abs(free.movedY - free.dy) <= 2,
+    JSON.stringify(free));
+  check("拖回屏幕后仍可继续操作", free.backOnScreen === true, JSON.stringify(free));
 
   console.log("\n收起为挂件（真实点击）");
   // A real mouse click, not element.click(). The collapse button sits inside the
@@ -310,8 +341,12 @@ try {
     // simply clipped away — measuring the body itself reports 323px and looks
     // like a failure when the collapse worked perfectly.
     const clip = panel.querySelector(".maslingo-sec-body .maslingo-sec-in");
+    // Scoped to the collapse machinery: a hard switch there would show up as a
+    // band with `display: none`. The status line is exempt on purpose — it uses
+    // the `hidden` attribute whenever there is no message, which is content
+    // visibility and has nothing to do with the collapse.
     let hiddenByDisplay = false;
-    for (const node of panel.querySelectorAll("*")) {
+    for (const node of panel.querySelectorAll(".maslingo-sec, .maslingo-sec-in, .maslingo-glass__content")) {
       if (getComputedStyle(node).display === "none") { hiddenByDisplay = true; break; }
     }
     return {
@@ -360,69 +395,53 @@ try {
   });
   check("拖拽仍然可用", stillDrags > 60, `只移动了 ${stillDrags}px`);
 
-  console.log("\n状态面：独立玻璃层，显示自动识别的进度（§11）");
+  console.log("\n消息行：一言与加载状态共用一行，自动识别会把进度写上去");
   await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
-  // Sampled early and then again later: the surface is meant to appear with
-  // progress and then go away, so both halves of that are worth pinning down.
+  // Sampled early and then again later: a loading state must replace the
+  // sample sentence while it runs, and the sentence must come back when the
+  // message expires — both halves are worth pinning down.
   const sample = async () => page.evaluate(() => {
-    const strip = document.getElementById("maslingo-status");
+    const line = document.getElementById("maslingo-line");
     const panel = document.getElementById("maslingo-panel");
-    if (!strip) return { missing: true };
-    // §11 requires the surface to be updated in place rather than rebuilt. A
-    // marker written on the first sample survives only if the same node is still
-    // there — a recreated one would come back without it.
-    if (!strip.dataset.probe) strip.dataset.probe = String(Date.now());
-    const line = strip.querySelector(".maslingo-status-text");
-    const rect = strip.getBoundingClientRect();
+    if (!line || !panel) return { missing: true };
+    // The line is updated in place, never rebuilt. A marker written on the
+    // first sample survives only if the same node is still there.
+    if (!line.dataset.probe) line.dataset.probe = String(Date.now());
+    const text = document.getElementById("maslingo-line-text");
+    const dot = document.getElementById("maslingo-line-dot");
     return {
       missing: false,
-      probe: strip.dataset.probe,
-      text: line?.textContent?.trim() || "",
-      visible: strip.classList.contains("maslingo-status-in"),
-      // Deliberately NOT a child of the panel: while the panel is collapsed the
-      // status still has to be readable, and a child would fold away with it.
-      insidePanel: panel.contains(strip),
-      isSurface: strip.classList.contains("maslingo-surface"),
-      layers: [".maslingo-glass__base", ".maslingo-glass__depth",
-        ".maslingo-glass__edge", ".maslingo-glass__specular"]
-        .every((selector) => Boolean(strip.querySelector(selector))),
-      dot: Boolean(strip.querySelector(".maslingo-status-dot")),
-      kind: strip.dataset.kind,
-      whiteSpace: line ? getComputedStyle(line).whiteSpace : null,
-      right: Math.round(window.innerWidth - rect.right),
-      bottom: Math.round(window.innerHeight - rect.bottom),
+      probe: line.dataset.probe,
+      text: text?.textContent?.trim() || "",
+      kind: line.dataset.kind,
+      dotVisible: dot ? dot.hidden === false : false,
+      insidePanel: panel.contains(line),
+      whiteSpace: text ? getComputedStyle(text).whiteSpace : null,
     };
   });
 
   let progress = await sample();
-  for (let attempt = 0; attempt < 15 && !(progress.visible && progress.text); attempt += 1) {
+  for (let attempt = 0; attempt < 15 && !(progress.kind && progress.text); attempt += 1) {
     await new Promise((r) => setTimeout(r, 200));
     progress = await sample();
   }
   const afterToggle = ocrCalls.length;
-  console.log(`      状态：「${progress.text}」  kind=${progress.kind}`);
+  console.log(`      一行：「${progress.text}」  kind=${progress.kind}  点=${progress.dotVisible}`);
 
   await new Promise((r) => setTimeout(r, 6000));
   const settled = await sample();
 
-  check("状态面已挂载", progress.missing === false, "没有 #maslingo-status");
-  check("状态面自身是玻璃材质", progress.isSurface === true && progress.layers === true,
-    JSON.stringify({ surface: progress.isSurface, layers: progress.layers }));
-  check("状态面有状态点", progress.dot === true);
-  check("状态面不在悬浮窗内部", progress.insidePanel === false,
-    "状态面又被塞回面板里了");
-  check("状态面停在右下角", progress.right >= 0 && progress.right < 40
-    && progress.bottom >= 0 && progress.bottom < 40,
-    JSON.stringify({ right: progress.right, bottom: progress.bottom }));
-  check("自动识别产生了状态文字", progress.text.length > 0, progress.text);
+  check("消息行已挂载且在面板内", progress.missing === false && progress.insidePanel === true);
+  check("加载状态写进一言行（替换样句）并显示状态点",
+    progress.kind !== "" && progress.dotVisible === true && progress.text.length > 0,
+    JSON.stringify(progress));
   check("状态文字只在一行", progress.whiteSpace === "nowrap" && !progress.text.includes("\n"),
     progress.whiteSpace);
-  check("有进度时状态面可见", progress.visible === true, `读到「${progress.text}」`);
-  check("进度结束后状态面淡出", settled.missing === false && settled.visible === false,
-    JSON.stringify({ missing: settled.missing, visible: settled.visible }));
-  // §11: "不要销毁 DOM 再重建". Rebuilding would restart the backdrop filter on
-  // every message, which flashes on the compositor, so this is worth pinning.
-  check("状态面是同一个节点，没有重建", settled.probe === progress.probe,
+  check("进度结束后样句回来（点隐藏）",
+    settled.missing === false && settled.kind === "" && settled.dotVisible === false
+      && settled.text.startsWith("「") && settled.text.endsWith("」"),
+    JSON.stringify(settled));
+  check("消息行是同一个节点，没有重建", settled.probe === progress.probe,
     `${progress.probe} -> ${settled.probe}`);
 
   console.log("\n面板按钮真的接线了");
@@ -440,7 +459,7 @@ try {
   await new Promise((r) => setTimeout(r, 600));
   const selection = await page.evaluate(() => ({
     overlay: document.querySelectorAll(".maslingo-selection").length,
-    status: document.getElementById("maslingo-status")?.textContent?.trim() || "",
+    status: document.getElementById("maslingo-line-text")?.textContent?.trim() || "",
   }));
   console.log(`      选择层 ${selection.overlay} 个，状态「${selection.status}」`);
   check("点击框选翻译会进入选择模式", selection.overlay === 1,
@@ -467,6 +486,166 @@ try {
   console.log(`      后端：${dots.backend.text}（${dots.backend.state}）  翻译：${dots.translation.text}（${dots.translation.state}）`);
   check("后端检测为正常", dots.backend.state === "ok", JSON.stringify(dots.backend));
   check("未选翻译来源时报告失败", dots.translation.state === "bad", JSON.stringify(dots.translation));
+
+  console.log("\n连通检测失败：合并成一行，不再多出一行重复提示");
+  // Point the provider at a port nothing listens on, so the failure is
+  // deterministic instead of depending on the network.
+  await worker.evaluate(() => chrome.storage.local.set({
+    translationProvider: "custom",
+    translationMode: "openai-compatible",
+    translationEndpoint: "http://127.0.0.1:9/v1/chat/completions",
+    translationModel: "dead-endpoint",
+    translationApiKey: "",
+  }));
+  // "custom" is an AI source, so the panel's provider-row button is now 配置:
+  // one click opens the AI page, and the check itself runs from the button
+  // beside the key (which probes the draft).
+  await page.evaluate(() => document.getElementById("maslingo-connect").click());
+  await new Promise((r) => setTimeout(r, 600));
+  await page.evaluate(() => document.getElementById("maslingo-connect-ai").click());
+  await new Promise((r) => setTimeout(r, 3000));
+  const merged = await page.evaluate(() => {
+    const line = document.getElementById("maslingo-line");
+    const text = document.getElementById("maslingo-line-text");
+    const dot = document.getElementById("maslingo-line-dot");
+    return {
+      text: text.textContent.trim(),
+      kind: line.dataset.kind,
+      dotHidden: dot.hidden,
+      dotColor: getComputedStyle(dot).backgroundColor,
+      scrolling: line.classList.contains("maslingo-scrolling"),
+      distance: text.style.getPropertyValue("--maslingo-marquee-distance"),
+      animation: getComputedStyle(text).animationName,
+      // The clipping window must not move; only the text layer inside it does.
+      windowTransform: getComputedStyle(line.querySelector(".maslingo-line-clip")).transform,
+    };
+  });
+  console.log(`      一行：「${merged.text}」 kind=${merged.kind}  点=${merged.dotHidden ? "隐藏" : merged.dotColor}`
+    + `  轮播=${merged.scrolling}(${merged.distance || "0px"}, ${merged.animation})`);
+  check("失败原因写进上一行、并带错误色",
+    merged.text.startsWith("翻译连接失败：") && merged.kind === "error", merged.text);
+  check("错误显示红色状态点",
+    merged.dotHidden === false && merged.dotColor === "rgb(211, 58, 63)",
+    JSON.stringify({ hidden: merged.dotHidden, color: merged.dotColor }));
+  check("放不下的文字横向轮播",
+    merged.scrolling === true
+      && parseFloat(merged.distance) > 0
+      && merged.animation === "maslingo-marquee"
+      // The window stays put and the glyphs translate inside it.
+      && merged.windowTransform === "none",
+    JSON.stringify({
+      scrolling: merged.scrolling,
+      distance: merged.distance,
+      animation: merged.animation,
+      windowTransform: merged.windowTransform,
+    }));
+
+  // Persistence: the failure must still be there well past the old 9-second
+  // dwell. An expired message left the panel looking idle while translation
+  // kept failing — reported as "stuck".
+  await new Promise((r) => setTimeout(r, 8000));
+  const persisted = await page.evaluate(() => {
+    const line = document.getElementById("maslingo-line");
+    return {
+      text: document.getElementById("maslingo-line-text").textContent.trim(),
+      kind: line.dataset.kind,
+    };
+  });
+  check("错误不会自动消失（超过旧 9 秒时限仍在）",
+    persisted.text.startsWith("翻译连接失败：") && persisted.kind === "error",
+    persisted.text.slice(0, 60));
+
+  // Resolution: a successful check clears it and shows the translation again.
+  await worker.evaluate((url) => chrome.storage.local.set({
+    translationEndpoint: `${url}/v1/chat/completions`,
+  }), backendUrl);
+  await page.evaluate(() => document.getElementById("maslingo-connect-ai").click());
+  await new Promise((r) => setTimeout(r, 1500));
+  const resolved = await page.evaluate(() =>
+    document.getElementById("maslingo-line-text").textContent.trim());
+  check("解决后错误消失（成功译样回到该行）", resolved === "早上好", resolved);
+
+  console.log("\n失败提示不会被上一次成功的样句定时器挤掉");
+  // A success arms a 4s timer that restores the 「…」 sample sentence. A check
+  // that fails inside that window must cancel it — without that, the fresh
+  // error was overwritten by a one-liner seconds later.
+  await worker.evaluate((url) => chrome.storage.local.set({
+    translationProvider: "custom",
+    translationMode: "openai-compatible",
+    translationEndpoint: `${url}/v1/chat/completions`,
+    translationModel: "stub",
+  }), backendUrl);
+  await page.evaluate(() => document.getElementById("maslingo-connect-ai").click());
+  await new Promise((r) => setTimeout(r, 1200));
+  const succeeded = await page.evaluate(() =>
+    document.getElementById("maslingo-line-text").textContent.trim());
+  check("先成功一次（译样已打上，定时器已武装）", succeeded === "早上好", succeeded);
+
+  await worker.evaluate(() => chrome.storage.local.set({
+    translationEndpoint: "http://127.0.0.1:9/v1/chat/completions",
+  }));
+  await page.evaluate(() => document.getElementById("maslingo-connect-ai").click());
+  await new Promise((r) => setTimeout(r, 5500));
+  const survivor = await page.evaluate(() =>
+    document.getElementById("maslingo-line-text").textContent.trim());
+  console.log(`      5.5 秒后一行仍为：「${survivor.slice(0, 40)}…」`);
+  check("错误提示不会被样句定时器覆盖",
+    survivor.startsWith("翻译连接失败："), survivor);
+  // Back to the main page so the sections below run in the layout they were
+  // written against.
+  await page.evaluate(() => document.getElementById("maslingo-ai-cancel").click());
+  await new Promise((r) => setTimeout(r, 700));
+
+  console.log("\n状态行走马灯：文字在固定的裁剪窗口内平移，不与状态点重叠");
+  // The natural trigger — the long mount-time backend error — depends on no
+  // backend answering at 127.0.0.1:8001 (true in CI, not on a machine running
+  // one), so the contract is asserted directly on the same elements: the class
+  // panel.js adds, the keyframes it starts, the geometry that keeps the glyphs
+  // inside the clip window, and that the text layer actually moves.
+  // A fresh real message puts the line into its message state (dot visible)
+  // so the simulation below has a laid-out line to measure.
+  await page.evaluate(() => document.getElementById("maslingo-auto").click());
+  await new Promise((r) => setTimeout(r, 150));
+  const marquee = await page.evaluate(async () => {
+    const line = document.getElementById("maslingo-line");
+    const clip = line.querySelector(".maslingo-line-clip");
+    const text = document.getElementById("maslingo-line-text");
+    const dot = document.getElementById("maslingo-line-dot");
+    text.style.setProperty("--maslingo-marquee-distance", "300px");
+    text.style.setProperty("--maslingo-marquee-duration", "4s");
+    line.classList.add("maslingo-scrolling");
+    const txOf = () => {
+      const transform = getComputedStyle(text).transform;
+      if (!transform || transform === "none") return 0;
+      const match = transform.match(/matrix\(([^)]+)\)/);
+      return match ? Number(match[1].split(",")[4]) : 0;
+    };
+    const before = txOf();
+    await new Promise((r) => setTimeout(r, 1200));
+    const after = txOf();
+    const result = {
+      animation: getComputedStyle(text).animationName,
+      windowTransform: getComputedStyle(clip).transform,
+      dotHidden: dot.hidden,
+      before,
+      after,
+      windowLeft: Math.round(clip.getBoundingClientRect().left),
+      dotRight: Math.round(dot.getBoundingClientRect().right),
+    };
+    line.classList.remove("maslingo-scrolling");
+    text.style.removeProperty("--maslingo-marquee-distance");
+    text.style.removeProperty("--maslingo-marquee-duration");
+    return result;
+  });
+  console.log(`      ${JSON.stringify(marquee)}`);
+  check("消息行走马灯用合成器 transform（裁剪窗口不动）",
+    marquee.animation === "maslingo-marquee" && marquee.windowTransform === "none",
+    JSON.stringify(marquee));
+  check("滚动中文字确实在动（位移变化）",
+    marquee.before !== marquee.after, `${marquee.before} -> ${marquee.after}`);
+  check("裁剪窗口左缘在状态点右侧（移动的字不会压到点）",
+    marquee.dotHidden === false && marquee.windowLeft >= marquee.dotRight - 1,
+    JSON.stringify(marquee));
 
   console.log("\n页面无脚本错误");
   check("页面无脚本错误", errors.length === 0, errors.slice(0, 2).join(" | "));

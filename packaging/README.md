@@ -76,7 +76,7 @@ build/
       verify_runtime.py
     models/hub/            MangaOCR 权重（847 MB）
   output/
-    MasLingo-Setup-1.1.5.exe
+    MasLingo-Setup-1.1.6.exe
 ```
 
 ### 用户机器上

@@ -3,6 +3,31 @@
 import json
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import urljoin
+
+from ..net_guard import assert_safe_endpoint
+
+
+class _GuardedRedirectHandler(urllib_request.HTTPRedirectHandler):
+    """Validate every redirect hop before it is followed.
+
+    urllib follows 3xx by default, so a caller-supplied endpoint — which already
+    passed the app's initial check — used to be able to bounce the request to
+    169.254.169.254 or any other blocked address. The app checks the address the
+    caller named; this checks where that address tries to send us next.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = urljoin(req.full_url, newurl)
+        try:
+            assert_safe_endpoint(target)
+        except ValueError as exc:
+            # RuntimeError is what the route maps to a readable 503.
+            raise RuntimeError(f"翻译接口重定向到不允许的地址：{exc}") from exc
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
+
+_opener = urllib_request.build_opener(_GuardedRedirectHandler)
 
 
 def translate_texts(texts: list[str], endpoint: str, model: str, api_key: str) -> list[str]:
@@ -43,7 +68,7 @@ def translate_texts(texts: list[str], endpoint: str, model: str, api_key: str) -
         method="POST",
     )
     try:
-        with urllib_request.urlopen(request, timeout=60) as response:
+        with _opener.open(request, timeout=60) as response:
             payload = json.loads(response.read().decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
     except (urllib_error.URLError, TimeoutError, OSError, ValueError, KeyError, IndexError, TypeError) as exc:

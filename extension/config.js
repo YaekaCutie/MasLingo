@@ -27,7 +27,3 @@ globalThis.MAS_backendCandidates = async function () {
     .map(url => String(url || "").trim().replace(/\/+$/, ""))
     .filter((url, index, all) => url && all.indexOf(url) === index);
 };
-
-globalThis.MAS_backendLabel = function () {
-  return globalThis.MAS_BACKEND_URL || "";
-};

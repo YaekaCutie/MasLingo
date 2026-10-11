@@ -105,30 +105,31 @@ try {
   });
   console.log(`  ${JSON.stringify(visible, null, 1)}`);
 
-  // The status surface shares the corner with the panel, so this measures
-  // whether one covers the other while a message is on screen.
-  console.log("\n=== 状态窗与面板是否重叠 ===");
+  // Status messages share the message line with the sample sentence; this
+  // reads the line while a message is on screen and confirms the old corner
+  // popup and the separate status row are gone.
+  console.log("\n=== 消息行（面板内）===");
   await worker.evaluate(() => chrome.storage.local.set({ autoTranslate: true }));
   await new Promise((r) => setTimeout(r, 4000));
-  const overlap = await page.evaluate(() => {
+  const status = await page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
-    const status = document.getElementById("maslingo-status");
-    if (!panel || !status) return { status: Boolean(status), panel: Boolean(panel) };
-    const a = panel.getBoundingClientRect();
-    const b = status.getBoundingClientRect();
-    const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
-    const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    const line = document.getElementById("maslingo-line");
+    const text = document.getElementById("maslingo-line-text");
+    const a = panel ? panel.getBoundingClientRect() : null;
     return {
-      panel: [Math.round(a.x), Math.round(a.y), Math.round(a.width), Math.round(a.height)],
-      status: [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)],
-      overlapArea: width > 0 && height > 0 ? Math.round(width * height) : 0,
-      panelBottom: Math.round(window.innerHeight - a.bottom),
-      statusBottom: Math.round(window.innerHeight - b.bottom),
+      panel: a ? [Math.round(a.x), Math.round(a.y), Math.round(a.width), Math.round(a.height)] : null,
+      lineText: text?.textContent?.trim() || "",
+      lineKind: line?.dataset.kind || "",
+      lineInPanel: Boolean(panel && line && panel.contains(line)),
+      legacySurfaces: Boolean(
+        document.getElementById("maslingo-status")
+          || document.getElementById("maslingo-status-line"),
+      ),
     };
   });
-  console.log(`  ${JSON.stringify(overlap, null, 1)}`);
-  if (overlap.overlapArea > 0) {
-    console.log(`  ⚠ 状态窗与面板重叠 ${overlap.overlapArea}px²，面板下半部分会被盖住`);
+  console.log(`  ${JSON.stringify(status, null, 1)}`);
+  if (status.legacySurfaces || !status.lineInPanel) {
+    console.log("  ⚠ 消息行不在面板内，或旧的浮层仍在");
   }
 
   console.log(`\n页面错误: ${errors.length ? errors.slice(0, 4).join(" | ") : "无"}`);

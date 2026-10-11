@@ -36,6 +36,9 @@ const MAS_auto = (() => {
   /** What the translation source turned out to be; "none" means text was left
    *  untranslated, which the status must not report as a success. */
   let translationMode = null;
+  /** Mirrors the "显示识别到的日文原文" setting (see refreshPreferences): what to
+   *  paint when translation is off — the recognised Japanese, or nothing. */
+  let showSource = true;
   /** Counters for the diagnostics panel. Without these, "nothing happened" is
    *  indistinguishable from "nothing was ever considered", and the user is left
    *  guessing at a page that simply does nothing. */
@@ -283,9 +286,9 @@ const MAS_auto = (() => {
    * log next to the artwork would be noise, which is why there is no terminal in
    * the panel.
    */
-  function say(text, kind = "info") {
+  function say(text, kind = "info", short = "") {
     try {
-      globalThis.MAS_panel?.status(text, kind);
+      globalThis.MAS_panel?.status(text, kind, short);
     } catch {
       /* panel not mounted in this frame */
     }
@@ -312,10 +315,14 @@ const MAS_auto = (() => {
       const sendHeight = Math.max(1, Math.round(bitmap.height * scale));
 
       const dataUrl = await toDataUrl(bitmap, sendWidth, sendHeight);
-      say("正在 OCR……");
+      say("正在 OCR……", "info", "正在 OCR 中");
       const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
       if (!ocr?.ok) throw new Error(ocr?.error || "OCR 失败");
-      say(ocr.items?.length ? "OCR 完成，正在翻译……" : "没有找到文字");
+      say(
+        ocr.items?.length ? "OCR 完成，正在翻译……" : "没有找到文字",
+        "info",
+        ocr.items?.length ? "正在翻译中" : "没有找到文字",
+      );
 
       const fresh = [];
       for (const item of ocr.items || []) {
@@ -333,7 +340,7 @@ const MAS_auto = (() => {
       boxes = fresh.map((region) => region.box);
 
       if (!fresh.length) return;
-      say(`检测到 ${fresh.length} 个文字区域，正在翻译……`);
+      say(`检测到 ${fresh.length} 个文字区域，正在翻译……`, "info", "正在翻译中");
 
       // Every box is already on screen in full, dashed, because that is what
       // `show` does — the instant a region is known, its whole rectangle is
@@ -346,28 +353,60 @@ const MAS_auto = (() => {
       if (translation?.ok) translationMode = translation.mode || "configured";
       for (const region of fresh) track(region.id, STATE.PROCESSING);
 
-      fresh.forEach((region, index) => {
-        const translated = translation?.ok && translation.items?.[index]?.translated;
-        if (!translation?.ok) {
-          // Not silent: without this the only symptom is a count in the popup,
-          // and there is nothing to act on.
-          console.warn("[OMT] 翻译失败：", translation?.error || "未知原因");
-          say(`翻译失败：${translation?.error || "未知原因"}`, "error");
+      if (!translation?.ok) {
+        // Not silent: without this the only symptom is a count in the popup,
+        // and there is nothing to act on. Said once per picture rather than
+        // once per region — when the provider is unreachable every region
+        // fails identically, and a line per region is how one cause read as a
+        // console flood.
+        console.warn("[OMT] 翻译失败：", translation?.error || "未知原因");
+        say(`翻译失败：${translation?.error || "未知原因"}`, "error", "翻译失败");
+        for (const region of fresh) {
           track(region.id, STATE.FAILED);
           region.box.fail();
+        }
+        return;
+      }
+
+      // "Translation off" is read from the items, not from the mode string: a
+      // profile whose stored mode is stale ("none" while a provider is selected)
+      // would otherwise have its real translations thrown away. The off path
+      // answers with an empty list; a configured provider always returns one
+      // item per input, or runTranslation throws.
+      const translationOff = (translation.items || []).length === 0;
+      fresh.forEach((region, index) => {
+        const translated = String(translation.items?.[index]?.translated || "").trim();
+        if (!translated && !translationOff) {
+          // A provider *is* configured, so an empty answer for this line is a
+          // provider failure — not a reason to draw the source over the art.
+          console.warn("[OMT] 翻译结果为空：", region.item.text);
+          track(region.id, STATE.FAILED);
+          region.box.fail();
+          return;
+        }
+        if (!translated && !showSource) {
+          // Nothing to draw; the original artwork stays untouched.
+          track(region.id, STATE.TRANSLATED);
+          region.box.finish();
           return;
         }
         try {
           paintRegion(element, bitmap, region, translated || region.item.text);
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
-          if (enabled) say("翻译完成");
         } catch (error) {
           console.warn("[OMT] 绘制失败：", error.message);
           track(region.id, STATE.FAILED);
           region.box.fail();
         }
       });
+      if (enabled) {
+        // "ok" on a real translation means the failure (if any) is over: the
+        // panel clears a persistent error line back to the sample sentence.
+        // Translation off is not a resolution of anything, so it stays info.
+        if (translationOff) say("已识别文字（未启用翻译）", "info", "翻译未启用");
+        else say("翻译完成", "ok", "翻译成功");
+      }
     } catch (error) {
       // Release this run's boxes. The retry below creates a fresh set, and
       // without this the abandoned ones stayed dashed over the artwork for good,
@@ -660,10 +699,11 @@ const MAS_auto = (() => {
 
   async function start() {
     if (enabled) return;
-    const cfg = await readSettings(["autoConcurrency"]);
+    const cfg = await readSettings(["autoConcurrency", "debugMode"]);
     concurrency = Math.min(3, Math.max(1, Number(cfg.autoConcurrency) || 1));
+    showSource = cfg.debugMode !== false;
     enabled = true;
-    say("正在扫描漫画……");
+    say("正在扫描漫画……", "info", "正在 OCR 中");
     imageFailures.unreadable = 0;
     imageFailures.ocr = 0;
     imageFailures.other = 0;
@@ -690,10 +730,17 @@ const MAS_auto = (() => {
     else stop();
   }
 
+  /** Re-read the display preference; the settings page can change it mid-run. */
+  async function refreshPreferences() {
+    const cfg = await readSettings(["debugMode"]);
+    showSource = cfg.debugMode !== false;
+  }
+
   return {
     sync,
     start,
     stop,
+    refreshPreferences,
     get enabled() { return enabled; },
     stats: () => ({
       enabled,

@@ -9,13 +9,79 @@
 //   node deploy/check-ui.mjs [--proxy http://127.0.0.1:7890]
 
 import http from "node:http";
-import { dirname, resolve } from "node:path";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionDir = resolve(repoRoot, "extension");
+
+// --- the mock OpenAI-compatible service -------------------------------------
+//
+// Port 8001 is the first choice: it is already whitelisted in the manifest and
+// free in CI. A developer machine usually has the real backend sitting on it,
+// though, and a check that cannot run next to the product is one that stops
+// being run — so the fallback binds any free port and launches from a copied
+// extension whose manifest whitelists exactly that origin (a 127.0.0.1 origin
+// never raises a prompt in the options page, but a service-worker fetch still
+// needs the host permission).
+const requests = [];
+const mock = http.createServer((request, response) => {
+  // Only the chat path belongs to this stand-in. When the dev backend is down
+  // this mock grabs 8001, and other harnesses running beside this one probe
+  // /health on it — those must not be recorded as translation requests, nor be
+  // answered with a chat-completion body.
+  if (request.url !== "/v1/chat/completions") {
+    response.writeHead(404, { "Content-Type": "application/json" });
+    response.end("{}");
+    return;
+  }
+  let body = "";
+  request.on("data", (chunk) => { body += chunk; });
+  request.on("end", () => {
+    let received = null;
+    try { received = JSON.parse(body); } catch { /* reported below */ }
+    requests.push({
+      url: request.url,
+      model: received?.model,
+      prompt: received?.messages?.[0]?.content || "",
+    });
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(["早上好"]) } }],
+    }));
+  });
+});
+const listen = (port) => new Promise((done, fail) => {
+  const onError = (error) => { mock.off("listening", onListening); fail(error); };
+  const onListening = () => { mock.off("error", onError); done(); };
+  mock.once("listening", onListening);
+  mock.once("error", onError);
+  mock.listen(port, "127.0.0.1");
+});
+await listen(8001).catch(() => listen(0));
+const mockPort = mock.address().port;
+const mockEndpoint = `http://127.0.0.1:${mockPort}/v1/chat/completions`;
+
+let extensionDir = resolve(repoRoot, "extension");
+let workDir = null;
+if (mockPort !== 8001) {
+  workDir = mkdtempSync(join(tmpdir(), "maslingo-ui-"));
+  extensionDir = join(workDir, "extension");
+  cpSync(resolve(repoRoot, "extension"), extensionDir, { recursive: true });
+  const manifestPath = join(extensionDir, "manifest.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  manifest.host_permissions = [
+    ...(manifest.host_permissions || []),
+    `http://127.0.0.1:${mockPort}/*`,
+  ];
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  console.log(`mock: ${mockEndpoint}（8001 被占用，改用空闲端口 + 临时清单）`);
+} else {
+  console.log(`mock: ${mockEndpoint}`);
+}
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -109,56 +175,41 @@ try {
   // exercised deterministically: settings -> storage -> service worker ->
   // request builder -> fetch -> parser -> back to the page. Hitting a real
   // vendor would need a key and would make the suite depend on someone else's
-  // uptime. Port 8001 is reused because it is already in host_permissions.
+  // uptime. The mock is bound at the top of this file (8001, or any free port
+  // with a copied manifest when the dev backend holds 8001).
   console.log("\n真实调用（本机模拟 OpenAI 兼容服务）");
-  const server = http.createServer((request, response) => {
-    let body = "";
-    request.on("data", (chunk) => { body += chunk; });
-    request.on("end", () => {
-      let received = null;
-      try { received = JSON.parse(body); } catch { /* reported below */ }
-      const prompt = received?.messages?.[0]?.content || "";
-      requests.push({ url: request.url, model: received?.model, prompt });
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify(["早上好"]) } }],
-      }));
-    });
-  });
-  const requests = [];
-  await new Promise((done) => server.listen(8001, "127.0.0.1", done));
+  await setProvider("custom");
+  await options.evaluate((endpoint) => {
+    document.getElementById("translationEndpoint").value = endpoint;
+    document.getElementById("translationModel").value = "mock-model";
+    document.getElementById("translationApiKey").value = "test-key";
+  }, mockEndpoint);
+  await options.click("#save");
+  await new Promise((done) => setTimeout(done, 300));
+  await options.click("#test");
+  const testText = await options
+    .waitForFunction(() => {
+      const node = document.getElementById("testResult");
+      return node && !node.hidden && !node.textContent.includes("正在测试");
+    }, { timeout: 30000 })
+    .then(() => options.$eval("#testResult", (node) => node.textContent.trim()))
+    .catch(() => null);
 
-  try {
-    await setProvider("custom");
-    await options.evaluate(() => {
-      document.getElementById("translationEndpoint").value = "http://127.0.0.1:8001/v1/chat/completions";
-      document.getElementById("translationModel").value = "mock-model";
-      document.getElementById("translationApiKey").value = "test-key";
-    });
-    await options.click("#save");
-    await new Promise((done) => setTimeout(done, 300));
-    await options.click("#test");
-    const testText = await options
-      .waitForFunction(() => {
-        const node = document.getElementById("testResult");
-        return node && !node.hidden && !node.textContent.includes("正在测试");
-      }, { timeout: 30000 })
-      .then(() => options.$eval("#testResult", (node) => node.textContent.trim()))
-      .catch(() => null);
-
-    console.log(`      结果: ${JSON.stringify(testText)}`);
-    check("端到端翻译成功", Boolean(testText && testText.includes("早上好")), testText || "超时");
-    check("请求确实到达了服务", requests.length === 1, `收到 ${requests.length} 次`);
-    if (requests.length) {
-      const sent = requests[0];
-      check("请求发往正确路径", sent.url === "/v1/chat/completions", sent.url);
-      check("带上配置的模型名", sent.model === "mock-model", sent.model);
-      check("提示词包含待翻译原文", sent.prompt.includes("おはよう"));
-      check("提示词包含目标语言", sent.prompt.includes("简体中文"));
-    }
-  } finally {
-    server.close();
+  console.log(`      结果: ${JSON.stringify(testText)}`);
+  check("端到端翻译成功", Boolean(testText && testText.includes("早上好")), testText || "超时");
+  check("请求确实到达了服务", requests.length === 1, `收到 ${requests.length} 次`);
+  if (requests.length) {
+    const sent = requests[0];
+    check("请求发往正确路径", sent.url === "/v1/chat/completions", sent.url);
+    check("带上配置的模型名", sent.model === "mock-model", sent.model);
+    check("提示词包含待翻译原文", sent.prompt.includes("おはよう"));
+    check("提示词包含目标语言", sent.prompt.includes("简体中文"));
   }
+  // 型号归属：刚才的 mock-model 属于 custom，切到别的来源后输入框不应再显示它，
+  // 否则下一次保存会把它当成新来源的型号发出去。
+  await setProvider("google-free");
+  const staleModel = await options.$eval("#translationModel", (node) => node.value);
+  check("切来源后不显示别家的型号（不串型号）", staleModel === "", staleModel);
 
   // --- popup ----------------------------------------------------------------
   console.log("\n弹窗");
@@ -189,9 +240,10 @@ try {
   check("自动翻译有状态行", Boolean(popupState?.state), popupState?.state);
   check("手动框选入口保留", popupState?.hasManual === true);
   check("设置入口存在", popupState?.hasSettings === true);
-  // The whole point of the colour change: not the default extension blue.
-  check("重点色不是默认蓝", popupState?.accent && !/^#(0|1|2|3|4)[0-9a-f]{2}(ff|f{3})?$/i.test(popupState.accent),
-    popupState?.accent);
+  // One palette with the panel: the teal brand hue is gone, and the remaining
+  // colour is reserved for status (the state dots).
+  check("强调色与面板统一（中性墨色，无品牌色）",
+    (popupState?.accent || "").toLowerCase() === "#1c1e21", popupState?.accent);
   check("弹窗没有脚本错误", popupErrors.length === 0, popupErrors.join(" | "));
 
   // --- optional: the real keyless endpoint ---------------------------------
@@ -219,6 +271,8 @@ try {
   }
 } finally {
   await browser.close();
+  mock.close();
+  if (workDir) rmSync(workDir, { recursive: true, force: true });
 }
 
 console.log("");

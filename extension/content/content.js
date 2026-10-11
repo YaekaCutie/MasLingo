@@ -323,12 +323,17 @@ function showRecognitionResult(message, pageMode) {
     recognizedResultReady = true;
     const texts = (message.result.items || []).map(item => item.text).filter(Boolean);
     if (texts.length && activePort) {
+      // Longer than the service worker's own 120s provider deadline, so a slow
+      // translation reports its real reason through the error path instead of
+      // this guard discarding an answer that was about to arrive. It fired at
+      // 45s before, which cut off local LLMs mid-request and then blamed
+      // "translation timeout" for a provider that was merely slow.
       requestTimeout = setTimeout(() => {
         console.warn("翻译超时，保留 OCR 原文");
         clearOverlay();
         showToast("翻译超时，已保留日文原文。请检查翻译服务后重试。", "error");
         closeRequestPort();
-      }, 45000);
+      }, 135000);
       activePort.postMessage({type: "TRANSLATE_TEXTS", texts, requestId: message.requestId});
     } else {
       closeRequestPort();
@@ -361,20 +366,27 @@ function paintSourceText() {
 
 function showTranslationResult(message) {
   if (message.requestId !== activeRequestId) return;
-  if (message.mode === "none") {
+  const result = message.result;
+  const items = result?.items || [];
+  // "Translation off" is true when the mode says so *or* when a successful
+  // answer carried no items at all: the off path always answers that way, and
+  // this second signal keeps an upgraded profile whose stored mode is stale
+  // from discarding translations that really did arrive. A configured provider
+  // always returns one item per input, or runTranslation throws.
+  const translationOff = message.mode === "none" || (Boolean(result?.ok) && items.length === 0);
+  if (translationOff) {
     if (showSourceText && paintSourceText()) {
       showToast("翻译未启用：画面上的日文是识别结果。在设置里选择翻译来源即可看到中文。", "info");
     } else {
       clearOverlay();
       showToast("翻译未启用，已保留日文原文。在设置里选择翻译来源即可看到中文。", "info");
     }
-  } else if (!message.result?.ok) {
-    const error = message.result?.error || "未知错误";
+  } else if (!result?.ok) {
+    const error = result?.error || "未知错误";
     console.warn("翻译失败，保留 OCR 原文：", error);
     clearOverlay();
     showToast(`翻译失败，已保留日文原文：${error}`, "error");
   } else {
-    const items = message.result.items || [];
     const hasAllTranslations = items.length === resultContents.length &&
       items.every(item => typeof item.translated === "string" && item.translated.trim());
     if (!hasAllTranslations) {
@@ -396,7 +408,7 @@ function showTranslationResult(message) {
   closeRequestPort();
 }
 
-// Small, self-dismissing status line in the corner.
+// Status messages.
 //
 // Translation results are never shown in a panel — they are painted over the
 // original text. This exists only to explain *why nothing changed* (translation
@@ -405,22 +417,27 @@ function showTranslationResult(message) {
 let toastTimer = null;
 
 /**
- * Status text goes to the glass status surface.
+ * Status text goes to the panel's own status line.
  *
- * There used to be three places that could show a message — a strip inside the
- * panel, a corner toast, and a centred panel — and two of them existed only as
- * fallbacks for the third not being mounted. The status surface is now an
- * independent glass pane with its own module, so it is always available and the
- * fallback chain has nothing left to fall back to.
+ * The bottom-right popup that used to carry these messages is gone: every
+ * progress line made a second floating surface appear over the artwork. The
+ * panel (or, collapsed, its widget label) is the one place the user is already
+ * looking. A subframe has no panel — page-level chrome lives in the top frame —
+ * and a toast drawn there would be clipped inside the iframe, so a subframe
+ * reports to the console and nothing else.
  */
 function showToast(text, kind = "info") {
-  if (globalThis.MAS_status) {
-    MAS_status.show(text, kind);
+  if (globalThis.MAS_panel?.status) {
+    MAS_panel.status(text, kind);
     return;
   }
-  // Only reachable when status.js failed to load at all, which the package check
-  // treats as a broken build. Kept as a last resort so a status message can never
-  // be silently lost.
+  if (!MAS_isTopFrame) {
+    console.warn("[OMT]", text);
+    return;
+  }
+  // Only reachable when panel.js failed to load at all, which the package check
+  // treats as a broken build. Kept as a last resort so a status message can
+  // never be silently lost.
   let fallback = document.getElementById("maslingo-toast");
   if (!fallback) {
     fallback = document.createElement("div");
@@ -640,7 +657,11 @@ function renderResults(rect, result, pageMode) {
       canvas.setAttribute("aria-label", item.text || "");
       showToast("当前扩展未提供文字框位置，请重载扩展并刷新漫画页面。", "error");
     }
-    document.body.appendChild(canvas);
+    // Into the same layer the auto flow uses. It already sits at the document
+    // origin, so these document-coordinate canvases stay correct even on pages
+    // that make <body> a positioned ancestor — appended straight to <body> they
+    // were offset by whatever margin or positioning that ancestor carried.
+    MAS_overlay.ensureLayer().appendChild(canvas);
     resultPanels.push(canvas);
     resultContents.push(entry);
   }
@@ -699,6 +720,7 @@ window.addEventListener("resize", () => MAS_overlay.reposition(), { passive: tru
 chrome.storage?.onChanged?.addListener((changes, area) => {
   if (area !== "local") return;
   if (changes.autoTranslate) MAS_auto.sync();
+  if (changes.debugMode) MAS_auto.refreshPreferences();
   if (changes.fontScale || changes.overlayOpacity) {
     loadDisplayPreferences().then(() => {
       // Already-painted regions keep their old size until repainted; that is

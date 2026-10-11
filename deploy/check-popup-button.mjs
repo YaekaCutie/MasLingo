@@ -81,15 +81,20 @@ try {
   // is loaded in a tab. That makes it the *active* tab, and
   // chrome.tabs.query({active:true,currentWindow:true}) would then resolve to
   // the popup itself and the click would report "page is restricted" — a test
-  // artefact, not a bug. Bringing the manga tab back to the front first puts
-  // the query's answer back where it belongs, and clicking through evaluate()
-  // still runs the real handler.
+  // artefact, not a bug. The popup resolves that query once, when it loads, so
+  // bringing the manga tab forward afterwards is too late; the popup is loaded,
+  // the manga tab is focused, and only then is the popup reloaded — its boot
+  // then sees the manga tab, and clicking through evaluate() still runs the
+  // real handler.
   const popup = await browser.newPage();
   const popupErrors = [];
   const popupConsole = [];
   popup.on("pageerror", (error) => popupErrors.push(String(error)));
   popup.on("console", (message) => popupConsole.push(`${message.type()}: ${message.text()}`));
   await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`, { waitUntil: "load" });
+  await tab.bringToFront();
+  await new Promise((done) => setTimeout(done, 500));
+  await popup.reload({ waitUntil: "load" });
   await tab.bringToFront();
   await new Promise((done) => setTimeout(done, 500));
 

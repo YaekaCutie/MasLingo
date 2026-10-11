@@ -156,8 +156,11 @@ const cssText = cssFiles.map((file) => readFileSync(file, "utf8")).join("\n");
 const definedTokens = new Set(
   [...cssText.matchAll(/(--maslingo-[a-z0-9-]+)\s*:/g)].map((match) => match[1]),
 );
-// Written by glass.js at runtime rather than declared.
-const RUNTIME_TOKENS = new Set(["--maslingo-mx", "--maslingo-my"]);
+// Tokens a script writes at runtime rather than any stylesheet declaring.
+//
+// Currently none: the flat material has no pointer-tracked geometry, and
+// --maslingo-morph is declared through @property and assigned by a class.
+const RUNTIME_TOKENS = new Set();
 for (const file of cssFiles) {
   const source = readFileSync(file, "utf8");
   for (const [, token] of source.matchAll(/var\(\s*(--maslingo-[a-z0-9-]+)/g)) {

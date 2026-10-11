@@ -1,7 +1,6 @@
-// Does the collapsed pill actually dock, and does the status surface get out of
-// its way?
+// Does the collapsed pill actually dock?
 //
-// Both are position claims, so a screenshot of the pill on its own proves
+// This is a position claim, so a screenshot of the pill on its own proves
 // nothing. This collapses the panel with a real click and reads the geometry.
 //
 //   node deploy/probe-dock.mjs
@@ -59,7 +58,6 @@ try {
 
   const read = () => page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
-    const status = document.getElementById("maslingo-status");
     const box = (el) => {
       if (!el) return null;
       const r = el.getBoundingClientRect();
@@ -72,10 +70,8 @@ try {
     return {
       viewport: { w: innerWidth, h: innerHeight },
       panel: box(panel),
-      status: box(status),
       docked: panel ? panel.classList.contains("maslingo-panel-docked") : null,
-      lift: getComputedStyle(document.documentElement)
-        .getPropertyValue("--maslingo-status-lift").trim() || "0px",
+      legacyStatus: document.getElementById("maslingo-status") !== null,
     };
   });
 
@@ -93,12 +89,9 @@ try {
   console.log("\n收起态：");
   console.log(`  面板     ${JSON.stringify(collapsed.panel)}`);
   console.log(`  docked   ${collapsed.docked}`);
-  console.log(`  lift     ${collapsed.lift}`);
-  console.log(`  状态窗   ${JSON.stringify(collapsed.status)}`);
 
   const vp = collapsed.viewport;
   const p = collapsed.panel;
-  const s = collapsed.status;
 
   const checks = [];
   const check = (name, ok, detail) => {
@@ -114,18 +107,8 @@ try {
   check("完全在视口内",
     p.left >= 0 && p.top >= 0 && p.right <= vp.w && p.bottom <= vp.h);
   check("是收起后的小尺寸", p.w < 200 && p.h < 60, `${p.w}x${p.h}`);
-  if (s) {
-    // The status surface shares this corner; if the lift did not happen they
-    // overlap, which is exactly the 4400px² bug this has to not reintroduce.
-    const overlapW = Math.max(0, Math.min(p.right, s.right) - Math.max(p.left, s.left));
-    const overlapH = Math.max(0, Math.min(p.bottom, s.bottom) - Math.max(p.top, s.top));
-    check("状态窗已让位到胶囊上方（零重叠）", overlapW * overlapH === 0,
-      `重叠 ${overlapW * overlapH}px²`);
-    check("状态窗与胶囊共用同一条右边", Math.abs(p.right - s.right) <= 2,
-      `面板右 ${p.right}，状态窗右 ${s.right}`);
-  } else {
-    console.log("       （状态窗尚未挂载，跳过重叠检查）");
-  }
+  // The corner popup is gone; the space it used to reserve is now the pill's.
+  check("没有遗留的右下角状态窗", collapsed.legacyStatus === false);
 
   process.exitCode = checks.every(Boolean) ? 0 : 1;
 } finally {

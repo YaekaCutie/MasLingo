@@ -1,140 +1,23 @@
-/* MasLingo — the status surface.
+/* MasLingo — status colour and the connectivity dots.
  *
- * An independent glass surface, pinned to the lower right corner, composed from
- * the same five layers as the panel. §7 of the specification asks that separate
- * glass elements read as one material rather than as several cards, and sharing
- * the layer classes is how that is guaranteed rather than approximated: the popup
- * is a smaller piece cut from the same pane.
+ * All of the panel's text — the sample sentence, loading states like
+ * "正在 OCR……", and errors — lives on ONE line (see .maslingo-line in
+ * window.css). This file owns the four status colours that mark it and the two
+ * connectivity dots above it, plus the one animation they share.
  *
- * It is cheaper than the panel on purpose. A popup appears and disappears over
- * whatever the user is reading, so its blur radius and its rim ring are both
- * reduced — the material is recognisably the same, but it costs less to composite
- * while a page is scrolling underneath it.
- *
- * ==== Why the surface is never rebuilt ====
- *
- * §11 asks that a content change update the existing surface instead of
- * destroying and recreating the DOM. Rebuilding would restart the backdrop-filter
- * every message — a visible flash on the compositor — and would throw away the
- * entry animation state. So the popup is created once, kept mounted, and only its
- * text, its state colour and its `data-kind` are written.
+ * The standalone corner popup and then the separate status row were both
+ * removed: every message now replaces the sample sentence on the line the user
+ * is already reading, and the collapsed widget mirrors it.
  */
 
-.maslingo-status {
-  position: fixed;
-  right: 16px;
-  /* Lifted while the collapsed pill is docked in this same corner, so the two
-     stack against one right edge instead of overlapping. panel.js writes the
-     lift once the collapse animation has settled and measures the real pill
-     height; 0px is the expanded case, where the panel's own reserve keeps the
-     space free. */
-  bottom: calc(16px + var(--maslingo-status-lift, 0px));
-  z-index: 2147483646;
-  max-width: min(340px, calc(100vw - 32px));
-  border-radius: 14px;
-  /* One line, always. */
-  white-space: nowrap;
-  overflow: hidden;
-  pointer-events: none;
-
-  --maslingo-blur: 16px;
-  --maslingo-sat: 122%;
-  --maslingo-edge-ring: 1px;
-  --maslingo-edge-blur: 4px;
-  --maslingo-radius: 14px;
-  --maslingo-spec-size: 200px;
-  --maslingo-spec-alpha: .09;
-  /* This surface never tracks the pointer, so the fallback transform IS its
-     light. Percentages resolve against the spot's own 200px box, not the pane,
-     which pooled it on the bottom edge of a 33px-tall strip. Pixels instead. */
-  --maslingo-mx: 70px;
-  --maslingo-my: 14px;
-
-
-  /* §11: in over 220–300ms, out over 200–300ms, 4–8px of travel. */
-  opacity: 0;
-  transform: translate3d(0, 10px, 0);
-  transition:
-    opacity 240ms ease,
-    transform 260ms var(--maslingo-ease),
-    visibility 0s linear 260ms;
-  visibility: hidden;
-}
-.maslingo-status-in {
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-  visibility: visible;
-  transition:
-    opacity 260ms ease,
-    transform 280ms var(--maslingo-ease),
-    visibility 0s;
-}
-/* Leaving: fades and drifts down, but never below the resting offset, so it does
-   not appear to sink into the page. */
-.maslingo-status-out { opacity: 0; transform: translate3d(0, 6px, 0); }
-
-.maslingo-status-line {
-  position: relative;
-  z-index: 4;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  font: 12px/1.4 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-  color: var(--maslingo-muted);
-}
-.maslingo-status-text {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color var(--maslingo-hover) ease;
-}
-.maslingo-status-active .maslingo-status-text { color: var(--maslingo-ink); }
-.maslingo-status[data-kind="error"] .maslingo-status-text { color: var(--maslingo-err-text); }
-.maslingo-status[data-kind="ok"] .maslingo-status-text { color: var(--maslingo-ink); }
-
-/* --- status dot ---------------------------------------------------------- */
-/*
- * §11: the dot animates very lightly. Working breathes over 1.5–2.0s; success
- * brightens once and then holds, because a success that keeps pulsing reads as
- * "still working"; failure draws attention once without shaking — a shaking
- * failure indicator is a game convention, and §13 asks for a system tool.
- */
-.maslingo-status-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--maslingo-dot-idle);
-  transition: background .2s ease;
-}
-.maslingo-status[data-kind="working"] .maslingo-status-dot {
-  background: var(--maslingo-dot-working);
-  animation: maslingo-breathe 1.75s ease-in-out infinite;
-}
-.maslingo-status[data-kind="ok"] .maslingo-status-dot {
-  background: var(--maslingo-dot-ok);
-  animation: maslingo-brighten 520ms ease-out 1;
-}
-.maslingo-status[data-kind="error"] .maslingo-status-dot {
-  background: var(--maslingo-dot-bad);
-  animation: maslingo-attend 620ms ease-out 1;
-}
-.maslingo-status[data-kind="info"] .maslingo-status-dot { background: var(--maslingo-dot-idle); }
-
+/* Working breathes over 1.5–2.0s; the other kinds are steady colour, because a
+ * success that keeps pulsing reads as "still working".
+ *
+ * Lives here because both the message dot and the connectivity dots use it;
+ * the line's own dot colours are in window.css, where the line is styled. */
 @keyframes maslingo-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: .45; }
-}
-/* One soft lift, no colour change beyond the base hue. */
-@keyframes maslingo-brighten {
-  0% { box-shadow: 0 0 0 0 rgba(87, 192, 138, .45); }
-  100% { box-shadow: 0 0 0 7px rgba(87, 192, 138, 0); }
-}
-/* A single ring, not a shake. */
-@keyframes maslingo-attend {
-  0% { box-shadow: 0 0 0 0 rgba(232, 119, 106, .45); }
-  100% { box-shadow: 0 0 0 7px rgba(232, 119, 106, 0); }
 }
 
 /* --- in-panel dots (the connectivity indicators) -------------------------- */
@@ -144,7 +27,7 @@
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  padding-bottom: 12px;
+  padding-bottom: 16px;
 }
 .maslingo-dot {
   display: inline-flex;
@@ -178,10 +61,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* §21: no continuous movement. The popup still appears and still changes
-     colour — those carry information — but nothing loops. */
-  .maslingo-status { transition-duration: .01ms; }
-  .maslingo-status-in { transition-duration: .01ms; }
-  .maslingo-status-dot,
+  /* The messages still appear and still change colour — those carry
+     information — but nothing loops. */
+  .maslingo-line-dot,
   .maslingo-dot i { animation: none !important; }
 }

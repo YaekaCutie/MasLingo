@@ -102,7 +102,7 @@ try {
   }
 
   const summary = await page.evaluate(() => {
-    const status = document.getElementById("maslingo-status");
+    const status = document.getElementById("maslingo-line");
     const panel = document.getElementById("maslingo-panel");
     return {
       canvases: document.querySelectorAll("#maslingo-layer canvas.maslingo-result").length,

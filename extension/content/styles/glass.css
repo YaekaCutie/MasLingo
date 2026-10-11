@@ -1,28 +1,25 @@
-/* MasLingo — the glass material.
+/* MasLingo — the acrylic material.
  *
- * ==== Why this file is shaped the way it is ====
+ * ==== The design language ====
  *
- * The earlier version was `background: rgba(...) + backdrop-filter: blur() + a
- * radial gradient that followed the pointer`, which is ordinary glassmorphism.
- * The specification rejects that explicitly, and the reason is visible the moment
- * it sits on a page: the panel reads as a flat translucent card with a border,
- * because nothing in it behaves like a material with thickness.
+ * Flat surfaces over an acrylic fill: a frosted, tinted pane with a fine noise
+ * pass, closed by a 1px border, and nothing else. The previous material was a
+ * five-layer "liquid glass" — a refraction ring, an inner bevel and a specular
+ * spot that followed the pointer — and it was replaced deliberately, not
+ * degraded. Flat design is the ask; acrylic is the one effect kept, because a
+ * panel that floats over arbitrary artwork still has to stay readable and still
+ * wants to feel like a surface rather than a white rectangle.
  *
- * So the surface is built from five independent layers, each answering one
- * question, and this file is organised in that order:
+ * So the pane is two layers, and this file is organised in that order:
  *
- *   A. base       what the pane is made of          (.maslingo-glass__base)
- *   B. depth      how thick it is                   (.maslingo-glass__depth)
- *   C. edge       what happens at the rim           (.maslingo-glass__edge)
- *   D. specular   where the light is                (.maslingo-glass__specular)
- *   E. foreground the controls, above all of it     (.maslingo-glass__content)
+ *   A. base   the acrylic fill: tint + blur + noise   (.maslingo-glass__base)
+ *   B. edge   a flat 1px border                       (.maslingo-glass__edge)
+ *   C. content the controls, above both               (.maslingo-glass__content)
  *
- * Layer C is the one whose absence was most obvious. A 1px border says "this box
- * has an outline". A rim that is optically *different* — less blurred, slightly
- * brighter, catching more light at the corners — says "this is the edge of a
- * piece of glass and the page continues underneath it". That difference is a
- * second backdrop-filter confined to a ring by a mask, so the rim genuinely
- * changes what is behind it rather than painting over it.
+ * The noise is acrylic's signature — Fluent's acrylic is tint + blur + noise +
+ * luminosity. Without it this is plain translucency; with it, the pane reads as
+ * a material without any of the gloss that flat design rejects. It is drawn at
+ * a few percent, so it never competes with text.
  *
  * ==== Colour discipline ====
  *
@@ -32,9 +29,8 @@
  */
 
 @property --maslingo-morph {
-  /* Registered so it interpolates. Every layer reads it, which is what lets the
-     material follow the shape during a collapse instead of the contents sliding
-     out from under a pane that stayed the same size. */
+  /* Registered so it interpolates. The collapse reads it to morph the pane's
+     shape instead of the contents sliding out from under a fixed-size box. */
   syntax: "<number>";
   inherits: true;
   initial-value: 0;
@@ -55,19 +51,25 @@
    * "light theme" that flips back to dark on a machine with dark mode on is not
    * the thing that was asked for.
    */
-  --maslingo-tint: 250, 250, 252;       /* rgb triplet, so alpha stays tunable */
-  /* .34, and the material is now genuinely see-through: the artwork behind the
-     pane is legible as artwork, not as a smudge. The cost is real and worth
-     naming — over a busy or dark page the ink has less to sit on — which is why
-     the blur and saturation stay at the top of their ranges: they smooth the
-     backdrop so the text still has a fairly even field under it. */
-  --maslingo-alpha-base: .34;
+  --maslingo-tint: 247, 248, 250;       /* rgb triplet, so alpha stays tunable */
+  /*
+   * Acrylic, at Fluent's density rather than at glass-like transparency.
+   *
+   * .80 tint: dense enough that text holds over any backdrop — measured
+   * through the pane on dark artwork the secondary ink still clears ~7:1 -
+   * while the blur keeps the page legible underneath as texture rather than as
+   * competing content. This replaces a .54 fill whose labels vanished over
+   * dark drawings, and it is the acrylic half of "flat + acrylic": the
+   * translucency carries the material, the flat layers carry the styling.
+   */
+  --maslingo-alpha-base: .80;
   --maslingo-alpha: var(--maslingo-alpha-base);
-  --maslingo-alpha-strong: .58;
-  --maslingo-blur: 28px;                /* spec: 18–28px; top of range */
-  --maslingo-sat: 135%;                 /* spec: 110–135%; top of range */
-  --maslingo-bright: 1.06;
-  --maslingo-contrast: 1.02;
+  /* Busy overlays and chips that sit directly on artwork leave less to chance. */
+  --maslingo-alpha-strong: .92;
+  --maslingo-blur: 30px;
+  --maslingo-sat: 130%;
+  /* The noise pass, in one number: subtle enough to be texture, not grain. */
+  --maslingo-noise-opacity: .04;
 
   /* Type scale, in one place. Apple's hierarchy comes mostly from a few well
      separated sizes rather than from many weights. */
@@ -75,30 +77,22 @@
   --maslingo-font-title: 13.5px;
   --maslingo-font-small: 12px;
 
-  /* --- B. depth ------------------------------------------------------------ */
-  /* A bright top edge and a faint dark bottom edge: the pane catching light from
-     above, which is what gives light glass its thickness. */
-  --maslingo-inner-hi: rgba(255, 255, 255, .85);
-  --maslingo-inner-lo: rgba(0, 0, 0, .05);
-
-  /* --- C. edge ------------------------------------------------------------- */
-  --maslingo-glass-edge: rgba(255, 255, 255, .60);  /* the hairline the lighter surfaces share */
-  --maslingo-edge-ring: 2.5px;
-  --maslingo-edge-blur: 5px;
-  --maslingo-edge-gain: 1.12;
-
-  /* --- D. specular --------------------------------------------------------- */
-  --maslingo-spec-size: 260px;
-  --maslingo-spec-alpha: .55;
+  /* --- B. border ----------------------------------------------------------- */
+  /* One flat hairline shared by every surface. Neutral black rather than white:
+     on a light pane a white border is a gloss line, which is the thing flat
+     design removes. */
+  --maslingo-border: rgba(28, 30, 33, .12);
 
   /* --- E. ink -------------------------------------------------------------- */
   /* Apple's own label colours: near-black primary, and a secondary that is the
-     same hue at 60% so the two never look like different greys. */
+     same hue rather than a different grey. The secondary was #555b66 back when
+     the pane was a dense card; over this light material it has to stay legible
+     against the tint itself, not just against white paper. */
   --maslingo-ink: #1c1e21;
-  --maslingo-muted: #555b66;
+  --maslingo-muted: #3d434e;
   --maslingo-fill: rgba(120, 120, 128, .13);
   --maslingo-fill-strong: rgba(120, 120, 128, .22);
-  --maslingo-line: rgba(0, 0, 0, .10);
+  --maslingo-line: rgba(0, 0, 0, .14);
 
   /* --- status: the only colours in the product ----------------------------- */
   /* Darkened from the values used on the dark material: these now sit on a
@@ -115,11 +109,11 @@
   --maslingo-radius-sm: 10px;
   --maslingo-w-panel: 268px;
   --maslingo-w-widget: 150px;
-  /* Room kept clear under the panel for the status surface. Both live in the
-     lower right corner by design, so without this the status pane sits directly
-     on top of the panel's footer — measured at 4400px² of overlap. */
-  --maslingo-status-reserve: 48px;
-
+  /* The expanded body's height, in one constant: the window keeps this size in
+     every state (normal mode, AI mode, any message) instead of growing and
+     shrinking with its content. Sized to the tallest state — the AI modules —
+     with the slack collected above the pinned footer. */
+  --maslingo-h-body: 310px;
   /* --- motion -------------------------------------------------------------- */
   --maslingo-ease: cubic-bezier(.22, 1, .36, 1);
   --maslingo-hover: 140ms;              /* spec: 100–180ms */
@@ -171,6 +165,12 @@
   text-transform: none;
   text-align: left;
   text-indent: 0;
+  /* Host pages also carry text-decoration and text-shadow, and both leak into
+     appended nodes: a page that strikes through part of itself made the status
+     line look crossed out, which reads as a rendering bug rather than as the
+     page's own styling. */
+  text-decoration: none;
+  text-shadow: none;
   direction: ltr;
   writing-mode: horizontal-tb;
   box-sizing: border-box;
@@ -180,136 +180,49 @@
 .maslingo-surface *::before,
 .maslingo-surface *::after { box-sizing: border-box; }
 
-/* A. base — the material itself. */
+/* A. base — the acrylic fill.
+ *
+ * One flat colour plus one filter. Nothing here catches light, and there is no
+ * gradient: on a flat surface, depth is expressed by the border and by the
+ * density of the tint, not by painted highlights. */
 .maslingo-glass__base {
   position: absolute;
   inset: 0;
   z-index: 0;
   border-radius: inherit;
-  background: linear-gradient(
-    180deg,
-    rgba(var(--maslingo-tint), calc(var(--maslingo-alpha) + .06)) 0%,
-    rgba(var(--maslingo-tint), var(--maslingo-alpha)) 46%,
-    rgba(var(--maslingo-tint), calc(var(--maslingo-alpha) + .05)) 100%
-  );
-  -webkit-backdrop-filter:
-    blur(var(--maslingo-blur)) saturate(var(--maslingo-sat))
-    brightness(var(--maslingo-bright)) contrast(var(--maslingo-contrast));
-  backdrop-filter:
-    blur(var(--maslingo-blur)) saturate(var(--maslingo-sat))
-    brightness(var(--maslingo-bright)) contrast(var(--maslingo-contrast));
+  background: rgba(var(--maslingo-tint), var(--maslingo-alpha));
+  -webkit-backdrop-filter: blur(var(--maslingo-blur)) saturate(var(--maslingo-sat));
+  backdrop-filter: blur(var(--maslingo-blur)) saturate(var(--maslingo-sat));
   pointer-events: none;
 }
 
-/* B. depth — thickness, not a 3D bevel.
- *
- * Light comes from above, so the top inner edge catches a hairline of light and
- * the bottom inner edge falls into a shallow shadow. Both sit at the threshold of
- * visibility: the failure mode here is a pane that looks like moulded plastic. */
-.maslingo-glass__depth {
+/* The noise pass — acrylic's signature, and the reason this is not just a
+ * translucent rectangle. A tiny tiled SVG turbulence, desaturated, at a few
+ * percent opacity: visible as texture when looked at, invisible as content
+ * when text sits on it. */
+.maslingo-glass__base::after {
+  content: "";
   position: absolute;
   inset: 0;
-  z-index: 1;
   border-radius: inherit;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, .055) 0%,
-    rgba(255, 255, 255, .012) 12%,
-    rgba(255, 255, 255, 0) 30%,
-    rgba(0, 0, 0, 0) 68%,
-    rgba(0, 0, 0, .07) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 var(--maslingo-inner-hi),
-    inset 0 -1px 0 var(--maslingo-inner-lo),
-    inset 0 0 22px rgba(255, 255, 255, .022);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: var(--maslingo-noise-opacity);
   pointer-events: none;
 }
 
-/* C. edge — the rim.
+/* B. edge — a flat 1px border, and nothing else.
  *
- * Two things happen here, and both are needed:
- *
- *   1. A second backdrop-filter, masked to a thin ring. The rim therefore shows
- *      the page through a *sharper and brighter* filter than the body does. That
- *      is a real optical difference at the boundary, which is what reads as glass
- *      rather than as a rectangle with a border drawn on it.
- *   2. A soft ring gradient, stronger at the top and at the corners, so the rim
- *      has structure instead of uniform brightness.
- *
- * The mask is the padding-box xor border-box trick: `content-box` keeps only the
- * area inside the padding, and excluding it from the full box leaves the ring. */
+ * There used to be a masked second backdrop-filter here that made the rim
+ * optically different from the body. Flat design removes it: the boundary is a
+ * border, drawn in the same neutral as every other hairline in the product. */
 .maslingo-glass__edge {
   position: absolute;
   inset: 0;
   z-index: 2;
   border-radius: inherit;
-  padding: var(--maslingo-edge-ring);
+  border: 1px solid var(--maslingo-border);
   pointer-events: none;
-  -webkit-backdrop-filter: blur(var(--maslingo-edge-blur)) brightness(var(--maslingo-edge-gain)) saturate(1.06);
-  backdrop-filter: blur(var(--maslingo-edge-blur)) brightness(var(--maslingo-edge-gain)) saturate(1.06);
-  background: conic-gradient(
-    from 200deg at 50% 50%,
-    rgba(255, 255, 255, .30) 0deg,
-    rgba(255, 255, 255, .06) 42deg,
-    rgba(255, 255, 255, .16) 92deg,
-    rgba(255, 255, 255, .05) 160deg,
-    rgba(255, 255, 255, .13) 200deg,
-    rgba(255, 255, 255, .05) 268deg,
-    rgba(255, 255, 255, .22) 320deg,
-    rgba(255, 255, 255, .30) 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  /* .88 rather than 1: at full opacity there is no headroom, so the hover and
-     drag states computed to 1.12 and 1.0 and were both clamped back to 1 — the
-     rim did not react at all in the expanded panel, which is exactly where the
-     controls are. */
-  opacity: calc(.88 - .23 * var(--maslingo-morph));
-  transition: opacity var(--maslingo-hover) ease;
-}
-
-/* D. specular — where the light is.
- *
- * One soft spot, large and dim, moved by --maslingo-mx/--maslingo-my. There is
- * deliberately no keyframe loop: the specification names an endlessly travelling
- * highlight as forbidden, and a light that keeps moving while nothing is happening
- * is the clearest tell of a fake material. With no pointer input the spot rests,
- * and the small states (hover, drag) change its gain instead of its position. */
-.maslingo-glass__specular {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  border-radius: inherit;
-  overflow: hidden;
-  pointer-events: none;
-}
-.maslingo-glass__specular i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: var(--maslingo-spec-size);
-  height: var(--maslingo-spec-size);
-  margin: calc(var(--maslingo-spec-size) / -2) 0 0 calc(var(--maslingo-spec-size) / -2);
-  border-radius: 50%;
-  background: radial-gradient(
-    closest-side,
-    rgba(255, 255, 255, var(--maslingo-spec-alpha)),
-    rgba(255, 255, 255, calc(var(--maslingo-spec-alpha) * .35)) 52%,
-    rgba(255, 255, 255, 0) 78%
-  );
-  /* Written by JS as two custom properties and interpolated there by a
-     requestAnimationFrame loop — not by a CSS transition, because the spec asks
-     for easing with inertia rather than a fixed curve. */
-  transform: translate3d(var(--maslingo-mx, 50%), var(--maslingo-my, 18%), 0);
-  opacity: calc(1 - .45 * var(--maslingo-morph));
-  will-change: transform;
+  transition: border-color var(--maslingo-hover) ease;
 }
 
 /* E. foreground — never blurred, never under a layer. */
@@ -318,80 +231,55 @@
   z-index: 4;
 }
 
-/* --- state-driven light (§19) -------------------------------------------- */
-/*
- * The material responds to what the user is doing, then goes quiet. This is the
- * difference between "ambient light" and "an animation that plays":
+/* --- state feedback -------------------------------------------------------
+ *
+ * Flat does not mean static: the two interaction states are answered with the
+ * two knobs a flat surface has — border contrast and fill density.
  *
  *   idle      nothing moves
- *   hover     the rim warms very slightly
- *   dragging  rim and specular both lift, and the pane thickens
+ *   hover     the border steps up one contrast level
+ *   dragging  the border steps up again and the tint thickens
  *   settling  back to idle on the release curve
  */
-.maslingo-panel[data-state="hover"] .maslingo-glass__edge { opacity: calc(.95 - .25 * var(--maslingo-morph)); }
-.maslingo-panel[data-state="dragging"] {
-  /* Relative, not absolute: the dark scheme starts at .60, so a hard .58 made a
-     drag thin the tint instead of thickening it. */
-  --maslingo-alpha: calc(var(--maslingo-alpha-base) + .06);
-  --maslingo-spec-alpha: .16;
-  --maslingo-edge-gain: 1.14;
+.maslingo-panel[data-state="hover"] .maslingo-glass__edge {
+  border-color: rgba(28, 30, 33, .20);
 }
-.maslingo-panel[data-state="dragging"] .maslingo-glass__edge { opacity: 1; }
-
-/* --- shadows (§15) ------------------------------------------------------- */
-/* Three parts, each with a job: a contact shadow that seats the pane, a wide
-   outer shadow that lifts it, and the inner highlight that belongs to depth.
-   None is pure black — a neutral black shadow on a coloured page reads as a grey
-   halo around the panel. */
-.maslingo-panel {
+.maslingo-panel[data-state="dragging"] {
+  --maslingo-alpha: calc(var(--maslingo-alpha-base) + .06);
+}
+.maslingo-panel[data-state="dragging"] .maslingo-glass__edge {
+  border-color: rgba(28, 30, 33, .26);
 }
 
 /* --- controls ------------------------------------------------------------ */
 /*
- * Controls are translucent fills on the pane, not glass cards of their own. The
- * specification forbids the nested-glass pattern, and it is also the cheaper
- * choice: a page running auto translate may hold hundreds of painted regions, so
- * the expensive material stays on the one window and the few surfaces that carry
- * state.
+ * Flat controls: a solid translucent fill and the same hairline border as the
+ * pane, no gradients and no elevation. The previous buttons carried a top-lit
+ * gradient and scaled on hover; both were gloss, and gloss is exactly what this
+ * design language removes. Feedback is a fill step and a border step.
  */
 .maslingo-btn {
   display: block;
   width: 100%;
   margin-top: 10px;
   padding: 9px var(--maslingo-gutter);
-  /* A hairline and a top-lit gradient, which is what makes a control read as a
-     physical object rather than a painted rectangle. Without them every control
-     in the panel was the same flat grey and the eye had nothing to grab: the
-     button, the select and the check button were indistinguishable except by
-     width. The gradient is 1px of light at the top edge and nothing at the
-     bottom, so it suggests a surface catching light from above rather than a
-     bevel. */
-  border: 1px solid rgba(0, 0, 0, .07);
+  border: 1px solid rgba(28, 30, 33, .10);
   border-radius: var(--maslingo-radius-sm);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .58));
+  background: rgba(255, 255, 255, .66);
   color: var(--maslingo-ink);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.2;
   font-family: inherit;
   cursor: pointer;
-  transition:
-    background var(--maslingo-hover) ease,
-    border-color var(--maslingo-hover) ease,
-    transform var(--maslingo-hover) var(--maslingo-ease),
-    box-shadow var(--maslingo-hover) ease;
+  transition: background var(--maslingo-hover) ease, border-color var(--maslingo-hover) ease;
 }
 .maslingo-btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #fff, rgba(255, 255, 255, .82));
-  border-color: rgba(0, 0, 0, .10);
-  /* Hover is a gloss change, not a size change: 1.01 is the ceiling. */
-  transform: scale(1.01);
+  background: rgba(255, 255, 255, .86);
+  border-color: rgba(28, 30, 33, .16);
 }
 .maslingo-btn:active:not(:disabled) {
-  transform: scale(.985);
-  background: linear-gradient(180deg, rgba(120, 120, 128, .18), rgba(120, 120, 128, .12));
-  box-shadow: inset 0 1.5px 3px rgba(16, 20, 30, .10);
+  background: rgba(28, 30, 33, .10);
   transition-duration: var(--maslingo-press);
 }
 .maslingo-btn:disabled { opacity: .45; cursor: default; }
@@ -400,14 +288,11 @@
 .maslingo-select {
   flex: 1 1 auto;
   min-width: 0;
+  height: 36px;
   padding: 8px 10px;
-  /* Same hairline and top-lit gradient as the buttons, so the two controls read
-     as the same family. They previously had identical flat fills but different
-     corner radii and no borders, which made the row look assembled from parts. */
-  border: 1px solid rgba(0, 0, 0, .07);
+  border: 1px solid rgba(28, 30, 33, .10);
   border-radius: var(--maslingo-radius-sm);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .58));
+  background: rgba(255, 255, 255, .66);
   color: var(--maslingo-ink);
   font-size: 12px;
   line-height: 1.2;
@@ -457,29 +342,24 @@
   padding: 2px;
   border-radius: 999px;
   background: rgba(120, 120, 128, .26);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .04);
   display: flex;
   align-items: center;
-  transition: background .22s var(--maslingo-ease), box-shadow .22s var(--maslingo-ease);
+  transition: background .22s var(--maslingo-ease);
 }
 .maslingo-switch-thumb {
   width: 19px;
   height: 19px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(16, 20, 30, .18);
-  transition: transform .24s var(--maslingo-ease), background .24s var(--maslingo-ease),
-              box-shadow .24s var(--maslingo-ease);
+  transition: transform .24s var(--maslingo-ease), background .24s var(--maslingo-ease);
 }
 .maslingo-switch input:checked + .maslingo-switch-track {
-  background: rgba(28, 30, 33, .82);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .10);
+  background: rgba(28, 30, 33, .85);
 }
 .maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
   /* 40 - 2*2 padding - 19 thumb = 17 */
   transform: translateX(17px);
   background: #fff;
-  box-shadow: 0 1.5px 3.5px rgba(16, 20, 30, .34);
 }
 .maslingo-switch input:focus-visible + .maslingo-switch-track {
   outline: 2px solid rgba(28, 30, 33, .38);
@@ -500,8 +380,7 @@
 /* Host pages without backdrop-filter get a denser pane rather than an
    unreadable one. The blur is the effect; legibility is the requirement. */
 @supports not (backdrop-filter: blur(1px)) {
-  .maslingo-glass__base { background: rgba(var(--maslingo-tint), .88); }
-  .maslingo-glass__edge { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .maslingo-glass__base { background: rgba(var(--maslingo-tint), .985); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -512,6 +391,4 @@
   .maslingo-switch-track,
   .maslingo-switch-thumb,
   .maslingo-glass__edge { transition-duration: .01ms; }
-  .maslingo-btn:hover:not(:disabled),
-  .maslingo-btn:active:not(:disabled) { transform: none; }
 }

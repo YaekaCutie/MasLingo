@@ -19,14 +19,14 @@ try { Invoke-RestMethod http://127.0.0.1:8001/health -TimeoutSec 3 } catch { "�
 **2. 确认安装包在。**
 
 ```powershell
-Get-Item build\output\MasLingo-Setup-1.1.5.exe
+Get-Item build\output\MasLingo-Setup-1.1.6.exe
 ```
 
 ---
 
 ## 阶段 1：安装
 
-双击 `build\output\MasLingo-Setup-1.1.5.exe`。
+双击 `build\output\MasLingo-Setup-1.1.6.exe`。
 
 | 向导页 | 你要做的 | 期望看到 |
 |---|---|---|
@@ -232,7 +232,7 @@ Test-Path "$env:LOCALAPPDATA\Programs\MasLingo"          # 应当 False
 要真正满足验收标准 1，需要一个**全新 Windows 虚拟机**（Hyper-V 或 VirtualBox，Windows 11 评估版即可）：
 
 1. 装好系统，**不要装** Python、Git、VS Code、Node
-2. 把 `MasLingo-Setup-1.1.5.exe` 拷进去（576 MB，用共享文件夹或 U 盘）
+2. 把 `MasLingo-Setup-1.1.6.exe` 拷进去（576 MB，用共享文件夹或 U 盘）
 3. 跑安装包 → 跑 `selftest.ps1`（需要 PowerShell，系统自带）
 4. 按阶段 3–7 走一遍
 
