@@ -78,7 +78,20 @@ def _components(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
     return list(unique.values())
 
 
-MAX_TEXT_REGIONS = 24
+# How many proposals one screenshot may carry into recognition.
+#
+# This is a budget: every region costs one OCR pass (measured ~0.2 s on the
+# development CPU, so the cap is seconds, not minutes), and it needs to sit
+# above the number of text groups a dense page genuinely has. On a two-page
+# spread the detector returns 58 proposals after merging, and with the old
+# cap of 24 ten readable balloons — '黙れコラァ！！！' at 0.99 confidence,
+# '一枚だけな' at 1.00, 'はいジョーカー！', '買ってもらったゲームで…' — ranked
+# past the cut and were never read, while artwork fragments took their slots.
+# Junk does share the budget, because nothing before OCR reliably separates a
+# balloon from artwork that merely contains lettering; the confidence gate
+# discards those afterwards. 80 keeps the spread's last real balloons
+# ('またねー' at 0.98) inside the budget with a little headroom.
+MAX_TEXT_REGIONS = 80
 MAX_REGION_AREA_RATIO = 0.05
 MAX_DARK_TEXT_CONTEXT_AREA_RATIO = 0.08
 
@@ -92,6 +105,61 @@ MAX_DARK_TEXT_CONTEXT_AREA_RATIO = 0.08
 # no pair of surviving regions overlapped at all. Keep them where they are.
 BUBBLE_DUPLICATE_OVERLAP = 0.45
 TEXT_DUPLICATE_OVERLAP = 0.65
+
+
+# Share of a proposal's box that other proposals must cover for it to count
+# as the paper *around* balloons rather than a balloon itself, and the share
+# of the page the proposal itself must occupy to qualify as a panel.
+#
+# Both bars come from measured pages. The panel backgrounds that swallowed
+# balloons covered 0.32 (13.8% of the page) and 0.49 (7.0%); the one candidate
+# the guard must *not* drop is a real balloon at 0.30 — but only 1.8% of the
+# page, where its "inner" is the furigana strip beside the letters, so the
+# page-share bar does the separating.
+BACKGROUND_INNER_SHARE = 0.28
+BACKGROUND_MIN_SHARE_OF_PAGE = 0.035
+
+
+def _drop_background_containers(
+    candidates: list[tuple[int, int, int, int, int]],
+    page_area: int,
+) -> list[tuple[int, int, int, int, int]]:
+    """Drop enclosed proposals that are panels' backgrounds, not balloons.
+
+    A white panel is enclosed by its frame, so its background passes the ring
+    test, and its bounding box covers every balloon standing on it — which
+    makes it measure the balloons' lettering as its own score. On a
+    dialogue-heavy spread that background then outranked the balloons (89911
+    against 8317 and 4200), won the duplicate pass, and the two real balloons
+    inside it were thrown away unread while the background itself was read as
+    one garbled merged crop. When other proposals cover a large share of a
+    proposal's box, it is that background: keep the contents, drop the
+    container. Measured the same way on a second spread, a panel background
+    at 0.32 coverage quietly swallowed its one balloon ('まあまあ‥‥っていうか
+    普通‥‥'), which then never reached recognition at all.
+    """
+    boxes = [(item[0], item[1], item[2], item[3]) for item in candidates]
+    keep = []
+    for index, (left, top, right, bottom) in enumerate(boxes):
+        area = (right - left) * (bottom - top)
+        covered = 0
+        for other, (other_left, other_top, other_right, other_bottom) in enumerate(boxes):
+            if other == index:
+                continue
+            if (
+                left <= other_left
+                and top <= other_top
+                and other_right <= right
+                and other_bottom <= bottom
+            ):
+                covered += (other_right - other_left) * (other_bottom - other_top)
+        if (
+            area >= BACKGROUND_MIN_SHARE_OF_PAGE * page_area
+            and covered >= BACKGROUND_INNER_SHARE * area
+        ):
+            continue
+        keep.append(candidates[index])
+    return keep
 
 
 def _share_text_line(
@@ -128,6 +196,160 @@ def _share_text_line(
         and overlap_x / min(width_a, width_b) >= 0.55
     )
     return same_reading_line or same_vertical_block
+
+
+def _separated_by_stroke(
+    first: tuple[int, int, int, int, int],
+    second: tuple[int, int, int, int, int],
+    dark: np.ndarray,
+) -> bool:
+    """Whether a dark stroke runs between two vertically adjacent proposals.
+
+    Two fragments of one piece of text are separated by white paper; two
+    stacked speech balloons are separated by their outlines. The latter must
+    not be merged — reading two balloons as one region produced garbled crops
+    on a dialogue-dense spread — so a horizontal dark line across the overlap
+    between the two boxes vetoes the merge.
+    """
+    if first[1] > second[1]:
+        first, second = second, first
+    overlap_left = max(first[0], second[0])
+    overlap_right = min(first[2], second[2])
+    if overlap_right - overlap_left < 8:
+        return False
+    gap_top = max(0, first[3])
+    gap_bottom = min(dark.shape[0], second[1])
+    if gap_bottom <= gap_top:
+        gap_top = max(0, first[3] - 2)
+        gap_bottom = min(dark.shape[0], first[3] + 2)
+    band = dark[gap_top:gap_bottom, overlap_left:overlap_right]
+    if band.size == 0:
+        return False
+    return bool((band.mean(axis=1) >= 0.7).any())
+
+
+# The smallest component that counts as a glyph rather than texture.
+#
+# Screentone is drawn as thousands of 1–3px dots, every one of them small,
+# round and solid — exactly the shape statistics a glyph detector looks for.
+# On a screentone-heavy page those dots outscored the real lettering and the
+# top slots filled with empty panels; the detector's recall against the
+# labelled corpus sat at ~15% for it. Real glyphs on a page scaled to 1600px
+# are 8px and up (area >= 64), while anti-aliased halftone dots stay under
+# 4x5; a floor of 20 separates them with plenty of margin either way.
+MIN_GLYPH_AREA = 20
+# Below this total, a region is texture, not text — an empty balloon interior
+# has no glyph-like components at all and drops out, which is the point.
+MIN_GLYPH_SCORE = 24
+
+
+def _has_text_like_ink(gray_pixels: np.ndarray, box: tuple[int, int, int, int]) -> bool:
+    """Whether a proposed balloon interior actually contains lettering.
+
+    Empty balloons, windows, eyes and clothing highlights are enclosed by
+    outlines too, so the ring test alone admits them; what they lack is glyphs.
+    A whole comic PANEL is enclosed by its border and *does* contain the
+    caption's glyphs, but they fill a small fraction of its area — a text
+    carrier's lettering covers at least a tenth of the box, a panel's handful
+    of lines far less. Without the density bar the panel won the duplicate
+    pass against the caption itself and the caption was never read.
+    """
+    score = _glyph_score(gray_pixels, box)
+    box_area = (box[2] - box[0]) * (box[3] - box[1])
+    return score >= MIN_GLYPH_SCORE and score >= 0.10 * box_area
+
+
+def _glyph_score(gray_pixels: np.ndarray, box: tuple[int, int, int, int]) -> int:
+    """Total area of glyph-like strokes inside a proposal.
+
+    Ranking candidates by raw ink let artwork win: a hatched face or a figure's
+    outline carries more ink than a balloon's text, so on a dialogue-dense page
+    the top slots filled with blobs and real text fell off the list. Glyphs are
+    small, compact, solid components; artwork strokes are long, hollow or
+    sprawling, and are excluded here, so a text group outranks a bigger blob.
+
+    Both polarities are measured and the better one wins: dialogue over dark
+    artwork is light lettering, and scoring dark ink only rated those crops
+    zero (the background itself is one giant dark component), which silently
+    dropped them from the candidate list.
+    """
+    left, top, right, bottom = box
+    box_width, box_height = right - left, bottom - top
+    region = gray_pixels[top:bottom, left:right]
+    best = 0
+    for interior in (region < 185, region > 205):
+        total = 0
+        for gl, gt, gr, gb in _components(interior):
+            width, height = gr - gl, gb - gt
+            area = width * height
+            # 0.85, not 0.6: a crop tight around one line of text has glyphs as
+            # tall as the box itself, and the tighter cap silently scored whole
+            # caption lines at zero. Only strokes that genuinely span the box
+            # (frames, outlines, motion lines) are excluded.
+            if area < MIN_GLYPH_AREA or width > box_width * 0.85 or height > box_height * 0.85:
+                continue
+            if interior[gt:gb, gl:gr].mean() >= 0.2:
+                total += area
+        best = max(best, total)
+    return best
+
+
+def _split_run(
+    mask: np.ndarray,
+    box: tuple[int, int, int, int],
+    axis: int,
+    min_gap: int = 6,
+    min_side: int = 40,
+    ink_share: float = 0.06,
+) -> list[tuple[int, int, int, int]]:
+    """Split a merged block where its ink projection has a wide empty band.
+
+    Stacked balloons whose outlines touch end up as one connected component
+    after dilation, and reading them as one region garbles both. The white
+    sliver between the two outlines shows up as a run of rows with (almost) no
+    ink; splitting there recovers one region per balloon. Only used on blocks
+    that actually look merged (tall or wide relative to their other side), so
+    ordinary single texts are untouched.
+    """
+    left, top, right, bottom = box
+    region = mask[top:bottom, left:right]
+    projection = region.sum(axis=1) if axis == 0 else region.sum(axis=0)
+    cross = (right - left) if axis == 0 else (bottom - top)
+    length = (bottom - top) if axis == 0 else (right - left)
+    if length < min_side * 2:
+        return []
+    limit = max(1, int(cross * 0.02))
+    cuts = []
+    index = 0
+    while index < length:
+        if projection[index] <= limit:
+            start = index
+            while index < length and projection[index] <= limit:
+                index += 1
+            if index - start >= min_gap:
+                cuts.append((start + index) // 2)
+        else:
+            index += 1
+    if not cuts:
+        return []
+    total_ink = int(projection.sum()) or 1
+    bounds = []
+    previous = 0
+    for cut in cuts:
+        bounds.append((previous, cut))
+        previous = cut
+    bounds.append((previous, length))
+    pieces = []
+    for start, end in bounds:
+        if end - start < min_side:
+            continue
+        if int(projection[start:end].sum()) < total_ink * ink_share:
+            continue
+        if axis == 0:
+            pieces.append((left, top + start, right, top + end))
+        else:
+            pieces.append((left + start, top, left + end, bottom))
+    return pieces if len(pieces) >= 2 else []
 
 
 def detect_text_regions(
@@ -176,20 +398,74 @@ def detect_text_regions(
     # Closed, light speech balloons can provide a better OCR crop than the
     # fragmented glyph groups inside them. Keep these proposals separate from
     # morphology-based grouping so large illustration regions stay excluded.
-    for left, top, right, bottom in _components(gray_pixels > 230):
+    #
+    # The outlines are sealed before the interiors are taken (dilate then erode
+    # on the dark mask). A plain `gray > 230` component search fails here: JPEG
+    # noise drops single pixels on the outline below the threshold, an interior
+    # then leaks into the page background and merges with it, and a page full of
+    # balloons produced almost no usable proposals. Sealing a two-pixel gap
+    # costs nothing on real outlines and keeps every interior its own component.
+    dark_for_seal = (gray_pixels < 210).astype(np.uint8) * 255
+    sealed = np.asarray(
+        Image.fromarray(dark_for_seal)
+        .filter(ImageFilter.MaxFilter(7))
+        .filter(ImageFilter.MinFilter(7))
+    ) > 0
+    for left, top, right, bottom in _components(~sealed):
         box_width, box_height = right - left, bottom - top
         box_area = box_width * box_height
         if box_width < 24 or box_height < 24:
             continue
-        if box_area < width * height * 0.015 or box_area > width * height * 0.18:
+        if box_area < width * height * 0.004 or box_area > width * height * 0.16:
             continue
-        if not 0.35 <= box_width / box_height <= 1.7:
+        # Vertical-text balloons are tall and narrow; a plain 0.35–1.7 range
+        # rejected most of them. 0.22–2.2 covers the real shapes on both page
+        # orientations (a long two-line balloon reaches ~2.0) without admitting
+        # wide art panels, which keep being rejected.
+        if not 0.22 <= box_width / box_height <= 2.2:
             continue
         dark_ink_count = int((gray_pixels[top:bottom, left:right] < 185).sum())
         dark_ink_ratio = dark_ink_count / box_area
-        if dark_ink_count < minimum_ink or not 0.02 <= dark_ink_ratio <= 0.7:
+        if dark_ink_count < minimum_ink or not 0.015 <= dark_ink_ratio <= 0.65:
+            continue
+        # A balloon is enclosed by its own outline. Check the band just outside
+        # the interior: an enclosed white patch of artwork (an eye highlight, a
+        # shirt fold) passes the size and ink tests but is not ringed by a
+        # continuous dark stroke.
+        ring = 3
+        crop_light = (~sealed)[top:bottom, left:right]
+        crop_dark = sealed[top:bottom, left:right]
+        grown = np.asarray(
+            Image.fromarray(crop_light.astype(np.uint8) * 255)
+            .filter(ImageFilter.MaxFilter(2 * ring + 1))
+        ) > 0
+        band = grown & ~crop_light
+        band_pixels = int(band.sum())
+        if band_pixels <= 0:
+            continue
+        # The band follows the shape's own boundary (a bbox ring misses the
+        # outline of a round balloon entirely, since the ellipse only touches
+        # its bounding box at four points).
+        if int((crop_dark & band).sum()) / band_pixels < 0.18:
+            continue
+        if not _has_text_like_ink(gray_pixels, (left, top, right, bottom)):
             continue
         bubble_candidates.append((left, top, right, bottom, dark_ink_count))
+
+    # Panels' backgrounds are enclosed regions too; see the docstring of
+    # _drop_background_containers for why they have to leave before scoring.
+    # The test runs on the raw outlines — the 3% inset below would break the
+    # shared edges the containment check relies on.
+    bubble_candidates = _drop_background_containers(bubble_candidates, width * height)
+    # Inset each crop inside its outline: the model reads dialogue, not the
+    # balloon frame.
+    inset_candidates = []
+    for left, top, right, bottom, dark_ink_count in bubble_candidates:
+        inset = max(2, round(min(right - left, bottom - top) * 0.03))
+        inset_candidates.append(
+            (left + inset, top + inset, right - inset, bottom - inset, dark_ink_count)
+        )
+    bubble_candidates = inset_candidates
 
     for mask_index, ink in enumerate(ink_masks):
         grouped = Image.fromarray(ink.astype(np.uint8) * 255)
@@ -205,6 +481,19 @@ def detect_text_regions(
         # eroding those two masks lost the white-on-black line at every width
         # where it would otherwise be found.
         if mask_index < 2:
+            # Dot-grid textures (some web scans print halftone darker than 185)
+            # are 1-3px specks; dilated they fuse into one page-sized web that
+            # swallows the lettering along with them. Clearing the sub-glyph
+            # specks *before* the dilation keeps glyph strokes — orders of
+            # magnitude larger — and is what finally let the labelled corpus
+            # page's text form a candidate at all.
+            speck_cleared = np.zeros_like(ink)
+            for speck_left, speck_top, speck_right, speck_bottom in _components(ink):
+                if (speck_right - speck_left) * (speck_bottom - speck_top) >= 12:
+                    speck_cleared[speck_top:speck_bottom, speck_left:speck_right] |= (
+                        ink[speck_top:speck_bottom, speck_left:speck_right]
+                    )
+            grouped = Image.fromarray(speck_cleared.astype(np.uint8) * 255)
             grouped = grouped.filter(ImageFilter.MinFilter(3))
         grouped = grouped.filter(ImageFilter.MaxFilter(kernel))
         for left, top, right, bottom in _components(np.asarray(grouped) > 0):
@@ -237,6 +526,25 @@ def detect_text_regions(
 
     # Keep the most text-like regions if a page contains substantial artwork
     # noise, then restore page reading order (top-to-bottom, right-to-left).
+    candidates = [
+        (left, top, right, bottom, _glyph_score(gray_pixels, (left, top, right, bottom)))
+        for left, top, right, bottom, _ink in candidates
+    ]
+    # Texture (screentone, hatching, hair) scores near zero once the glyph-area
+    # floor applies; a region without a single glyph-like component is not text
+    # and must not occupy one of the limited region slots.
+    #
+    # The density floor catches the other kind of imposter: a panel border is
+    # one connected component whose box is the whole panel, so it contains the
+    # caption's glyphs and scores like a text region — and then overrides the
+    # caption itself in the duplicate pass, because everything overlaps the
+    # frame. Real text fills a few percent of its box or more; a frame that
+    # merely *contains* text stays far below.
+    candidates = [
+        candidate for candidate in candidates
+        if candidate[4] >= MIN_GLYPH_SCORE
+        and candidate[4] >= 0.05 * (candidate[2] - candidate[0]) * (candidate[3] - candidate[1])
+    ]
     candidates.sort(key=lambda item: item[4], reverse=True)
     unique_candidates = []
     for candidate in candidates:
@@ -263,28 +571,25 @@ def detect_text_regions(
             index = parents[index]
         return index
 
+    # A shared outline between two proposals means two balloons, not one text
+    # block: merging them is what produced crops spanning several balloons.
+    dark_mask = gray_pixels < 200
     for index, candidate in enumerate(unique_candidates):
         for other_index in range(index):
-            if _share_text_line(candidate, unique_candidates[other_index]):
+            if _share_text_line(candidate, unique_candidates[other_index]) and not _separated_by_stroke(
+                candidate, unique_candidates[other_index], dark_mask
+            ):
                 parents[root(index)] = root(other_index)
 
     groups: dict[int, list[tuple[int, int, int, int, int]]] = {}
     for index, candidate in enumerate(unique_candidates):
         groups.setdefault(root(index), []).append(candidate)
 
-    candidates = []
-    for group in groups.values():
-        left = min(item[0] for item in group)
-        top = min(item[1] for item in group)
-        right = max(item[2] for item in group)
-        bottom = max(item[3] for item in group)
+    def _padded(left, top, right, bottom):
+        """Add the crop margin, shrinking it if the box would exceed the cap."""
         box_width, box_height = right - left, bottom - top
-        box_area = box_width * box_height
-        if box_area > width * height * MAX_REGION_AREA_RATIO:
-            continue
-
         tall_text_block = box_height > box_width * 1.5
-        padding_x = max(2, round(box_width * (0.46 if tall_text_block else 0.22)))
+        padding_x = max(2, round(box_width * (0.25 if tall_text_block else 0.18)))
         padding_y = max(2, round(box_height * (0.02 if tall_text_block else 0.22)))
         if (box_width + 2 * padding_x) * (box_height + 2 * padding_y) > width * height * MAX_REGION_AREA_RATIO:
             lower, upper = 0.0, 1.0
@@ -299,13 +604,44 @@ def detect_text_regions(
                     upper = scale
             padding_x = round(padding_x * lower)
             padding_y = round(padding_y * lower)
-        candidates.append((
+        return (
             max(0, left - padding_x),
             max(0, top - padding_y),
             min(width, right + padding_x),
             min(height, bottom + padding_y),
-            sum(item[4] for item in group),
-        ))
+        )
+
+    dark_projection = gray_pixels < 185
+    candidates = []
+    for group in groups.values():
+        left = min(item[0] for item in group)
+        top = min(item[1] for item in group)
+        right = max(item[2] for item in group)
+        bottom = max(item[3] for item in group)
+        box_width, box_height = right - left, bottom - top
+        if box_width * box_height > width * height * MAX_REGION_AREA_RATIO:
+            continue
+        # A block much taller (or wider) than its other side is often several
+        # balloons whose outlines the dilation bridged into one component.
+        # Splitting at the widest ink-free band gives each balloon its own crop,
+        # which is the difference between reading two lines and reading noise.
+        pieces = [(left, top, right, bottom)]
+        if box_height >= 150 and box_height >= box_width * 1.5:
+            split = _split_run(dark_projection, (left, top, right, bottom), axis=0)
+            if split:
+                pieces = split
+        elif box_width >= 150 and box_width >= box_height * 1.5:
+            split = _split_run(dark_projection, (left, top, right, bottom), axis=1)
+            if split:
+                pieces = split
+        group_ink = sum(item[4] for item in group)
+        for piece in pieces:
+            padded = _padded(*piece)
+            padded_width = padded[2] - padded[0]
+            padded_height = padded[3] - padded[1]
+            if padded_width * padded_height > width * height * MAX_REGION_AREA_RATIO:
+                continue
+            candidates.append((*padded, max(1, group_ink // len(pieces))))
 
     expanded_candidates = []
     for left, top, right, bottom, ink_count in candidates:
@@ -333,6 +669,14 @@ def detect_text_regions(
         expanded_candidates.append((left, top, right, bottom, ink_count))
     candidates = expanded_candidates
 
+    # Rank balloons by glyph-likeness too: an enclosed white patch of artwork
+    # (a window, an eye highlight, a hair gap) also survives the ring and ink
+    # tests, and raw ink made those large patches outrank real balloons on a
+    # dialogue-heavy spread.
+    bubble_candidates = [
+        (left, top, right, bottom, _glyph_score(gray_pixels, (left, top, right, bottom)))
+        for left, top, right, bottom, _ink in bubble_candidates
+    ]
     bubble_candidates.sort(key=lambda item: item[4], reverse=True)
     proposal_candidates = [*bubble_candidates, *candidates]
     final_candidates = []

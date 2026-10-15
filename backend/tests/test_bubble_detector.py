@@ -77,14 +77,43 @@ class BubbleDetectorTests(unittest.TestCase):
 
         regions = detect_text_regions(image)
 
+        # The crop is deliberately inset inside the outline (the model reads
+        # dialogue, not the balloon frame), so allow a few pixels of shrink.
         self.assertTrue(any(
-            left <= 138 and right >= 263 and top <= 115 and bottom >= 285
+            left <= 145 and right >= 256 and top <= 122 and bottom >= 278
             for left, top, right, bottom in regions
         ))
         self.assertTrue(all(
             (right - left) * (bottom - top) <= 400 * 400 * 0.18
             for left, top, right, bottom in regions
         ))
+
+    def test_splits_stacked_balloons_bridged_by_dilation(self):
+        image = Image.new("RGB", (360, 560), (215, 215, 215))
+        draw = ImageDraw.Draw(image)
+        # Two balloons stacked with a 10px gap: the outlines themselves stay
+        # apart, but dilation (radius 6) bridges them into one component.
+        draw.ellipse((90, 40, 270, 220), fill="white", outline="black", width=3)
+        draw.ellipse((90, 230, 270, 410), fill="white", outline="black", width=3)
+        for line in (0, 1, 2):
+            for row in range(3):
+                draw.rectangle(
+                    (140 + line * 26, 70 + row * 40, 152 + line * 26, 86 + row * 40),
+                    fill="black",
+                )
+                draw.rectangle(
+                    (140 + line * 26, 260 + row * 40, 152 + line * 26, 276 + row * 40),
+                    fill="black",
+                )
+
+        regions = detect_text_regions(image)
+
+        self.assertTrue(any(box[1] < 180 and box[3] <= 235 for box in regions), regions)
+        self.assertTrue(any(box[1] >= 235 and box[3] > 280 for box in regions), regions)
+        self.assertFalse(
+            any(box[1] <= 60 and box[3] >= 390 for box in regions),
+            regions,
+        )
 
     def test_does_not_treat_a_wide_art_panel_as_a_balloon_crop(self):
         image = Image.new("RGB", (400, 400), (210, 210, 210))
@@ -114,17 +143,56 @@ class BubbleDetectorTests(unittest.TestCase):
                         width, height = 12, 10
                     draw.rectangle((left, top, left + width, top + height), fill="black")
 
-                regions = detect_text_regions(image)
+                # The cap has to bite where it is set (24, below the fixture's
+                # 25 blocks) and stay out of the way at the shipped default,
+                # which now sits well above a single page's text groups.
+                for limit in (24, MAX_TEXT_REGIONS):
+                    with self.subTest(limit=limit):
+                        regions = detect_text_regions(image, limit=limit)
 
-                self.assertEqual(len(regions), MAX_TEXT_REGIONS)
-                self.assertTrue(all(
-                    0 <= left < right <= size[0] and 0 <= top < bottom <= size[1]
-                    for left, top, right, bottom in regions
-                ))
-                self.assertTrue(all(
-                    (right - left) * (bottom - top) <= size[0] * size[1] * 0.05
-                    for left, top, right, bottom in regions
-                ))
+                        self.assertEqual(len(regions), min(limit, 25))
+                        self.assertTrue(all(
+                            0 <= left < right <= size[0] and 0 <= top < bottom <= size[1]
+                            for left, top, right, bottom in regions
+                        ))
+                        self.assertTrue(all(
+                            (right - left) * (bottom - top) <= size[0] * size[1] * 0.05
+                            for left, top, right, bottom in regions
+                        ))
+
+    def test_panel_background_does_not_swallow_its_balloons(self):
+        # A white panel ringed by its frame is an enclosed region whose box
+        # covers every balloon standing on it, so it scores the balloons'
+        # lettering as its own and used to win the duplicate pass against
+        # them — leaving one garbled merged crop and no readings at all.
+        image = Image.new("RGB", (420, 420), (210, 210, 210))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((60, 20, 360, 400), fill="white", outline="black", width=3)
+        for left, top in ((80, 40), (220, 40)):
+            draw.ellipse((left, top, left + 120, top + 210), fill="white",
+                         outline="black", width=3)
+            for column in range(3):
+                for row in range(4):
+                    x = left + 22 + column * 32
+                    y = top + 26 + row * 44
+                    draw.rectangle((x, y, x + 18, y + 26), fill="black")
+
+        regions = detect_text_regions(image)
+
+        # Neither returned crop spans both balloons (the merged panel crop),
+        # and each balloon has one of its own.
+        self.assertFalse(
+            any(left <= 100 and right >= 330 for left, _top, right, _bottom in regions),
+            regions,
+        )
+        self.assertTrue(
+            any(left < 210 and right <= 230 for left, _top, right, _bottom in regions),
+            regions,
+        )
+        self.assertTrue(
+            any(left >= 215 and right > 300 for left, _top, right, _bottom in regions),
+            regions,
+        )
 
     def test_finds_text_groups_on_a_dense_comic_page(self):
         image = Image.new("RGB", (768, 1119), "white")

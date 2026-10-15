@@ -41,12 +41,52 @@ MIN_CONFIDENCE_TEXT_LENGTH = int(os.getenv("MAS_MIN_CONFIDENCE_LENGTH", "8"))
 SHORT_READING_LENGTH = int(os.getenv("MAS_SHORT_READING_LENGTH", "5"))
 SHORT_READING_CONFIDENCE = float(os.getenv("MAS_SHORT_READING_CONFIDENCE", "0.75"))
 
+# A reading this unsure is the model answering texture, however long it is.
+#
+# The length escape in is_confident_reading lets a long reading through at
+# almost any confidence, on the argument that a long answer means the model
+# did read something. Lettering drawn over artwork breaks that argument:
+# measured on a dialogue-heavy spread, 'そういうことで、カリスマートそういう
+# ことで、' (stylised katakana over a face) came back at 0.147 and 'そして
+# そんなことは' (lettering the model half-guessed) at 0.259 — both long enough
+# to escape. The lowest *genuine* reading measured on the same pages sits at
+# 0.381, so this floor separates the two with margin.
+MIN_ALWAYS_CONFIDENCE = float(os.getenv("MAS_MIN_ALWAYS_CONFIDENCE", "0.30"))
+
+# A short reading with no kana is usually an art fragment ('魚' 0.77, '（'
+# 0.84), but a real two-kanji line — '若様？' on the same spread — read back at
+# 0.98. Above this bar the kanji-only reading is kept; every measured art
+# fragment stayed under 0.85, with the bar at 0.95 splitting the gap.
+KANJI_READING_CONFIDENCE = float(os.getenv("MAS_KANJI_READING_CONFIDENCE", "0.95"))
+
+# One- and two-character kana readings with no punctuation are held to this.
+#
+# Reading more candidates (see MAX_TEXT_REGIONS) surfaces small ink clusters
+# in faces and hair, and the model answers those with a *confident* single
+# kana: measured over one test set, 'ッ' 0.782, 'と' 0.867, 'し' 0.893,
+# 'へ' 0.915, 'ノ' 0.918, 'クフ' 0.851, '・' 0.861 — while genuine short
+# lines either carry punctuation ('え！？' 1.00) or are read at near-certainty.
+# A bare 'ん' at 0.76 is the measured cost, and it is the right trade: those
+# fragments were invented from artwork nine times for every genuine line.
+SHORT_BARE_READING_CONFIDENCE = float(
+    os.getenv("MAS_SHORT_BARE_READING_CONFIDENCE", "0.98")
+)
+_READING_PUNCTUATION = "！？!?。、…‥"
+
 
 def _has_kana(text: str) -> bool:
     return any(
         "\u3040" <= character <= "\u30ff" or "\uff66" <= character <= "\uff9f"
         for character in text
     )
+
+
+def _has_kanji(text: str) -> bool:
+    return any("\u4e00" <= character <= "\u9fff" for character in text)
+
+
+def _kanji_count(text: str) -> int:
+    return sum(1 for character in text if "\u4e00" <= character <= "\u9fff")
 
 # Share of full-width Latin letters above which a reading is rejected.
 #
@@ -285,6 +325,9 @@ def _vertical_column_bounds(image, direction=None):
     columns_by_polarity = []
     for ink_mask in (pixels < threshold, pixels > threshold):
         ink_by_column = ink_mask.sum(axis=0)
+        # Note: raising this threshold to 5% was measured and rejected — it
+        # made the splitter fire on balloon crops whose whole-crop read is
+        # better, and the column-by-column readings failed the confidence gate.
         ink_threshold = max(2, int(scan.height * 0.01))
         active = ink_by_column >= ink_threshold
         max_gap = max(3, int(scan.height * 0.025))
@@ -369,6 +412,8 @@ def is_confident_reading(text, confidence):
     were transcribed by hand: four of four genuine readings survive, none of the
     inventions do.
     """
+    if confidence < MIN_ALWAYS_CONFIDENCE:
+        return False
     if latin_ratio(text) >= MIN_LATIN_RATIO:
         return False
     length = sum(1 for character in text if character.isalnum())
@@ -378,8 +423,22 @@ def is_confident_reading(text, confidence):
         # came back as '魚' at 0.77 and a hand as '（' at 0.84 — and no dialogue
         # line is ever just those. Sound effects and drawn-in lettering are
         # deliberately out of scope, so requiring kana costs nothing wanted.
+        # The one measured exception is a genuine all-kanji line, '若様？' at
+        # 0.98: far more sure than any art fragment ever scored, so the
+        # no-kana rule stops at that bar instead of dropping it.
         if not _has_kana(text):
-            return False
+            # Two kanji minimum: a lone kanji at high confidence is what a
+            # fragment of a larger line looks like. Measured on a Chinese
+            # page's title, single '本' and '源' came back at 0.997 and 0.998.
+            return (
+                _kanji_count(text) >= 2
+                and confidence >= KANJI_READING_CONFIDENCE
+            )
+        if length <= 2 and not any(mark in text for mark in _READING_PUNCTUATION):
+            # See SHORT_BARE_READING_CONFIDENCE: a bare 'ッ' or 'し' this
+            # short is indistinguishable from an art fragment unless the
+            # model is essentially certain.
+            return confidence >= SHORT_BARE_READING_CONFIDENCE
         return confidence >= SHORT_READING_CONFIDENCE
     if confidence >= MIN_CONFIDENCE:
         return True
@@ -400,9 +459,21 @@ def recognize_detailed(image):
     engine = get_engine()
     prepared = _prepare_image(image)
     direction = _detect_text_direction(image)
+    texts = _normalize_texts(engine(prepared))
+    confidence = _confidence(engine, prepared, "".join(texts))
+
+    # Columns are only split when the vote says vertical, and the split has to
+    # earn its keep against the plain whole-crop read. Measured on a real
+    # spread, the whole crop beat the split on every balloon whose columns
+    # were cleanly separable but one (0.936 against 0.921 on a two-column
+    # shout), and on a balloon whose *frame* strokes were picked up as two
+    # thin columns the split collapsed the reading from 0.747 to 0.015 — the
+    # frame was read and the dialogue thrown away. Comparing the two readings
+    # by confidence keeps the split when it genuinely helps without trusting
+    # it blindly: a garbled split always loses to the whole crop.
     columns = _vertical_column_bounds(image, direction)
     if columns:
-        text = "".join(
+        column_text = "".join(
             "".join(
                 _normalize_texts(
                     engine(_prepare_image(image.crop((left, 0, right, image.height))))
@@ -410,15 +481,13 @@ def recognize_detailed(image):
             )
             for left, right in columns
         )
-        texts = [text] if text else []
-    else:
-        texts = _normalize_texts(engine(prepared))
+        if column_text:
+            column_confidence = _confidence(engine, prepared, column_text)
+            if column_confidence > confidence:
+                texts = [column_text]
+                confidence = column_confidence
 
-    return {
-        "texts": texts,
-        "direction": direction,
-        "confidence": _confidence(engine, prepared, "".join(texts)),
-    }
+    return {"texts": texts, "direction": direction, "confidence": confidence}
 
 
 def recognize(image):

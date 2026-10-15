@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, ImageDraw
 
-from backend.app import app
+from backend.app import _drop_duplicate_regions, app
 from backend.ocr.bubble_detector import MAX_TEXT_REGIONS
 from backend.ocr.manga_ocr_engine import (
     _detect_text_direction,
@@ -142,30 +142,61 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(_detect_text_direction(image))
 
     @patch("backend.ocr.manga_ocr_engine.get_engine")
-    def test_recognizes_vertical_columns_right_to_left(self, engine_factory):
+    @patch("backend.ocr.manga_ocr_engine._confidence")
+    def test_recognizes_vertical_columns_right_to_left(self, confidence_mock, engine_factory):
         image = Image.new("RGB", (140, 240), "white")
         draw = ImageDraw.Draw(image)
         draw.rectangle((20, 10, 40, 230), fill="black")
         draw.rectangle((70, 10, 99, 230), fill="black")
         engine = engine_factory.return_value
         engine.side_effect = lambda crop: "right" if crop.width > 50 else "left"
+        # The split wins here, and by more than the whole-crop read.
+        confidence_mock.side_effect = (
+            lambda _engine, _image, text: 0.9 if text == "rightleft" else 0.4
+        )
 
         self.assertEqual(recognize(image), ["rightleft"])
-        self.assertEqual(engine.call_count, 2)
+        # Whole crop first, then one read per column.
+        self.assertEqual(engine.call_count, 3)
 
     @patch("backend.ocr.manga_ocr_engine.get_engine")
-    def test_splits_light_vertical_text_into_columns(self, engine_factory):
+    @patch("backend.ocr.manga_ocr_engine._confidence")
+    def test_splits_light_vertical_text_into_columns(self, confidence_mock, engine_factory):
         image = Image.new("RGB", (140, 240), (12, 12, 12))
         draw = ImageDraw.Draw(image)
         for left in (20, 70):
             for top in range(15, 220, 35):
                 draw.rectangle((left, top, left + 18, top + 18), fill=(245, 245, 245))
-        engine_factory.return_value.side_effect = ["right", "left"]
+        engine_factory.return_value.side_effect = ["whole", "right", "left"]
+        confidence_mock.side_effect = (
+            lambda _engine, _image, text: 0.9 if text == "rightleft" else 0.4
+        )
 
         result = recognize(image)
 
         self.assertEqual(result, ["rightleft"])
-        self.assertEqual(engine_factory.return_value.call_count, 2)
+        self.assertEqual(engine_factory.return_value.call_count, 3)
+
+    @patch("backend.ocr.manga_ocr_engine.get_engine")
+    @patch("backend.ocr.manga_ocr_engine._confidence")
+    def test_whole_crop_beats_a_split_that_reads_the_frame(
+        self, confidence_mock, engine_factory
+    ):
+        # Measured on a real spread: a balloon's own outline strokes came out
+        # as two thin edge columns, and reading those turned a 0.747 reading
+        # of the dialogue into '．．．い、いいんっ' at 0.015. The split has to
+        # lose against the whole crop when it reads like that.
+        image = Image.new("RGB", (140, 240), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 10, 11, 230), fill="black")
+        draw.rectangle((128, 10, 139, 230), fill="black")
+        engine = engine_factory.return_value
+        engine.side_effect = lambda crop: "それでも" if crop.width > 100 else "．．．"
+        confidence_mock.side_effect = (
+            lambda _engine, _image, text: 0.747 if text == "それでも" else 0.015
+        )
+
+        self.assertEqual(recognize(image), ["それでも"])
 
     @patch("backend.ocr.manga_ocr_engine.MangaOcr")
     @patch("backend.ocr.manga_ocr_engine.snapshot_download")
@@ -456,7 +487,7 @@ class AppTests(unittest.TestCase):
         "backend.app.recognize_detailed",
         side_effect=[
             detailed("え！？", confidence=1.0),
-            detailed("ん", confidence=0.76),
+            detailed("はい！", confidence=0.9),
             detailed("そして、", confidence=0.56),
         ],
     )
@@ -478,7 +509,7 @@ class AppTests(unittest.TestCase):
         # before the one at left=10.
         self.assertEqual(
             [item["text"] for item in response.json()["items"]],
-            ["ん", "え！？"],
+            ["はい！", "え！？"],
         )
 
     @patch(
@@ -558,6 +589,9 @@ class ConfidenceFilterTests(unittest.TestCase):
     DROPPED_SHORT = [
         ("くっ、", 0.667),
         ("ホオオオ", 0.408),
+        # A bare one-kana line is only kept near certainty — see
+        # test_drops_bare_two_character_kana_readings.
+        ("ん", 0.76),
     ]
 
     def test_keeps_every_genuine_reading_measured(self):
@@ -605,9 +639,22 @@ class ConfidenceFilterTests(unittest.TestCase):
                 self.assertFalse(is_confident_reading(text, confidence))
 
     def test_keeps_short_readings_the_model_is_sure_of(self):
-        for text, confidence in [("楓ちゃんね♥", 1.00), ("え！？", 1.00), ("ん", 0.76)]:
+        for text, confidence in [("楓ちゃんね♥", 1.00), ("え！？", 1.00)]:
             with self.subTest(text=text[:8]):
                 self.assertTrue(is_confident_reading(text, confidence))
+
+    def test_drops_bare_two_character_kana_readings(self):
+        # Measured over one test set once the detector started reading more
+        # candidates: small ink clusters in faces and hair read back as a
+        # confident single kana. Every one of these was invented from artwork;
+        # genuine short lines either carry punctuation or are read at
+        # near-certainty, so a bare reading this short now needs 0.98.
+        for text, confidence in [
+            ("ッ", 0.782), ("と", 0.867), ("し", 0.893), ("へ", 0.915),
+            ("ノ", 0.918), ("クフ", 0.851), ("・", 0.861),
+        ]:
+            with self.subTest(text=text):
+                self.assertFalse(is_confident_reading(text, confidence))
 
     def test_drops_short_readings_without_kana(self):
         # A region of artwork reads back as an isolated kanji or bare
@@ -617,10 +664,73 @@ class ConfidenceFilterTests(unittest.TestCase):
             with self.subTest(text=text[:8]):
                 self.assertFalse(is_confident_reading(text, confidence))
 
+    def test_keeps_a_very_sure_all_kanji_short_reading(self):
+        # Measured on a dialogue-dense spread: the balloon '若様？' is two
+        # kanji and a question mark, read back at 0.98 — far above every art
+        # fragment ever measured (≤0.84), so the no-kana rule stops there.
+        self.assertTrue(is_confident_reading("若様？", 0.979))
+        self.assertFalse(is_confident_reading("若様？", 0.90))
+        # A single kanji is not enough: on a Chinese page's title, lone '本'
+        # and '源' came back at 0.997 and 0.998 — sure readings of a fragment,
+        # not of a line.
+        self.assertFalse(is_confident_reading("本", 0.997))
+        self.assertFalse(is_confident_reading("源", 0.998))
+
+    def test_drops_very_unsure_readings_however_long(self):
+        # Lettering over artwork, measured on the same spread: both readings
+        # are long enough to escape the length rule at any confidence.
+        for text, confidence in [
+            ("そういうことで、カリスマートそういうことで、", 0.147),
+            ("そしてそんなことは", 0.259),
+        ]:
+            with self.subTest(text=text[:12]):
+                self.assertFalse(is_confident_reading(text, confidence))
+        # The lowest genuine reading measured anywhere still clears the floor.
+        self.assertTrue(
+            is_confident_reading("そんなことで、ミラＣＯＯＬ・ペコＴＵＲＮ！", 0.381)
+        )
+
     def test_documents_what_the_short_rule_costs(self):
         for text, confidence in self.DROPPED_SHORT:
             with self.subTest(text=text[:8]):
                 self.assertFalse(is_confident_reading(text, confidence))
+
+
+class DuplicateRegionTests(unittest.TestCase):
+    """The overlap pass after recognition, on measured readings."""
+
+    @staticmethod
+    def _item(text, confidence, box):
+        left, top, right, bottom = box
+        return {
+            "text": text,
+            "confidence": confidence,
+            "direction": "vertical",
+            "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
+        }
+
+    def test_prefers_the_longer_reading_when_two_overlaps_are_nearly_as_sure(self):
+        # Measured on a spread: one balloon came back twice — the fuller crop
+        # at 0.494 and a tight crop on its tail at 0.499. Confidence alone
+        # kept the tail fragment.
+        fuller = self._item(
+            "うらやましくはねェけど、な．．．", 0.494, (1319, 710, 1404, 803)
+        )
+        tighter = self._item("うちにまして、", 0.499, (1377, 710, 1418, 873))
+
+        kept = _drop_duplicate_regions([tighter, fuller])
+
+        self.assertEqual([item["text"] for item in kept], [fuller["text"]])
+
+    def test_a_sure_reading_still_beats_a_longer_unsure_one(self):
+        # Measured on the same spread: the real line inside a block of
+        # artwork and the artwork's own invented reading.
+        sure = self._item("黙れコラァ！！！", 0.987, (416, 716, 535, 877))
+        unsure = self._item("そしてそんなことは", 0.259, (478, 754, 625, 1044))
+
+        kept = _drop_duplicate_regions([unsure, sure])
+
+        self.assertEqual([item["text"] for item in kept], [sure["text"]])
 
 
 if __name__ == "__main__":

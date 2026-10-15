@@ -324,6 +324,21 @@ def _overlap_over_min(first: dict, second: dict) -> float:
 SAME_TEXT_OVERLAP = 0.3
 
 
+def _dedup_weight(item: dict) -> float:
+    """How strongly a reading competes for its piece of text.
+
+    Confidence decides, except between readings that are nearly as sure as
+    each other: there the fuller crop is the better one. Measured on a spread,
+    one balloon came back twice — 'うちにまして、' at 0.499 from a crop tight
+    on the tail, and 'うらやましくはねェけど、な．．．' at 0.494 from the crop
+    that held the whole balloon — and confidence alone kept the wrong one. A
+    small bonus per character tilts those pairs to the longer reading without
+    letting a long invention (0.3x) beat a sure line (0.9x).
+    """
+    length = sum(1 for character in item["text"] if character.isalnum())
+    return item["confidence"] + min(length, 20) * 0.01
+
+
 def _drop_duplicate_regions(items: list[dict]) -> list[dict]:
     """Keep one reading per piece of text — the one the model was surest of.
 
@@ -335,7 +350,7 @@ def _drop_duplicate_regions(items: list[dict]) -> list[dict]:
     reading fixes that without touching the threshold that protects real text.
     """
     kept: list[dict] = []
-    for item in sorted(items, key=lambda entry: entry["confidence"], reverse=True):
+    for item in sorted(items, key=_dedup_weight, reverse=True):
         if any(
             _overlap_over_min(item["bbox"], other["bbox"]) > SAME_TEXT_OVERLAP
             for other in kept

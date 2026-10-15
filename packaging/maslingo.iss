@@ -27,7 +27,7 @@
 
 #define AppName "MasLingo"
 #ifndef AppVersion
-  #define AppVersion "1.1.6"
+  #define AppVersion "1.1.7"
 #endif
 #ifndef StageDir
   #define StageDir "..\build\stage"

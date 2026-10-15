@@ -32,7 +32,7 @@ param(
     [switch]$SkipRuntime,
     [switch]$SkipVerify,
     [string]$PythonVersion = "3.12.10",
-    [string]$Version = "1.1.6"
+    [string]$Version = "1.1.7"
 )
 
 $ErrorActionPreference = "Stop"
