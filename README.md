@@ -4,20 +4,11 @@
 
 由于原理决定，插件并不会像其它插件一样需要平台支持。
 
-**开箱即用**：识别由官方托管的 MangaOCR 后端完成，普通用户不需要安装 Python、不需要下载模型，装完扩展就能用。想自己掌控数据、或者想离线使用的用户，可以**像作者一样把后端跑在自己电脑上**（见下方「本机部署」完整步骤）——扩展直连本机，截图不离开这台电脑。
+**⚠️服务器未上线**：识别由官方托管的 MangaOCR 后端完成，原则上普通用户不需要安装 Python、不需要下载模型，装完扩展就能用。但是由于服务器未上线，只能自行部署于本地。
 
 ## 安装与运行
 
-### 普通用户（推荐）
-
-1. 安装发布版扩展：Chrome 应用商店，或打包好的 `.crx`。
-2. 直接使用。识别请求会发往官方托管后端，不需要 API Key、不需要 Python 环境。翻译默认关闭，因此默认流程不会把识别文本发给任何翻译服务。
-
-Windows 用户也可以使用桌面安装包（自带后端与 OCR 模型，装完即用、无需任何环境，见 [packaging/README.md](packaging/README.md)）。
-
-## 本机部署（完整部署文档）
-
-这是作者本人的部署方式：**后端跑在自己的电脑上，扩展直接连本机**——不需要服务器、不花钱、截图不离开这台电脑。Windows / macOS / Linux 都适用，下面以 Windows 为例。
+### 本机部署
 
 ```
 Edge / Chrome 扩展（加载 extension 文件夹）
@@ -26,17 +17,16 @@ Edge / Chrome 扩展（加载 extension 文件夹）
 你电脑上的 FastAPI + MangaOCR（start-backend.ps1）
 ```
 
-后端只监听 `127.0.0.1`，除你之外谁都访问不到。
 
-### 1. 安装 Python（3.11 或更高）
+### 1. 安装 Python 3.11.x / 3.12.x
 
-到 <https://www.python.org/downloads/> 下载安装，**安装时勾选 “Add python.exe to PATH”**。装完打开 PowerShell 确认：
+访问 <https://www.python.org/downloads/> 下载安装，**安装时勾选 “Add python.exe to PATH”**。装完打开 PowerShell 确认：
 
 ```powershell
 python --version
 ```
 
-显示 3.11 或更高即可。
+显示 3.11.x 或 3.12.x 即可。
 
 ### 2. 下载本项目
 
@@ -44,9 +34,9 @@ python --version
 git clone https://github.com/YaekaCutie/MasLingo.git
 ```
 
-没装 Git 的话，在 GitHub 页面点 **Code → Download ZIP**，解压到任意目录（路径带中文或空格都没关系）。
+若未安装 Git，在 GitHub 页面点 **Code → Download ZIP**，解压到本地目录。
 
-### 3. 创建环境并安装依赖（一次性）
+### 3. 创建环境并安装依赖
 
 在项目目录里执行：
 
@@ -89,9 +79,9 @@ Edge 地址栏输入 `edge://extensions`（Chrome 为 `chrome://extensions`）�
 
 ### 8. 使用
 
-打开任意漫画页 → 点 MasLingo 图标 → 框选翻译某个区域，或点「自动识别」整页。翻译默认关闭（先只出日文原文）；要出中文，在「识别设置」里选择翻译来源并保存。
+打开任意漫画页 → 点 MasLingo 图标 → 框选翻译某个区域，或点「自动识别」整页。翻译默认关闭（先只出日文原文）；要开启翻译模式，在「识别设置」里选择翻译来源并保存。
 
-### 9. 以后怎么更新
+### 9. 更新方式
 
 - **后端**：`git pull` 后重启——`Ctrl-C` 停掉，再运行 `.\start-backend.ps1`。
 - **扩展**：到 `edge://extensions` 点 MasLingo 下的「重新加载」，然后刷新漫画页。
@@ -107,16 +97,6 @@ Edge 地址栏输入 `edge://extensions`（Chrome 为 `chrome://extensions`）�
 - **首次识别很慢**：模型还在加载或下载，属正常；之后会快很多。
 - **模型下载中断**：重新运行 `.\start-backend.ps1` 会续传，已下载的部分保留在 `~/.cache/huggingface`。
 - **数据去哪了**：本机部署模式下，截图只经 `127.0.0.1`，不离开这台电脑；只有你主动开启翻译后，识别出的文字才会发给所选翻译服务。
-
-## 进阶：部署到公网服务器（分享给别人用）
-
-上面的部署只服务你一个人。如果你想让别人装完扩展就直接能用（或者要上架商店），需要把后端部署到一台公网服务器，并把地址打包进扩展——完整步骤、风险与运维见专题文档 [deploy/README.md](deploy/README.md)。
-
-| 路线 | 信用卡 | 说明 |
-| --- | --- | --- |
-| Oracle Cloud Always Free | 必须 | 长期在线；个人/小圈子分享够用，见 [deploy/README.md](deploy/README.md) |
-| 自己电脑 + Tailscale Funnel | 不需要 | 电脑开着就行，见 [deploy/alt-self-host-tunnel/README.md](deploy/alt-self-host-tunnel/README.md) |
-| 任意云服务器 / VPS | 按厂商 | 同一套 `deploy/docker-compose.yml`，改域名即可 |
 
 ## 数据流与限制
 
