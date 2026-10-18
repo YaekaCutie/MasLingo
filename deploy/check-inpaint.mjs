@@ -1,9 +1,10 @@
 // Content-script rendering checks.
 //
 // Three things are verified here:
-//  1. the cover is flat white exactly over the recognised box, and nothing
-//     outside that box is touched — the user asked for a plain white block
-//     rather than a reconstructed background, so that is what gets asserted;
+//  1. the cover erases only the original lettering: with the region's pixels it
+//     repaints the strokes with the local paper colour and touches nothing
+//     outside the recognised box; without pixels it falls back to the old flat
+//     white block, which is asserted too;
 //  2. the writing direction comes from the recogniser, not from the box's shape;
 //  3. the translation never appears in a window of its own — it is painted over
 //     the original text, and the only chrome the script adds is a small
@@ -73,7 +74,7 @@ try {
   await new Promise((r) => setTimeout(r, 400));
 
   // --- the cover ------------------------------------------------------------
-  console.log("纯白覆盖");
+  console.log("无像素时的退路：纯白覆盖");
   const cover = await page.evaluate(() => {
     const WIDTH = 240;
     const HEIGHT = 140;
@@ -148,6 +149,165 @@ try {
   check("框外没有改动原图", cover.opaqueBeyond === 0,
     `${cover.opaqueBeyond} 个像素越界，范围 ${JSON.stringify(cover.beyondBounds)}`);
 
+  // --- the cover follows the artwork ----------------------------------------
+  console.log("\n按气泡底色只擦文字");
+  const masked = await page.evaluate(async () => {
+    const WIDTH = 240;
+    const HEIGHT = 140;
+    const CORE = { left: 24, top: 16, right: 216, bottom: 124 };
+    // A stand-in bubble crop: warm paper, dark glyph strokes inside the text
+    // box, and a hard black line outside it (the balloon frame / artwork).
+    const source = document.createElement("canvas");
+    source.width = WIDTH;
+    source.height = HEIGHT;
+    const sourceContext = source.getContext("2d");
+    sourceContext.fillStyle = "#f2f0ea";
+    sourceContext.fillRect(0, 0, WIDTH, HEIGHT);
+    sourceContext.fillStyle = "#1c1c1c";
+    for (let index = 0; index < 6; index += 1) {
+      sourceContext.fillRect(36 + index * 30, 40, 16, 60);
+    }
+    sourceContext.fillStyle = "#000000";
+    sourceContext.fillRect(0, 0, WIDTH, 8);
+
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = source.toDataURL("image/png");
+    });
+    const surface = document.createElement("canvas");
+    surface.width = WIDTH;
+    surface.height = HEIGHT;
+    const surfaceContext = surface.getContext("2d", { willReadFrequently: true });
+    surfaceContext.drawImage(image, 0, 0, WIDTH, HEIGHT);
+    const patchPixels = surfaceContext.getImageData(0, 0, WIDTH, HEIGHT);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const entry = {
+      canvas,
+      context,
+      patchPixels,
+      patch: {
+        core: {
+          left: CORE.left / WIDTH,
+          top: CORE.top / HEIGHT,
+          width: (CORE.right - CORE.left) / WIDTH,
+          height: (CORE.bottom - CORE.top) / HEIGHT,
+        },
+        rect: { width: WIDTH, height: HEIGHT },
+      },
+      direction: "horizontal",
+    };
+    // Empty text: paint the cover only, so the measurement is about the cover.
+    MAS_render.drawTranslatedPatch(entry, "");
+
+    const pixels = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+    let darkInside = 0;
+    let paperInside = 0;
+    let opaqueOutside = 0;
+    let paperSample = null;
+    for (let y = 0; y < HEIGHT; y += 1) {
+      for (let x = 0; x < WIDTH; x += 1) {
+        const offset = (y * WIDTH + x) * 4;
+        const inside = x >= CORE.left && x < CORE.right && y >= CORE.top && y < CORE.bottom;
+        const [r, g, b, a] = [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+        if (!inside) {
+          if (a !== 0) opaqueOutside += 1;
+          continue;
+        }
+        if (a === 0) continue;
+        if (r < 80 && g < 80 && b < 80) darkInside += 1;
+        if (r > 200 && g > 200 && b > 200) {
+          paperInside += 1;
+          if (!paperSample) paperSample = [r, g, b];
+        }
+      }
+    }
+    return { darkInside, paperInside, opaqueOutside, paperSample };
+  });
+
+  check("原文笔画被擦掉（框内没有残留深色）", masked.darkInside === 0,
+    `${masked.darkInside} 个深色像素`);
+  check("覆盖用的是本页纸色，而不是硬编码纯白", masked.paperSample
+    && masked.paperSample[0] <= 248 && masked.paperSample[1] <= 246 && masked.paperSample[2] <= 240,
+    JSON.stringify(masked.paperSample));
+  check("框外（气泡描边/画稿）一个像素都没动", masked.opaqueOutside === 0,
+    `${masked.opaqueOutside} 个像素被覆盖`);
+
+  const darkCover = await page.evaluate(async () => {
+    const WIDTH = 160;
+    const HEIGHT = 120;
+    const CORE = { left: 12, top: 10, right: 148, bottom: 110 };
+    // White lettering on black artwork — the case a white rectangle ruins.
+    const source = document.createElement("canvas");
+    source.width = WIDTH;
+    source.height = HEIGHT;
+    const sourceContext = source.getContext("2d");
+    sourceContext.fillStyle = "#101010";
+    sourceContext.fillRect(0, 0, WIDTH, HEIGHT);
+    sourceContext.fillStyle = "#ffffff";
+    for (let index = 0; index < 4; index += 1) {
+      sourceContext.fillRect(24 + index * 30, 30, 18, 60);
+    }
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = source.toDataURL("image/png");
+    });
+    const surface = document.createElement("canvas");
+    surface.width = WIDTH;
+    surface.height = HEIGHT;
+    const surfaceContext = surface.getContext("2d", { willReadFrequently: true });
+    surfaceContext.drawImage(image, 0, 0, WIDTH, HEIGHT);
+    const patchPixels = surfaceContext.getImageData(0, 0, WIDTH, HEIGHT);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    MAS_render.drawTranslatedPatch({
+      canvas,
+      context,
+      patchPixels,
+      patch: {
+        core: {
+          left: CORE.left / WIDTH,
+          top: CORE.top / HEIGHT,
+          width: (CORE.right - CORE.left) / WIDTH,
+          height: (CORE.bottom - CORE.top) / HEIGHT,
+        },
+        rect: { width: WIDTH, height: HEIGHT },
+      },
+      direction: "horizontal",
+    }, "测试");
+
+    const pixels = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+    let whiteLeft = 0;
+    let darkCover = 0;
+    let lightText = 0;
+    for (let y = CORE.top; y < CORE.bottom; y += 1) {
+      for (let x = CORE.left; x < CORE.right; x += 1) {
+        const offset = (y * WIDTH + x) * 4;
+        const [r, g, b, a] = [pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3]];
+        if (a === 0) continue;
+        if (r > 240 && g > 240 && b > 240) whiteLeft += 1;
+        if (r < 40 && g < 40 && b < 40) darkCover += 1;
+        if (r > 220 && g > 220 && b > 220) lightText += 1;
+      }
+    }
+    return { whiteLeft, darkCover, lightText };
+  });
+
+  check("黑底白字的原文被黑底覆盖（不再白块压画）",
+    darkCover.whiteLeft <= 40 && darkCover.darkCover > 2000,
+    JSON.stringify(darkCover));
+  check("黑底上的译文改用浅色墨水", darkCover.lightText > 40, `${darkCover.lightText} 个浅色像素`);
+
   // --- direction ------------------------------------------------------------
   console.log("\n横竖判定（后端优先）");
   const direction = await page.evaluate(() => ({
@@ -217,4 +377,4 @@ if (failures.length) {
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
-console.log("\n覆盖方式合格：文字区域是纯白，框外像素零改动");
+console.log("\n覆盖方式合格：只擦原文笔画、按气泡底色填充，框外像素零改动");

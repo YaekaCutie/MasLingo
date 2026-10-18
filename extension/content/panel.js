@@ -872,14 +872,6 @@ globalThis.MAS_panel = (() => {
                       <span class="maslingo-strength-thumb" aria-hidden="true"></span>
                     </div>
                   </div>
-                  <div class="maslingo-row maslingo-row-tight maslingo-enhance">
-                    <span class="maslingo-label" id="maslingo-enhance-label"
-                          title="把整页截图交给 AI，让模型自己识别文字位置并直接翻译（需要所选模型支持看图）">增强识别</span>
-                    <label class="maslingo-switch" aria-labelledby="maslingo-enhance-label">
-                      <input id="maslingo-enhance" type="checkbox" aria-labelledby="maslingo-enhance-label">
-                      <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
-                    </label>
-                  </div>
                 </div>
             </div></div>
 
@@ -976,11 +968,10 @@ globalThis.MAS_panel = (() => {
   let modelOverride = "";
   let modelOverrideOwner = "";
   let keySaved = false;
-  let enhancedSaved = false;
   // — and what the page currently shows: the draft while the AI page is open.
   let strengthValue = 0;
   const draft = {
-    strength: 0, model: "", modelOwner: "", key: "", enhanced: false,
+    strength: 0, model: "", modelOwner: "", key: "",
   };
 
   function selectedProvider() {
@@ -1019,7 +1010,6 @@ globalThis.MAS_panel = (() => {
     const provider = selectedProvider();
     if (!isAiProvider(provider)) return;
     draft.strength = storedStrength;
-    draft.enhanced = enhancedSaved;
     draft.model = globalThis.MAS_providers?.resolveModel?.(provider, {
       translationModel: modelOverride,
       translationModelProvider: modelOverrideOwner,
@@ -1028,8 +1018,6 @@ globalThis.MAS_panel = (() => {
     draft.key = "";
     const input = root.querySelector("#maslingo-ai-key");
     if (input) input.value = "";
-    const enhanced = root.querySelector("#maslingo-enhance");
-    if (enhanced) enhanced.checked = draft.enhanced;
     renderStrength(draft.strength);
     renderModelBox();
     renderKeyPlaceholder();
@@ -1047,14 +1035,12 @@ globalThis.MAS_panel = (() => {
         translationStrength: draft.strength,
         translationModel: draft.model,
         translationModelProvider: provider.id,
-        aiEnhancedRecognition: draft.enhanced,
       };
       if (draft.key) values.translationApiKey = draft.key;
       writeStore(values);
       storedStrength = draft.strength;
       modelOverride = draft.model;
       modelOverrideOwner = provider.id;
-      enhancedSaved = draft.enhanced;
       if (draft.key) keySaved = true;
       setDot(root.querySelector("#maslingo-dot-translation"), STATE.UNKNOWN, "翻译未检测");
     }
@@ -1399,14 +1385,13 @@ globalThis.MAS_panel = (() => {
     const cfg = await readStore([
       "autoTranslate", "translationProvider", "panelPosition", "panelCollapsed",
       "translationModel", "translationModelProvider", "translationApiKey",
-      "translationStrength", "aiEnhancedRecognition",
+      "translationStrength",
     ]);
     root.querySelector("#maslingo-auto").checked = Boolean(cfg.autoTranslate);
     if (cfg.translationProvider) root.querySelector("#maslingo-provider").value = cfg.translationProvider;
     modelOverride = cfg.translationModel || "";
     modelOverrideOwner = cfg.translationModelProvider || "";
     keySaved = Boolean(cfg.translationApiKey);
-    enhancedSaved = Boolean(cfg.aiEnhancedRecognition);
     storedStrength = globalThis.MAS_providers?.normalizeStrength?.(cfg.translationStrength) ?? 0;
     renderStrength(storedStrength);
     renderSourceHint();
@@ -1468,12 +1453,6 @@ globalThis.MAS_panel = (() => {
     mountKeyInput();
     mountStrengthSlider();
     mountModelBox();
-    const enhanceBox = root.querySelector("#maslingo-enhance");
-    if (enhanceBox) {
-      enhanceBox.addEventListener("change", (event) => {
-        draft.enhanced = Boolean(event.target.checked);
-      });
-    }
     root.querySelector("#maslingo-select").addEventListener("click", async () => {
       // Via the service worker: runtime.sendMessage cannot reach content scripts,
       // so sending START_SELECT directly from here went nowhere at all.
@@ -1546,15 +1525,6 @@ globalThis.MAS_panel = (() => {
         if (changes.translationApiKey) {
           keySaved = Boolean(changes.translationApiKey.newValue);
           renderKeyPlaceholder();
-        }
-        if (changes.aiEnhancedRecognition) {
-          enhancedSaved = Boolean(changes.aiEnhancedRecognition.newValue);
-          // While the AI page is open its draft owns the switch, like the
-          // slider: 取消 restores to what storage says.
-          if (!aiPageOpen()) {
-            const box = root.querySelector("#maslingo-enhance");
-            if (box) box.checked = enhancedSaved;
-          }
         }
       });
     } catch {

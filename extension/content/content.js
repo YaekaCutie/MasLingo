@@ -321,23 +321,6 @@ function showRecognitionResult(message, pageMode) {
     showSourceText = message.result.debug_mode !== false;
     renderResults(message.rect, message.result, pageMode);
     recognizedResultReady = true;
-    // Enhanced recognition answers with text boxes *and* translations in one
-    // request (the whole page went to the AI), so there is nothing left to
-    // translate — paint the returned translations directly. If even one item
-    // came back without a translation, fall through to the ordinary path.
-    const pretranslated = (message.result.items || []).filter(item => item.text?.trim());
-    if (message.result.pretranslated && pretranslated.length &&
-        pretranslated.every(item => item.translated?.trim())) {
-      showTranslationResult({
-        requestId: message.requestId,
-        mode: "openai-compatible",
-        result: {
-          ok: true,
-          items: pretranslated.map(item => ({ text: item.text, translated: item.translated })),
-        },
-      });
-      return;
-    }
     const texts = (message.result.items || []).map(item => item.text).filter(Boolean);
     if (texts.length && activePort) {
       // Longer than the service worker's own 120s provider deadline, so a slow
@@ -505,23 +488,146 @@ function resolveTextDirection(direction, coreWidth, coreHeight) {
   return coreHeight > coreWidth * 1.35;
 }
 
+/** The old cover, kept for callers that carry geometry but no pixels. */
+function paintFlatCover(context, left, top, right, bottom) {
+  context.fillStyle = "#ffffff";
+  context.fillRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+  return { luminance: 255 };
+}
+
+/**
+ * Erase only the original lettering inside the recognised box.
+ *
+ * The patch's most common colour is the local background — balloon paper, or
+ * the black behind white lettering — and pixels that differ from it are the
+ * strokes. Those get repainted with the background colour inside the core box,
+ * nothing else is touched, and the result reads as the translation sitting
+ * inside the bubble rather than a white card laid over the drawing. Returns
+ * the background luminance so the caller can pick a readable ink colour.
+ */
+function paintLetteringCover(entry, left, top, right, bottom) {
+  const {context, patchPixels} = entry;
+  const {data, width, height} = patchPixels;
+  // Work on a copy: the cached pixels are the *original* artwork and a redraw
+  // (font-size change, new translation) must start from them again.
+  const pixels = new Uint8ClampedArray(data);
+  const luminance = (offset) =>
+    0.299 * pixels[offset] + 0.587 * pixels[offset + 1] + 0.114 * pixels[offset + 2];
+
+  const reds = [];
+  const greens = [];
+  const blues = [];
+  const luminanceSamples = [];
+  for (let y = 0; y < height; y += 2) {
+    for (let x = 0; x < width; x += 2) {
+      const offset = (y * width + x) * 4;
+      reds.push(pixels[offset]);
+      greens.push(pixels[offset + 1]);
+      blues.push(pixels[offset + 2]);
+      luminanceSamples.push(luminance(offset));
+    }
+  }
+  const median = (values) => {
+    if (!values.length) return 255;
+    values.sort((first, second) => first - second);
+    return values[Math.floor(values.length / 2)];
+  };
+  const background = [median(reds), median(greens), median(blues)];
+  const backgroundLuminance = median(luminanceSamples);
+
+  const threshold = 45;
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (Math.abs(luminance(offset) - backgroundLuminance) > threshold) {
+        mask[y * width + x] = 1;
+      }
+    }
+  }
+  // One pixel of growth takes the anti-aliased edge with the stroke.
+  const grown = new Uint8Array(mask);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      if (!mask[y * width + x]) continue;
+      grown[(y - 1) * width + x] = 1;
+      grown[(y + 1) * width + x] = 1;
+      grown[y * width + x - 1] = 1;
+      grown[y * width + x + 1] = 1;
+    }
+  }
+
+  const firstX = Math.max(0, left);
+  const firstY = Math.max(0, top);
+  const lastX = Math.min(width, right);
+  const lastY = Math.min(height, bottom);
+  // Only the erased strokes are written; everything else stays transparent so
+  // the page's own pixels show through — the cover must never replace the
+  // artwork with a copy of itself.
+  const output = context.createImageData(width, height);
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      const index = y * width + x;
+      if (!grown[index]) continue;
+      const offset = index * 4;
+      output.data[offset] = background[0];
+      output.data[offset + 1] = background[1];
+      output.data[offset + 2] = background[2];
+      output.data[offset + 3] = 255;
+    }
+  }
+  context.putImageData(output, 0, 0);
+  return { luminance: backgroundLuminance };
+}
+
+/**
+ * Decode a region's pixels once, so painting can follow the artwork.
+ *
+ * The work surface is the overlay canvas' own resolution; the screenshot and
+ * the canvas are both in device pixels, so the crop maps 1:1.
+ */
+function preparePatchPixels(entry, dataUrl) {
+  const image = new Image();
+  image.onload = () => {
+    try {
+      const surface = document.createElement("canvas");
+      surface.width = entry.canvas.width;
+      surface.height = entry.canvas.height;
+      const context = surface.getContext("2d", {willReadFrequently: true});
+      context.drawImage(image, 0, 0, surface.width, surface.height);
+      entry.patchPixels = context.getImageData(0, 0, surface.width, surface.height);
+      // If something was already painted before the pixels arrived, repaint so
+      // the first frame does not keep the flat white block.
+      if (entry.lastText) drawTranslatedPatch(entry, entry.lastText);
+    } catch {
+      /* keep the flat-white fallback */
+    }
+  };
+  image.src = dataUrl;
+}
+
 function drawTranslatedPatch(entry, text) {
   const {canvas, context, image, patch} = entry;
   const left = Math.max(0, Math.floor(patch.core.left * canvas.width));
   const top = Math.max(0, Math.floor(patch.core.top * canvas.height));
   const right = Math.min(canvas.width, Math.ceil((patch.core.left + patch.core.width) * canvas.width));
   const bottom = Math.min(canvas.height, Math.ceil((patch.core.top + patch.core.height) * canvas.height));
+  entry.lastText = text;
 
-  // Flat white over the original lettering, then the translation on top.
+  // Erase the original lettering, not the artwork.
   //
-  // This replaced a background reconstruction pass that sampled the surrounding
-  // paper and diffused it inward. It was cleverer and worse: any mismatch showed
-  // as a visible patch, and on a balloon — which is plain white anyway — there
-  // was nothing to reconstruct. Nothing is drawn outside the text box, so the
-  // artwork around it is untouched either way.
+  // The cover used to be a white rectangle over the whole recognised box, which
+  // on a round balloon covered its frame and, on white lettering drawn over
+  // black art, laid a white slab across the drawing. The patch now carries the
+  // screenshot's own pixels: the most common colour inside it is the local
+  // background, and only pixels that differ from it — the strokes — are
+  // repainted with that colour. The balloon outline and everything outside it
+  // keep their pixels. Without pixels (an older worker, or a geometry-only
+  // caller) the flat white block is still the fallback.
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#ffffff";
-  context.fillRect(left, top, Math.max(0, right - left), Math.max(0, bottom - top));
+  const cover = entry.patchPixels
+    ? paintLetteringCover(entry, left, top, right, bottom)
+    : paintFlatCover(context, left, top, right, bottom);
   canvas.style.visibility = "visible";
 
   const cssScale = canvas.width / patch.rect.width;
@@ -543,11 +649,11 @@ function drawTranslatedPatch(entry, text) {
   context.lineJoin = "round";
   context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
 
-  // Dark text, because the box behind it was just filled white. The outline is
-  // a light halo, which is what keeps glyphs legible where the box edge cuts
-  // across artwork.
-  context.fillStyle = "#171512";
-  context.strokeStyle = "rgba(255,253,245,.76)";
+  // The text follows the cover: dark ink on paper, light ink where the
+  // original lettering sat on a dark background, with the opposite halo.
+  const lightCover = cover.luminance >= 140;
+  context.fillStyle = lightCover ? "#171512" : "#f7f5ef";
+  context.strokeStyle = lightCover ? "rgba(255,253,245,.76)" : "rgba(12,12,12,.72)";
   context.lineWidth = Math.max(1, fontSize * 0.09);
 
   // Clipped to the box. Glyph metrics can push the last column or line slightly
@@ -663,9 +769,10 @@ function renderResults(rect, result, pageMode) {
       sourceText: item.text?.trim() || "",
       direction: item.direction || null
     };
-    // Nothing to load any more: the cover is flat white, so painting needs the
-    // geometry and nothing else. Waiting on an image decode here used to delay
-    // every result by a frame trip for pixels that are no longer used.
+    // The region's pixels let the cover erase only the lettering. Decode them
+    // in the background: if a translation lands first, the flat-white fallback
+    // paints immediately and is replaced as soon as the decode completes.
+    if (patch?.image) preparePatchPixels(entry, patch.image);
     if (patch) {
       if (entry.translatedText) drawTranslatedPatch(entry, entry.translatedText);
     } else {

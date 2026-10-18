@@ -156,7 +156,6 @@ try {
     const strengthFold = panel.querySelector(".maslingo-strength-fold");
     const body = panel.querySelector(".maslingo-panel-body");
     const strength = document.getElementById("maslingo-strength");
-    const enhanceRow = panel.querySelector(".maslingo-enhance");
     const ruleAi = document.getElementById("maslingo-rule-ai");
     const track = panel.querySelector(".maslingo-strength-track");
     const fill = panel.querySelector(".maslingo-strength-fill");
@@ -218,10 +217,6 @@ try {
       configureLabel: document.getElementById("maslingo-connect").textContent.trim(),
       level: document.getElementById("maslingo-strength-name").textContent.trim(),
       strengthHint: document.getElementById("maslingo-strength-hint")?.textContent.trim() || "",
-      enhanceHeight: enhanceRow
-        ? Math.round(enhanceRow.getBoundingClientRect().height * 10) / 10 : -1,
-      enhanceVisibility: enhanceRow ? getComputedStyle(enhanceRow).visibility : "",
-      enhancedChecked: document.getElementById("maslingo-enhance")?.checked ?? null,
       model: document.getElementById("maslingo-strength-model").dataset.model,
       modelLabel: document.getElementById("maslingo-strength-model-name").textContent.trim(),
       modelBoxOpen: document.getElementById("maslingo-modelbox").hidden === false,
@@ -238,12 +233,6 @@ try {
       keyPlaceholder: document.getElementById("maslingo-ai-key").placeholder,
       keyValue: document.getElementById("maslingo-ai-key").value,
       lineText: document.getElementById("maslingo-line-text").textContent.trim(),
-      // Distance between 增强识别 and the API Key block: the gap the brief
-      // asked to tighten so everything below moves up.
-      enhanceGap: enhanceRow && keyFold
-        ? Math.round((keyFold.getBoundingClientRect().top
-          - enhanceRow.getBoundingClientRect().bottom) * 10) / 10
-        : -1,
     };
   });
 
@@ -256,9 +245,6 @@ try {
     before.strengthHeight < 2 && before.strengthVisibility === "hidden"
       && before.keyHeight < 2 && before.keyVisibility === "hidden",
     JSON.stringify({ strength: before.strengthHeight, key: before.keyHeight }));
-  check("主页面：增强识别开关随强度模块一起收起",
-    before.enhanceVisibility === "hidden",
-    JSON.stringify({ v: before.enhanceVisibility }));
   check("主页面：页脚是设置/版本，不是保存/取消",
     before.settingsVisible === true && before.cancelVisible === false && before.saveVisible === false,
     JSON.stringify({ settings: before.settingsVisible, cancel: before.cancelVisible }));
@@ -308,7 +294,6 @@ try {
     JSON.stringify({ before: before.panelHeight, after: ai.panelHeight }));
   check("AI 页内容没有被固定高度裁掉", ai.bodyClipped === false);
   console.log(`      AI 页：底部留白 ${ai.airBelow}px`);
-  console.log(`      增强识别↔API Key 间距：${ai.enhanceGap}px`);
   check("两个页面都没有大块空洞（底部留白 ≤ 24px）",
     before.airBelow <= 24 && ai.airBelow <= 24,
     JSON.stringify({ normal: before.airBelow, ai: ai.airBelow }));
@@ -319,13 +304,6 @@ try {
   check("模型行显示的是具体型号名", ai.modelLabel === "DeepSeek V4.1 Flash", ai.modelLabel);
   check("档位名字旁边标出该档含义",
     ai.strengthHint === "不联网轻度润色", ai.strengthHint);
-  check("AI 页出现增强识别开关（默认关）",
-    ai.enhanceHeight > 15 && ai.enhanceVisibility === "visible"
-      && ai.enhancedChecked === false,
-    JSON.stringify({ h: ai.enhanceHeight, v: ai.enhanceVisibility, on: ai.enhancedChecked }));
-  check("增强识别与 API Key 的间距收拢（≤ 18px）",
-    ai.enhanceGap > 0 && ai.enhanceGap <= 18,
-    JSON.stringify({ gap: ai.enhanceGap }));
 
   console.log("\n具体型号选择框");
   await page.click("#maslingo-strength-model");
@@ -397,16 +375,14 @@ try {
   await page.click("#maslingo-ai-key");
   await page.keyboard.type("sk-draft-key");
   await page.keyboard.press("Tab");
-  await page.click(".maslingo-enhance .maslingo-switch");
   await new Promise((r) => setTimeout(r, 250));
   const drafted = await readStorage([
-    "translationStrength", "translationModel", "translationApiKey", "aiEnhancedRecognition",
+    "translationStrength", "translationModel", "translationApiKey",
   ]);
-  check("草稿期间不写存储（强度/型号/密钥/增强识别都未落盘）",
+  check("草稿期间不写存储（强度/型号/密钥都未落盘）",
     drafted.translationStrength === undefined
       && drafted.translationModel === undefined
-      && drafted.translationApiKey === undefined
-      && drafted.aiEnhancedRecognition === undefined,
+      && drafted.translationApiKey === undefined,
     JSON.stringify(drafted));
   const draftedState = await sample();
   check("密钥留在输入框里等待保存（未回显为已保存）",
@@ -483,7 +459,7 @@ try {
   await new Promise((r) => setTimeout(r, 700));
   const cancelled = await sample();
   const afterCancel = await readStorage([
-    "translationStrength", "translationModel", "translationApiKey", "aiEnhancedRecognition",
+    "translationStrength", "translationModel", "translationApiKey",
   ]);
   check("取消后回到主页面",
     cancelled.aiPage === false && cancelled.basicHeight > 40 && cancelled.providerHeight > 40,
@@ -492,7 +468,6 @@ try {
     cancelled.settingsVisible === true && cancelled.cancelVisible === false && cancelled.saveVisible === false);
   check("取消不写存储", afterCancel.translationStrength === undefined
     && afterCancel.translationModel === undefined && afterCancel.translationApiKey === undefined
-    && afterCancel.aiEnhancedRecognition === undefined
     && afterCancel.translationSearch === undefined
     && afterCancel.translationContext === undefined,
     JSON.stringify(afterCancel));
@@ -507,13 +482,10 @@ try {
   await new Promise((r) => setTimeout(r, 700));
   const reopened = await sample();
   check("点「配置」回到 AI 页", reopened.aiPage === true);
-  check("草稿重置为存储值（Low / deepseek-flash / 输入框空 / 增强识别关）",
+  check("草稿重置为存储值（Low / deepseek-flash / 输入框空）",
     reopened.level === "Low" && reopened.model === "deepseek-flash"
-      && reopened.keyValue === "" && reopened.enhancedChecked === false,
-    JSON.stringify({
-      level: reopened.level, model: reopened.model,
-      key: reopened.keyValue, enhanced: reopened.enhancedChecked,
-    }));
+      && reopened.keyValue === "",
+    JSON.stringify({ level: reopened.level, model: reopened.model, key: reopened.keyValue }));
   await page.mouse.click(sliderBox.right - 6, sliderBox.top + sliderBox.height / 2);
   await new Promise((r) => setTimeout(r, 300));
   await page.click("#maslingo-strength-model");
@@ -523,22 +495,19 @@ try {
   await page.click("#maslingo-ai-key");
   await page.keyboard.type("sk-saved-key");
   await page.keyboard.press("Tab");
-  await page.click(".maslingo-enhance .maslingo-switch");
   await new Promise((r) => setTimeout(r, 250));
   await page.click("#maslingo-ai-save");
   await new Promise((r) => setTimeout(r, 700));
   const saved = await sample();
   const stored = await readStorage([
     "translationStrength", "translationModel", "translationModelProvider", "translationApiKey",
-    "aiEnhancedRecognition",
   ]);
   check("保存后回到主页面", saved.aiPage === false && saved.basicHeight > 40);
-  check("保存写入强度/型号/归属/密钥/增强识别",
+  check("保存写入强度/型号/归属/密钥",
     stored.translationStrength === 2
       && stored.translationModel === "deepseek-v4-pro"
       && stored.translationModelProvider === "deepseek"
-      && stored.translationApiKey === "sk-saved-key"
-      && stored.aiEnhancedRecognition === true,
+      && stored.translationApiKey === "sk-saved-key",
     JSON.stringify(stored));
   check("保存给出反馈（一言行）", saved.lineText.includes("已保存"), saved.lineText);
 
@@ -548,12 +517,8 @@ try {
   check("再进 AI 页显示已保存的值",
     restored.level === "Max" && restored.model === "deepseek-v4-pro"
       && restored.modelLabel === "DeepSeek V4 Pro"
-      && restored.keyValue === "" && restored.keyPlaceholder.includes("已保存")
-      && restored.enhancedChecked === true,
-    JSON.stringify({
-      level: restored.level, model: restored.model,
-      key: restored.keyPlaceholder, enhanced: restored.enhancedChecked,
-    }));
+      && restored.keyValue === "" && restored.keyPlaceholder.includes("已保存"),
+    JSON.stringify({ level: restored.level, model: restored.model, key: restored.keyPlaceholder }));
 
   // A visual record of the state, next to the other material screenshots.
   const shot = async (name) => {

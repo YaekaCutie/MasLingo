@@ -80,11 +80,6 @@ jobs:
       - name: The AI-mode morph and the probe's text forwarding
         run: xvfb-run -a node deploy/check-ai-panel.mjs
 
-      # 增强识别: the whole page goes to the AI model, and the positioned
-      # translations it answers with are painted where it said they belong.
-      - name: Enhanced recognition drives the AI vision path
-        run: xvfb-run -a node deploy/check-ai-vision.mjs
-
       # Settings and popup wiring, plus a real translation round trip against a
       # local stand-in for an OpenAI-compatible service. Port 8001 is reused
       # because it is already in host_permissions and nothing else runs in this

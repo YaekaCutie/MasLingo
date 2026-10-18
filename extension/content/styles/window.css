@@ -383,11 +383,11 @@
     opacity 180ms ease;
 }
 .maslingo-panel-ai #maslingo-rule-ai {
-  /* Tight on purpose: the brief called the gap between 增强识别 and API Key
-     too wide. 6px on each side of the hairline reads as a divider without
-     pushing the key block (and everything under it) down the page. */
-  margin-top: 6px;
-  margin-bottom: 6px;
+  /* Tight on purpose: the brief called the gap above API Key too wide. 7px on
+     each side of the hairline reads as a divider without pushing the key block
+     (and everything under it) down the page. */
+  margin-top: 7px;
+  margin-bottom: 7px;
   opacity: 1;
 }
 
@@ -414,7 +414,9 @@
 }
 .maslingo-input::placeholder { color: var(--maslingo-muted); opacity: .72; }
 
-.maslingo-strength { margin-top: 6px; }
+/* The strength block owns the top of the AI page; a little more air above it
+   balances the fixed-height window. */
+.maslingo-strength { margin-top: 10px; }
 .maslingo-strength-level {
   margin-top: 0;
   line-height: 1.3;
@@ -524,7 +526,7 @@
    than a hue: the mock-up's accent loses to this panel's rule that colour
    means status, so "how strong" is expressed with luminance and motion. */
 .maslingo-strength-slider {
-  margin-top: 6px;
+  margin-top: 9px;
   padding: 3px 0;
   cursor: pointer;
   touch-action: none;
@@ -598,24 +600,6 @@
 .maslingo-strength-slider[data-dragging] .maslingo-strength-thumb {
   transition-duration: 90ms;
   transition-timing-function: linear;
-}
-
-/* 增强识别: the AI-page switch that hands the whole page to the model for
-   recognition + translation in one request. Sits under the strength slider,
-   with a compact switch so the fixed-height window still fits. */
-.maslingo-enhance { margin-top: 7px; }
-.maslingo-enhance .maslingo-label { font-size: 12px; }
-.maslingo-enhance .maslingo-switch-track {
-  width: 34px;
-  height: 19px;
-}
-.maslingo-enhance .maslingo-switch-thumb {
-  width: 15px;
-  height: 15px;
-}
-.maslingo-enhance .maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
-  /* 34 - 2*2 padding - 15 thumb = 15 */
-  transform: translateX(15px);
 }
 
 /* --- the collapsed widget ------------------------------------------------- */
