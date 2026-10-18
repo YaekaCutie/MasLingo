@@ -19,9 +19,12 @@
   // Shared chat prompt. LLMs are asked for a JSON array because line-splitting
   // a numbered list turned out to be the fragile part of the old backend path.
   //
-  // `strength` (Off / Low / High / Max, see STRENGTHS) appends one extra rule
-  // line. The default — Off — appends nothing, so a profile that never touched
-  // the strength slider sends exactly the prompt it always did.
+  // `strength` (Low / High / Max, see STRENGTHS) appends one extra rule line.
+  // Every tier carries the same proper-noun consistency rule: the same name
+  // must read the same way across the whole batch, which is what "前后文专有
+  // 名词一致" asks for. The tiers differ in how hard the model is told to work
+  // (light polish without web lookup → web-assisted polish → web-assisted
+  // perfection pass).
   function chatPrompt(texts, target, strength = 0) {
     const rules = [
       "你是漫画翻译引擎。把下面 JSON 数组里的每一条日文翻译成" + target + "。",
@@ -31,6 +34,7 @@
       "3. 逐条独立翻译，不要合并、拆分或省略任何一条。",
       "4. 保留原有的语气词、标点和停顿感；拟声词给出对应的中文拟声词。",
       "5. 如果某条只是符号或无法识别，原样返回。",
+      "6. 人名、地名、技能名、组织名等专有名词必须在整批上下文中前后一致：同一个名词只使用同一个译名，不要在不同条目里换译法。",
     ];
     const extra = STRENGTHS[normalizeStrength(strength)].rule;
     if (extra) rules.push(extra);
@@ -43,19 +47,39 @@
    *
    * A word-level knob rather than a second model picker: every provider in the
    * AI group speaks the same prompt, so effort is the one lever that works for
-   * all of them. Off (0) is the default and is the historical prompt, word for
-   * word — nothing changes for an install that never touches the slider.
+   * all of them. There is no "off" tier any more: choosing an AI source means
+   * translating, and the three levels are light polish without web lookup
+   * (Low), web-assisted polish (High) and a web-assisted perfection pass (Max).
+   * An old profile that stored 0 (the removed Off) normalises to Low.
    */
   const STRENGTHS = [
-    { value: 0, label: "Off", rule: "" },
-    { value: 1, label: "Low", rule: "6. 强度 Low：先理解整句语境再翻译，译文自然、口语化，不逐字硬译。" },
-    { value: 2, label: "High", rule: "6. 强度 High：结合前后文与角色语气推敲用词；技能、人名、地名等专有名词尽量联网核对官方译名（不能联网时用通行译名，不确定的人名不要臆造）；输出前自查一遍是否通顺、准确。" },
-    { value: 3, label: "Max", rule: "6. 强度 Max：逐条反复推敲：结合前后文与漫画语境选择最自然的表达；技能、人名、地名等专有名词尽量联网逐一核对官方译名（不能联网时用通行译名，不确定的人名保留原文）；输出前逐条自查准确性、通顺度与长度，必要时意译。" },
+    {
+      value: 0,
+      label: "Low",
+      hint: "不联网轻度润色",
+      rule: "7. 强度 Low（不联网轻度润色）：先理解整句语境再翻译，润色得自然、口语化，不逐字硬译；不要联网检索，专有名词沿用通行译名，并在整批上下文中保持一致。",
+      visionRule: "6. 强度 Low（不联网轻度润色）：不要联网检索；在已有知识范围内轻度润色，译文自然、口语化，不逐字硬译；专有名词用通行译名，并在整页内保持一致。",
+    },
+    {
+      value: 1,
+      label: "High",
+      hint: "联网润色",
+      rule: "7. 强度 High（联网润色）：结合前后文与角色语气润色用词；技能、人名、地名等专有名词尽量联网核对官方译名（不能联网时用通行译名，不确定的人名不要臆造）；专有名词在整批上下文中必须前后一致；输出前自查一遍是否通顺、准确。",
+      visionRule: "6. 强度 High（联网润色）：可以联网核对技能、人名、地名等专有名词的官方译名（不能联网时用通行译名，不确定的人名不要臆造）；结合前后文与角色语气润色，全页译名必须一致。",
+    },
+    {
+      value: 2,
+      label: "Max",
+      hint: "联网完美翻译",
+      rule: "7. 强度 Max（联网完美翻译）：逐条反复推敲，结合前后文与漫画语境选择最自然准确的表达；技能、人名、地名等专有名词尽量联网逐一核对官方译名（不能联网时用通行译名，不确定的人名保留原文）；同一专有名词在全批上下文中必须使用同一译名；输出前逐条自查准确性、通顺度与长度，必要时意译。",
+      visionRule: "6. 强度 Max（联网完美翻译）：可以联网逐一核对专有名词的官方译名（不能联网时用通行译名，不确定的保留原文）；结合整页语境反复推敲，选择最自然准确的表达，输出前逐条自查；全页译名必须一致。",
+    },
   ];
 
   /** Clamp anything storage or a caller hands over onto a real level. */
   function normalizeStrength(value) {
-    // "Not set" is Off: the prompt that shipped before this knob existed.
+    // "Not set" means Low now: the removed Off tier used to be the default,
+    // and choosing an AI source always means translating.
     if (value === null || value === undefined || value === "") return 0;
     const level = Math.round(Number(value));
     if (!Number.isFinite(level)) return 0;
@@ -63,6 +87,7 @@
   }
 
   const strengthLabel = (value) => STRENGTHS[normalizeStrength(value)].label;
+  const strengthHint = (value) => STRENGTHS[normalizeStrength(value)].hint;
 
 
   /**
@@ -237,6 +262,218 @@
     const content = (json?.content || []).map((block) => block.text || "").join("");
     return parseChatContent(content, count);
   };
+
+  // --- AI vision: one page in, positioned translations out -------------------
+  //
+  // Enhanced recognition ("增强识别") hands the whole page to the model and
+  // asks it to find the text boxes itself, so recognition and translation are
+  // one request. Same three provider dialects as the text adapters above: the
+  // OpenAI-compatible `image_url` content part, Gemini's `inline_data`, and
+  // Claude's base64 image block.
+  function visionPrompt(strength, target) {
+    const extra = STRENGTHS[normalizeStrength(strength)].visionRule;
+    return [
+      "你是漫画翻译引擎。我会给你一整页日文漫画截图。",
+      "任务：找出画面中所有需要翻译的文字区域（对白气泡、旁白、手写字等），逐条给出原文与" + target + "译文。",
+      "规则：",
+      '1. 只输出一个 JSON 对象，不要解释、不要代码块标记：{"items":[{"box":[左,上,右,下],"text":"日文原文","translation":"' + target + '译文"}]}',
+      "2. box 使用 0-1000 的相对坐标（左、上、右、下分别相对整张图片的宽和高），必须紧贴文字本身，不要框住整个气泡或画面。",
+      "3. 只翻译真正需要阅读的文字；拟声词和装饰性大字可以忽略。",
+      "4. 人名、地名、技能名等专有名词在整页内必须前后一致：同一个名词只使用同一个译名。",
+      "5. 看不清的条目不输出，不要编造。",
+      extra,
+    ].filter(Boolean).join("\n");
+  }
+
+  function splitDataUrl(image) {
+    const match = /^data:([^;,]+);base64,(.*)$/i.exec(String(image || ""));
+    if (!match) throw new Error("截图数据格式不正确");
+    return { mime: match[1], data: match[2] };
+  }
+
+  function openAiVision(request) {
+    const { endpoint, apiKey, model, strength, target, image } = request;
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    return {
+      url: endpoint,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "text", text: visionPrompt(strength, target) },
+              { type: "image_url", image_url: { url: image } },
+            ],
+          }],
+        }),
+      },
+    };
+  }
+
+  function geminiVision(request) {
+    const { endpoint, apiKey, model, strength, target, image } = request;
+    const { mime, data } = splitDataUrl(image);
+    return {
+      url: `${endpoint}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [
+            { text: visionPrompt(strength, target) },
+            { inline_data: { mime_type: mime, data } },
+          ]}],
+          generationConfig: { temperature: 0 },
+        }),
+      },
+    };
+  }
+
+  function claudeVision(request) {
+    const { endpoint, apiKey, model, strength, target, image } = request;
+    const { mime, data } = splitDataUrl(image);
+    return {
+      url: `${endpoint}/v1/messages`,
+      init: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: mime, data } },
+              { type: "text", text: visionPrompt(strength, target) },
+            ],
+          }],
+        }),
+      },
+    };
+  }
+
+  /** The reply text of whichever vision dialect answered. */
+  function visionText(json, family) {
+    if (family === "openai") {
+      const content = json?.choices?.[0]?.message?.content;
+      if (content === undefined) {
+        throw new Error(json?.error?.message || "响应中没有 choices[0].message.content");
+      }
+      // Some gateways answer with content parts instead of one string.
+      return Array.isArray(content)
+        ? content.map((part) => part?.text || "").join("")
+        : content;
+    }
+    if (family === "gemini") {
+      if (json?.error) throw new Error(json.error.message || "Gemini 返回错误");
+      return (json?.candidates?.[0]?.content?.parts || []).map((part) => part.text || "").join("");
+    }
+    if (json?.error) throw new Error(json.error.message || "Claude 返回错误");
+    return (json?.content || []).map((block) => block.text || "").join("");
+  }
+
+  /**
+   * Pull `{items:[{box,text,translation}]}` out of whatever the model replied.
+   *
+   * Boxes come back in 0-1000 relative coordinates by contract; a model that
+   * answers in absolute pixels anyway is detected by a coordinate above 1000
+   * and mapped onto the same basis with the sent image's size. Entries without
+   * a translation are dropped — the prompt tells the model to omit anything it
+   * cannot read, and a box with nothing to paint is dead weight.
+   */
+  function parseVisionItems(content, imageSize = null) {
+    if (typeof content !== "string" || !content.trim()) throw new Error("AI 返回了空内容");
+    let text = content.trim();
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) text = fenced[1].trim();
+    const candidates = [];
+    const objectStart = text.indexOf("{");
+    const objectEnd = text.lastIndexOf("}");
+    if (objectStart >= 0 && objectEnd > objectStart) {
+      candidates.push(text.slice(objectStart, objectEnd + 1));
+    }
+    const arrayStart = text.indexOf("[");
+    const arrayEnd = text.lastIndexOf("]");
+    if (arrayStart >= 0 && arrayEnd > arrayStart) {
+      candidates.push(text.slice(arrayStart, arrayEnd + 1));
+    }
+    let parsed = null;
+    for (const candidate of candidates) {
+      try {
+        const value = JSON.parse(candidate);
+        if (Array.isArray(value) || (value && Array.isArray(value.items))) {
+          parsed = value;
+          break;
+        }
+      } catch {
+        /* try the next shape */
+      }
+    }
+    if (!parsed) throw new Error("AI 没有返回可用的文字位置（JSON）");
+    const raw = Array.isArray(parsed) ? parsed : parsed.items;
+
+    const readBox = (entry) => {
+      const box = entry?.box || entry?.bbox || entry?.rect;
+      if (!Array.isArray(box) || box.length < 4) return null;
+      const numbers = box.slice(0, 4).map(Number);
+      return numbers.some((value) => !Number.isFinite(value)) ? null : numbers;
+    };
+    const boxes = raw.map(readBox).filter(Boolean);
+    const maxCoord = boxes.reduce((max, box) => Math.max(max, ...box), 0);
+    const inPixels = maxCoord > 1001 && imageSize?.width > 0 && imageSize?.height > 0;
+
+    const items = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const box = readBox(entry);
+      if (!box) continue;
+      let [left, top, right, bottom] = box;
+      if (inPixels) {
+        left = left / imageSize.width * 1000;
+        right = right / imageSize.width * 1000;
+        top = top / imageSize.height * 1000;
+        bottom = bottom / imageSize.height * 1000;
+      }
+      if (left > right) [left, right] = [right, left];
+      if (top > bottom) [top, bottom] = [bottom, top];
+      const text = String(entry.text ?? entry.source ?? "").trim();
+      const translation = String(
+        entry.translation ?? entry.translated ?? entry.translation_zh ?? "",
+      ).trim();
+      if (!translation) continue;
+      items.push({
+        box: [left, top, right, bottom].map((value) => Math.max(0, Math.min(1000, value))),
+        text,
+        translation,
+      });
+    }
+    if (!items.length) throw new Error("AI 没有返回可用的翻译条目");
+    return items;
+  }
+
+  /** Which vision builder this provider speaks, or null when it cannot see. */
+  function visionFor(provider) {
+    if (!provider) return null;
+    if (provider.adapter === claude) return { build: claudeVision, family: "claude" };
+    if (provider.adapter === gemini) return { build: geminiVision, family: "gemini" };
+    if (provider.adapter === openAiCompatible) return { build: openAiVision, family: "openai" };
+    return null;
+  }
+
+  function parseVision(json, family, imageSize) {
+    return parseVisionItems(visionText(json, family), imageSize);
+  }
 
   // Google's public web endpoint: no key, no quota dashboard, and it accepts
   // one query per request, so the caller issues one call per text.
@@ -900,9 +1137,14 @@
     strengths: STRENGTHS,
     normalizeStrength,
     strengthLabel,
+    strengthHint,
     modelsOf,
     resolveModel,
     chatPrompt,
+    visionPrompt,
+    visionFor,
+    parseVision,
+    parseVisionItems,
     parseChatContent,
     md5,
     sha256Hex,

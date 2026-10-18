@@ -383,8 +383,11 @@
     opacity 180ms ease;
 }
 .maslingo-panel-ai #maslingo-rule-ai {
-  margin-top: 10px;
-  margin-bottom: 10px;
+  /* Tight on purpose: the brief called the gap between 增强识别 and API Key
+     too wide. 6px on each side of the hairline reads as a divider without
+     pushing the key block (and everything under it) down the page. */
+  margin-top: 6px;
+  margin-bottom: 6px;
   opacity: 1;
 }
 
@@ -420,6 +423,17 @@
   font-weight: 700;
   letter-spacing: .01em;
   color: var(--maslingo-ink);
+}
+/* The tier's meaning, beside its name: 不联网轻度润色 / 联网润色 / 联网完美翻译.
+   Same line, smaller and muted, so the slider explains itself without taking
+   another row from the fixed-height window. */
+.maslingo-strength-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--maslingo-muted);
+  white-space: nowrap;
 }
 /* The concrete model under the level name — "max 下面是选择具体模型". The row
    shows the model's own name; clicking it opens the 选择框 (#maslingo-modelbox),
@@ -502,8 +516,8 @@
 .maslingo-modelbox-id { font-size: 10.5px; color: var(--maslingo-muted); }
 .maslingo-modelbox-custom { color: var(--maslingo-muted); }
 
-/* The slider: four stops (Off / Low / High / Max), the thumb marking the
-   current one. The thumb is inscribed — its diameter equals the track height,
+/* The slider: three stops (Low / High / Max), the thumb marking the current
+   one. The thumb is inscribed — its diameter equals the track height,
    tangent top and bottom — and the fill runs to its centre, so the knob reads
    as riding inside the bar rather than capping its end. The track is kept
    visible across its full width so the bar is a bar in every state. Ink rather
@@ -563,9 +577,8 @@
   pointer-events: none;
 }
 .maslingo-strength-dot[data-stop="0"] { left: calc(11px + (100% - 22px) * 0); }
-.maslingo-strength-dot[data-stop="1"] { left: calc(11px + (100% - 22px) * .3333); }
-.maslingo-strength-dot[data-stop="2"] { left: calc(11px + (100% - 22px) * .6667); }
-.maslingo-strength-dot[data-stop="3"] { left: calc(11px + (100% - 22px) * 1); }
+.maslingo-strength-dot[data-stop="1"] { left: calc(11px + (100% - 22px) * .5); }
+.maslingo-strength-dot[data-stop="2"] { left: calc(11px + (100% - 22px) * 1); }
 .maslingo-strength-thumb {
   position: absolute;
   top: 50%;
@@ -585,6 +598,24 @@
 .maslingo-strength-slider[data-dragging] .maslingo-strength-thumb {
   transition-duration: 90ms;
   transition-timing-function: linear;
+}
+
+/* 增强识别: the AI-page switch that hands the whole page to the model for
+   recognition + translation in one request. Sits under the strength slider,
+   with a compact switch so the fixed-height window still fits. */
+.maslingo-enhance { margin-top: 7px; }
+.maslingo-enhance .maslingo-label { font-size: 12px; }
+.maslingo-enhance .maslingo-switch-track {
+  width: 34px;
+  height: 19px;
+}
+.maslingo-enhance .maslingo-switch-thumb {
+  width: 15px;
+  height: 15px;
+}
+.maslingo-enhance .maslingo-switch input:checked + .maslingo-switch-track .maslingo-switch-thumb {
+  /* 34 - 2*2 padding - 15 thumb = 15 */
+  transform: translateX(15px);
 }
 
 /* --- the collapsed widget ------------------------------------------------- */

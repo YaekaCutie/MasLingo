@@ -321,6 +321,23 @@ function showRecognitionResult(message, pageMode) {
     showSourceText = message.result.debug_mode !== false;
     renderResults(message.rect, message.result, pageMode);
     recognizedResultReady = true;
+    // Enhanced recognition answers with text boxes *and* translations in one
+    // request (the whole page went to the AI), so there is nothing left to
+    // translate — paint the returned translations directly. If even one item
+    // came back without a translation, fall through to the ordinary path.
+    const pretranslated = (message.result.items || []).filter(item => item.text?.trim());
+    if (message.result.pretranslated && pretranslated.length &&
+        pretranslated.every(item => item.translated?.trim())) {
+      showTranslationResult({
+        requestId: message.requestId,
+        mode: "openai-compatible",
+        result: {
+          ok: true,
+          items: pretranslated.map(item => ({ text: item.text, translated: item.translated })),
+        },
+      });
+      return;
+    }
     const texts = (message.result.items || []).map(item => item.text).filter(Boolean);
     if (texts.length && activePort) {
       // Longer than the service worker's own 120s provider deadline, so a slow

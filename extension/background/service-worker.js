@@ -393,7 +393,7 @@ function postResult(port,tabId,message){
 
 async function recognizeRegion(msg,tabId,port){
   try{
-    const cfg=await chrome.storage.local.get(["debugMode"]);
+    const {cfg,provider,enabled}=await visionSettings();
     const {tab,bmp}=await captureVisibleImage(tabId);
     postPortMessage(port,{type:"CAPTURE_READY",requestId:msg.requestId});
     const r=msg.rect;
@@ -411,6 +411,34 @@ async function recognizeRegion(msg,tabId,port){
     const ctx=canvas.getContext("2d");
     ctx.drawImage(bmp,sx,sy,cropWidth,cropHeight,0,0,cropWidth,cropHeight);
     const cropped=await canvas.convertToBlob({type:"image/png"});
+    // Enhanced recognition: one AI request reads and translates the selection,
+    // so the user-drawn box is filled with the joined translation instead of
+    // going through the local recogniser first.
+    if(enabled){
+      const dataUrl=await blobToDataUrl(cropped);
+      const items=await runVision(cfg,provider,dataUrl,{
+        width:cropWidth,height:cropHeight
+      });
+      const translated=items.map(item=>item.translation).join("");
+      const text=items.map(item=>item.text).filter(Boolean).join("\n")||translated;
+      postResult(port,tabId,{
+        type:"RECOGNITION_RESULT",
+        rect:r,
+        requestId:msg.requestId,
+        result:{
+          ok:true,
+          debug_mode:cfg.debugMode!==false,
+          pretranslated:true,
+          items:[{
+            text,
+            translated,
+            patch:describeRegion(bmp,r,viewport),
+            direction:null
+          }]
+        }
+      });
+      return;
+    }
     const fd=new FormData();
     fd.append("image",cropped,"manga.png");
 
@@ -458,6 +486,46 @@ async function blobToDataUrl(blob){
     binary+=String.fromCharCode(...bytes.subarray(offset,offset+chunkSize));
   }
   return `data:${blob.type};base64,${btoa(binary)}`;
+}
+
+/**
+ * Settings shared by the two AI-vision entry points.
+ *
+ * Enhanced recognition hands the screenshot to the selected AI model instead
+ * of the local detector. The toggle lives on the AI page, so the resolved
+ * provider's group is the gate: a translation API or the local backend can
+ * never silently take this path.
+ */
+async function visionSettings(){
+  const cfg=await chrome.storage.local.get([
+    "debugMode","translationProvider","translationMode","translationEndpoint",
+    "translationModel","translationModelProvider","translationApiKey",
+    "translationStrength","targetLanguage","aiEnhancedRecognition",
+  ]);
+  const provider=resolveProvider(cfg);
+  const enabled=Boolean(cfg.aiEnhancedRecognition)&&provider?.group==="AI 大模型";
+  return {cfg,provider,enabled};
+}
+
+/** One request: the whole image in, positioned translations out. */
+async function runVision(cfg,provider,image,imageSize){
+  const registry=globalThis.MAS_providers;
+  const vision=registry?.visionFor?.(provider);
+  if(!vision)throw new Error("当前翻译来源不支持增强识别，请换用 AI 大模型来源");
+  const endpoint=(cfg.translationEndpoint||provider.endpoint||"").replace(/\/+$/,"");
+  if(!endpoint)throw new Error(`${provider.label} 需要填写接口地址`);
+  const request=await vision.build({
+    endpoint,
+    apiKey:cfg.translationApiKey||"",
+    model:registry.resolveModel(provider,cfg),
+    strength:registry.normalizeStrength(cfg.translationStrength),
+    target:registry.resolveTarget(provider,cfg),
+    image,
+  });
+  // A whole-page vision request is slower than a text translation; the page
+  // timeout matches what the content script waits for.
+  const json=await providerFetch(request.url,request.init,provider,PAGE_REQUEST_TIMEOUT_MS);
+  return registry.parseVision(json,vision.family,imageSize);
 }
 
 /**
@@ -537,9 +605,45 @@ async function recognizePage(msg,tabId,port){
       bmp,crop.left,crop.top,cropWidth,cropHeight,0,0,outputWidth,outputHeight
     );
     const image=await canvas.convertToBlob({type:"image/png"});
+    const {cfg,provider,enabled}=await visionSettings();
+    // Enhanced recognition: the whole page crop goes to the AI model, which
+    // answers with text boxes and their translations. Nothing else runs — the
+    // returned translations are what the content script paints.
+    if(enabled){
+      const dataUrl=await blobToDataUrl(image);
+      const items=await runVision(cfg,provider,dataUrl,{
+        width:outputWidth,height:outputHeight
+      });
+      const toCssX=viewport.width/bmp.width;
+      const toCssY=viewport.height/bmp.height;
+      const mapped=items.map(item=>{
+        const left=(item.box[0]/1000*outputWidth/upscale+crop.left)*toCssX;
+        const top=(item.box[1]/1000*outputHeight/upscale+crop.top)*toCssY;
+        const width=(item.box[2]-item.box[0])/1000*outputWidth/upscale*toCssX;
+        const height=(item.box[3]-item.box[1])/1000*outputHeight/upscale*toCssY;
+        const rect={left,top,width,height};
+        return {
+          text:item.text||item.translation,
+          translated:item.translation,
+          rect,
+          patch:describeRegion(bmp,rect,viewport),
+        };
+      });
+      postResult(port,tabId,{
+        type:"RECOGNITION_RESULT",
+        rect:{left:0,top:0,width:viewport.width,height:viewport.height},
+        requestId:msg.requestId,
+        result:{
+          ok:true,
+          debug_mode:cfg.debugMode!==false,
+          pretranslated:true,
+          items:mapped,
+        }
+      });
+      return;
+    }
     const fd=new FormData();
     fd.append("image",image,"manga-image.png");
-    const cfg=await chrome.storage.local.get(["debugMode"]);
     const resp=await fetchBackend(
       "/api/recognize-page",
       {method:"POST",body:fd},
@@ -648,7 +752,7 @@ function describeConnectFailure(error, url, provider) {
 }
 
 /** Fetch a provider endpoint, turning HTTP errors into readable messages. */
-async function providerFetch(url, init, provider) {
+async function providerFetch(url, init, provider, timeoutMs) {
   let response;
   if (provider?.id === "backend") {
     const backends = await globalThis.MAS_backendCandidates();
@@ -666,7 +770,7 @@ async function providerFetch(url, init, provider) {
     if (!response) throw new Error(`后端连接失败（${lastError?.message || "未配置后端"}）`);
   } else {
     try {
-      response = await timedFetch(url, init);
+      response = await timedFetch(url, init, timeoutMs);
     } catch (error) {
       throw new Error(describeConnectFailure(error, url, provider));
     }

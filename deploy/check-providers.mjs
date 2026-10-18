@@ -168,50 +168,123 @@ check("bing 只给 texts 时取到原文（不再翻译 undefined）",
   bingTextsOnly.init.body);
 
 // --- translation strength ---------------------------------------------------
-section("反应强度（Off / Low / High / Max）");
-const promptOff = providers.chatPrompt(["おはよう"], "简体中文", 0);
-const goldenOff = [
-  "你是漫画翻译引擎。把下面 JSON 数组里的每一条日文翻译成简体中文。",
-  "规则：",
-  "1. 只输出一个 JSON 字符串数组，不要解释、不要代码块标记。",
-  "2. 数组长度必须与输入完全相同，顺序一一对应。",
-  "3. 逐条独立翻译，不要合并、拆分或省略任何一条。",
-  "4. 保留原有的语气词、标点和停顿感；拟声词给出对应的中文拟声词。",
-  "5. 如果某条只是符号或无法识别，原样返回。",
-  "",
-  "输入：",
-  JSON.stringify(["おはよう"]),
-].join("\n");
-check("Off 档提示词与旧版逐字一致（默认行为不变）",
-  promptOff === goldenOff, promptOff.slice(0, 60));
+section("反应强度（Low / High / Max，无 Off）");
 check("Low / High / Max 各带一条指令",
-  providers.chatPrompt(["おはよう"], "简体中文", 1).includes("强度 Low")
-    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("强度 High")
-    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("强度 Max"));
-const openaiMax = await requestFor("openai", { strength: 3 });
+  providers.chatPrompt(["おはよう"], "简体中文", 0).includes("强度 Low")
+    && providers.chatPrompt(["おはよう"], "简体中文", 1).includes("强度 High")
+    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("强度 Max"));
+check("档位语义：不联网轻度润色 / 联网润色 / 联网完美翻译",
+  providers.chatPrompt(["おはよう"], "简体中文", 0).includes("不联网轻度润色")
+    && providers.chatPrompt(["おはよう"], "简体中文", 1).includes("联网润色")
+    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("联网完美翻译"));
+const openaiMax = await requestFor("openai", { strength: 2 });
 check("强度进入实际请求（OpenAI 形状）",
   JSON.parse(openaiMax.init.body).messages[0].content.includes("强度 Max"));
-check("默认强度是 Off（0）",
+check("默认强度是 Low（0）",
   providers.normalizeStrength(undefined) === 0
     && providers.normalizeStrength(null) === 0
     && providers.normalizeStrength("") === 0);
-check("强度越界被夹到合法档位",
-  providers.normalizeStrength(9) === 3 && providers.normalizeStrength(-3) === 0);
-check("档位文案齐全",
-  providers.strengths.length === 4
-    && providers.strengthLabel(0) === "Off"
-    && providers.strengthLabel(1) === "Low"
-    && providers.strengthLabel(2) === "High"
-    && providers.strengthLabel(3) === "Max");
+check("旧的 Off（0）落到 Low，越界被夹到 0..2",
+  providers.normalizeStrength(0) === 0
+    && providers.normalizeStrength(9) === 2
+    && providers.normalizeStrength(-3) === 0
+    && providers.normalizeStrength(3) === 2);
+check("档位文案齐全（三档，各带说明）",
+  providers.strengths.length === 3
+    && providers.strengthLabel(0) === "Low"
+    && providers.strengthLabel(1) === "High"
+    && providers.strengthLabel(2) === "Max"
+    && providers.strengthHint(0) === "不联网轻度润色"
+    && providers.strengthHint(1) === "联网润色"
+    && providers.strengthHint(2) === "联网完美翻译");
 
 // --- strength carries the proper-noun policy --------------------------------
-section("档位里的专有名词要求（联网核官方译名）");
+section("档位里的专有名词要求（前后文一致 + 联网核官方译名）");
 check("High / Max 要求联网核对专有名词官方译名（含人名）",
-  providers.chatPrompt(["おはよう"], "简体中文", 2).includes("联网核对官方译名")
-    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("官方译名")
-    && providers.chatPrompt(["おはよう"], "简体中文", 3).includes("人名")
-    && !providers.chatPrompt(["おはよう"], "简体中文", 1).includes("联网")
-    && !providers.chatPrompt(["おはよう"], "简体中文", 0).includes("联网"));
+  providers.chatPrompt(["おはよう"], "简体中文", 1).includes("联网核对官方译名")
+    && providers.chatPrompt(["おはよう"], "简体中文", 1).includes("人名")
+    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("官方译名")
+    && providers.chatPrompt(["おはよう"], "简体中文", 2).includes("人名"));
+check("Low 明确不联网，只做轻度润色",
+  providers.chatPrompt(["おはよう"], "简体中文", 0).includes("不要联网检索")
+    && !providers.chatPrompt(["おはよう"], "简体中文", 0).includes("联网核对官方译名"));
+check("每一档都要求专有名词在整批上下文中前后一致",
+  [0, 1, 2].every((level) =>
+    providers.chatPrompt(["おはよう"], "简体中文", level)
+      .includes("专有名词必须在整批上下文中前后一致")));
+
+// --- enhanced recognition: AI vision ---------------------------------------
+section("增强识别（整页交给 AI：定位 + 翻译）");
+const visionPrompt = providers.visionPrompt(1, "简体中文");
+check("视觉提示词要求 JSON 盒子 + 原文 + 译文",
+  visionPrompt.includes('"items"') && visionPrompt.includes('"box"')
+    && visionPrompt.includes('"text"') && visionPrompt.includes('"translation"'));
+check("视觉提示词要求 0-1000 相对坐标并紧贴文字",
+  visionPrompt.includes("0-1000") && visionPrompt.includes("紧贴文字"));
+check("视觉提示词要求专有名词全页一致",
+  visionPrompt.includes("专有名词在整页内必须前后一致"));
+check("视觉提示词随档位变化（不联网 / 联网润色 / 联网完美翻译）",
+  providers.visionPrompt(0, "简体中文").includes("不联网轻度润色")
+    && providers.visionPrompt(1, "简体中文").includes("联网润色")
+    && providers.visionPrompt(2, "简体中文").includes("联网完美翻译"));
+
+const visionImage = "data:image/png;base64,QUJD";
+const buildVision = (id, extra = {}) => providers.visionFor(providers.byId(id)).build({
+  endpoint: providers.byId(id).endpoint,
+  apiKey: "KEY",
+  model: providers.byId(id).model,
+  strength: 0,
+  target: "简体中文",
+  image: visionImage,
+  ...extra,
+});
+const openaiVisionBody = JSON.parse(buildVision("openai").init.body);
+check("OpenAI 形状把整页作为 image_url 发送",
+  openaiVisionBody.messages[0].content.some(
+    (part) => part.type === "image_url" && part.image_url.url === visionImage));
+check("OpenAI 视觉请求带提示词",
+  openaiVisionBody.messages[0].content.some(
+    (part) => part.type === "text" && part.text.includes("整页日文漫画截图")));
+const geminiVisionBody = JSON.parse(buildVision("gemini").init.body);
+check("Gemini 形状使用 inline_data",
+  geminiVisionBody.contents[0].parts.some(
+    (part) => part.inline_data?.mime_type === "image/png"
+      && part.inline_data.data === "QUJD"));
+const claudeVisionBody = JSON.parse(buildVision("claude").init.body);
+check("Claude 形状使用 base64 image block",
+  claudeVisionBody.messages[0].content.some(
+    (part) => part.type === "image" && part.source?.type === "base64"
+      && part.source.media_type === "image/png"));
+check("视觉适配器只给 AI 大模型来源",
+  providers.visionFor(providers.byId("openai"))?.family === "openai"
+    && providers.visionFor(providers.byId("gemini"))?.family === "gemini"
+    && providers.visionFor(providers.byId("claude"))?.family === "claude"
+    && providers.visionFor(providers.byId("google-free")) === null
+    && providers.visionFor(providers.byId("none")) === null);
+
+const visionParsed = providers.parseVisionItems(
+  '{"items":[{"box":[100,200,300,400],"text":"おはよう","translation":"早上好"}]}',
+  { width: 1000, height: 1000 });
+check("解析视觉 JSON（0-1000 相对坐标）",
+  visionParsed.length === 1 && visionParsed[0].text === "おはよう"
+    && visionParsed[0].translation === "早上好" && visionParsed[0].box[2] === 300);
+const visionFenced = providers.parseVisionItems(
+  '```json\n[{"box":[0,0,1000,1000],"text":"a","translation":"b"}]\n```');
+check("解析器容忍代码块与数组形状",
+  visionFenced.length === 1 && visionFenced[0].translation === "b");
+const visionPixels = providers.parseVisionItems(
+  JSON.stringify([{ box: [200, 100, 1200, 900], text: "a", translation: "b" }]),
+  { width: 1600, height: 1200 });
+check("解析器识别像素坐标并换算",
+  visionPixels[0].box[0] === 125 && visionPixels[0].box[2] === 750,
+  JSON.stringify(visionPixels[0].box));
+let visionRejected = false;
+try {
+  providers.parseVisionItems('{"items":[{"box":[0,0,10,10],"text":"あ"}]}');
+} catch {
+  visionRejected = true;
+}
+check("没有译文的条目被丢弃（整条结果为空则报错）", visionRejected);
 
 // --- the concrete model per provider ----------------------------------------
 section("具体模型（每个来源自己的型号，不跨来源泄漏）");
