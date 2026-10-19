@@ -505,12 +505,15 @@ function paintFlatCover(context, left, top, right, bottom) {
 /**
  * Erase only the original lettering inside the recognised box.
  *
- * The patch's most common colour is the local background — balloon paper, or
- * the black behind white lettering — and pixels that differ from it are the
- * strokes. Those get repainted with the background colour inside the core box,
- * nothing else is touched, and the result reads as the translation sitting
- * inside the bubble rather than a white card laid over the drawing. Returns
- * the background luminance so the caller can pick a readable ink colour.
+ * This is deliberately a flat-colour cover, not local background
+ * reconstruction: one dominant paper/panel colour is sampled, every pixel
+ * belonging to a glyph is repainted with it, and nothing else is touched. The
+ * hard part is the glyph mask, not the fill. A fixed luminance threshold left
+ * anti-aliased edges behind on white paper and could swallow paper texture.
+ * Here the mask uses the dominant background colour, an Otsu split, and weak
+ * edge pixels that are connected to a strong stroke. The mask is then grown by
+ * one eight-neighbour pixel so the blended edge disappears too. The caller
+ * receives the background luminance for choosing a readable translation ink.
  */
 function paintLetteringCover(entry, left, top, right, bottom) {
   const {context, patchPixels} = entry;
@@ -518,56 +521,232 @@ function paintLetteringCover(entry, left, top, right, bottom) {
   // Work on a copy: the cached pixels are the *original* artwork and a redraw
   // (font-size change, new translation) must start from them again.
   const pixels = new Uint8ClampedArray(data);
-  const luminance = (offset) =>
+  const pixelLuminance = (offset) =>
     0.299 * pixels[offset] + 0.587 * pixels[offset + 1] + 0.114 * pixels[offset + 2];
-
-  const reds = [];
-  const greens = [];
-  const blues = [];
-  const luminanceSamples = [];
-  for (let y = 0; y < height; y += 2) {
-    for (let x = 0; x < width; x += 2) {
-      const offset = (y * width + x) * 4;
-      reds.push(pixels[offset]);
-      greens.push(pixels[offset + 1]);
-      blues.push(pixels[offset + 2]);
-      luminanceSamples.push(luminance(offset));
-    }
-  }
-  const median = (values) => {
-    if (!values.length) return 255;
-    values.sort((first, second) => first - second);
-    return values[Math.floor(values.length / 2)];
-  };
-  const background = [median(reds), median(greens), median(blues)];
-  const backgroundLuminance = median(luminanceSamples);
-
-  const threshold = 45;
-  const mask = new Uint8Array(width * height);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4;
-      if (Math.abs(luminance(offset) - backgroundLuminance) > threshold) {
-        mask[y * width + x] = 1;
-      }
-    }
-  }
-  // One pixel of growth takes the anti-aliased edge with the stroke.
-  const grown = new Uint8Array(mask);
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      if (!mask[y * width + x]) continue;
-      grown[(y - 1) * width + x] = 1;
-      grown[(y + 1) * width + x] = 1;
-      grown[y * width + x - 1] = 1;
-      grown[y * width + x + 1] = 1;
-    }
-  }
 
   const firstX = Math.max(0, left);
   const firstY = Math.max(0, top);
   const lastX = Math.min(width, right);
   const lastY = Math.min(height, bottom);
+  const coreWidth = Math.max(0, lastX - firstX);
+  const coreHeight = Math.max(0, lastY - firstY);
+  if (!coreWidth || !coreHeight) return { luminance: 255 };
+
+  // Dominant colour, not a median: the glyphs can occupy a large share of a
+  // tight crop, but the paper still usually owns the largest colour cluster.
+  // Coarse 5-bit bins make the mode stable against JPEG noise and paper grain.
+  const bins = new Map();
+  const sampleStep = width * height > 260000 ? 2 : 1;
+  let samples = 0;
+  for (let y = 0; y < height; y += sampleStep) {
+    for (let x = 0; x < width; x += sampleStep) {
+      const offset = (y * width + x) * 4;
+      const r = pixels[offset];
+      const g = pixels[offset + 1];
+      const b = pixels[offset + 2];
+      const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+      let bin = bins.get(key);
+      if (!bin) {
+        bin = { count: 0, r: 0, g: 0, b: 0 };
+        bins.set(key, bin);
+      }
+      bin.count += 1;
+      bin.r += r;
+      bin.g += g;
+      bin.b += b;
+      samples += 1;
+    }
+  }
+  let dominant = null;
+  for (const bin of bins.values()) {
+    if (!dominant || bin.count > dominant.count) dominant = bin;
+  }
+  const background = dominant
+    ? [
+      Math.round(dominant.r / dominant.count),
+      Math.round(dominant.g / dominant.count),
+      Math.round(dominant.b / dominant.count),
+    ]
+    : [255, 255, 255];
+  const backgroundLuminance =
+    0.299 * background[0] + 0.587 * background[1] + 0.114 * background[2];
+
+  // Pick the polarity from the actual pixels instead of a hardcoded "paper is
+  // light": a mid-grey page with black lettering must still use the dark-ink
+  // branch. Then build an Otsu histogram only from the core box.
+  let darkSamples = 0;
+  let lightSamples = 0;
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      const l = pixelLuminance((y * width + x) * 4);
+      if (l < backgroundLuminance - 20) darkSamples += 1;
+      else if (l > backgroundLuminance + 20) lightSamples += 1;
+    }
+  }
+  const inkIsDark = darkSamples >= lightSamples;
+  const strength = new Uint8Array(width * height);
+  const histogram = new Uint32Array(256);
+  let corePixels = 0;
+  let maxStrength = 0;
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      const index = y * width + x;
+      const luminance = pixelLuminance(index * 4);
+      const difference = inkIsDark
+        ? backgroundLuminance - luminance
+        : luminance - backgroundLuminance;
+      const value = difference > 0 ? Math.min(255, Math.round(difference)) : 0;
+      strength[index] = value;
+      histogram[value] += 1;
+      corePixels += 1;
+      if (value > maxStrength) maxStrength = value;
+    }
+  }
+  // A blank/texture-only crop has no meaningful foreground.
+  if (!corePixels || maxStrength < 8) {
+    context.putImageData(context.createImageData(width, height), 0, 0);
+    return { luminance: backgroundLuminance };
+  }
+
+  // Otsu split, with a floor so a nearly uniform paper crop cannot classify
+  // JPEG grain as lettering. The weak threshold is only admitted when it is
+  // connected to a strong stroke; that is what brings the anti-aliased edge in
+  // without turning every bit of paper texture into a cover pixel.
+  let weightedSum = 0;
+  for (let value = 0; value < 256; value += 1) weightedSum += value * histogram[value];
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let bestVariance = -1;
+  let otsu = 0;
+  for (let value = 0; value < 256; value += 1) {
+    backgroundWeight += histogram[value];
+    if (!backgroundWeight) continue;
+    const foregroundWeight = corePixels - backgroundWeight;
+    if (!foregroundWeight) break;
+    backgroundSum += value * histogram[value];
+    const backgroundMean = backgroundSum / backgroundWeight;
+    const foregroundMean = (weightedSum - backgroundSum) / foregroundWeight;
+    const variance = backgroundWeight * foregroundWeight *
+      (backgroundMean - foregroundMean) * (backgroundMean - foregroundMean);
+    if (variance > bestVariance) {
+      bestVariance = variance;
+      otsu = value;
+    }
+  }
+  const strongThreshold = Math.min(
+    maxStrength,
+    Math.max(inkIsDark ? 22 : 18, otsu),
+  );
+  const weakThreshold = Math.max(6, Math.round(strongThreshold * 0.42));
+
+  const mask = new Uint8Array(width * height);
+  const weak = new Uint8Array(width * height);
+  const queue = new Int32Array(Math.max(1, coreWidth * coreHeight));
+  let head = 0;
+  let tail = 0;
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      const index = y * width + x;
+      if (strength[index] >= strongThreshold) {
+        mask[index] = 1;
+        if (tail < queue.length) queue[tail++] = index;
+      } else if (strength[index] >= weakThreshold) {
+        weak[index] = 1;
+      }
+    }
+  }
+  // Connected weak pixels: anti-aliased fringes belong to a stroke; isolated
+  // paper grain does not.
+  while (head < tail) {
+    const index = queue[head++];
+    const y = Math.floor(index / width);
+    const x = index - y * width;
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        if (!dx && !dy) continue;
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < firstX || nx >= lastX || ny < firstY || ny >= lastY) continue;
+        const next = ny * width + nx;
+        if (!weak[next] || mask[next]) continue;
+        mask[next] = 1;
+        if (tail < queue.length) queue[tail++] = next;
+      }
+    }
+  }
+
+  // One diagonal-inclusive pixel of growth takes the blended edge that remains
+  // outside the weak band. This is still a flat paper fill, not local repair.
+  const grown = new Uint8Array(mask);
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      if (!mask[y * width + x]) continue;
+      for (let dy = -1; dy <= 1; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= firstX && nx < lastX && ny >= firstY && ny < lastY) {
+            grown[ny * width + nx] = 1;
+          }
+        }
+      }
+    }
+  }
+
+  // A recognised text crop often includes the balloon frame or speed lines at
+  // its edges. Those lines touch the crop boundary and form a component much
+  // larger than a stroke; keep them out of the cover so the bubble outline
+  // survives. Interior strokes (the actual lettering) are not boundary
+  // components.
+  const visited = new Uint8Array(width * height);
+  const componentQueue = new Int32Array(Math.max(1, coreWidth * coreHeight));
+  const borderAreaFloor = Math.max(80, Math.round(corePixels * 0.012));
+  for (let y = firstY; y < lastY; y += 1) {
+    for (let x = firstX; x < lastX; x += 1) {
+      const start = y * width + x;
+      if (!grown[start] || visited[start]) continue;
+      let componentHead = 0;
+      let componentTail = 0;
+      let minX = x;
+      let minY = y;
+      let maxX = x;
+      let maxY = y;
+      const component = [];
+      componentQueue[componentTail++] = start;
+      visited[start] = 1;
+      while (componentHead < componentTail) {
+        const index = componentQueue[componentHead++];
+        component.push(index);
+        const cy = Math.floor(index / width);
+        const cx = index - cy * width;
+        if (cx < minX) minX = cx;
+        if (cy < minY) minY = cy;
+        if (cx > maxX) maxX = cx;
+        if (cy > maxY) maxY = cy;
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (nx < firstX || nx >= lastX || ny < firstY || ny >= lastY) continue;
+            const next = ny * width + nx;
+            if (!grown[next] || visited[next]) continue;
+            visited[next] = 1;
+            if (componentTail < componentQueue.length) componentQueue[componentTail++] = next;
+          }
+        }
+      }
+      const touchesBorder = minX === firstX || minY === firstY ||
+        maxX === lastX - 1 || maxY === lastY - 1;
+      const spansMost = (maxX - minX + 1) >= coreWidth * 0.55 ||
+        (maxY - minY + 1) >= coreHeight * 0.55;
+      if (touchesBorder && (component.length >= borderAreaFloor || (
+        component.length >= 40 && spansMost
+      ))) {
+        for (const index of component) grown[index] = 0;
+      }
+    }
+  }
+
   // Only the erased strokes are written; everything else stays transparent so
   // the page's own pixels show through — the cover must never replace the
   // artwork with a copy of itself.

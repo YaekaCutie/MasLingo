@@ -2,9 +2,9 @@
 //
 // Three things are verified here:
 //  1. the cover erases only the original lettering: with the region's pixels it
-//     repaints the strokes with the local paper colour and touches nothing
-//     outside the recognised box; without pixels it falls back to the old flat
-//     white block, which is asserted too;
+//     repaints the strokes with one sampled paper colour (no local background
+//     reconstruction) and touches nothing outside the recognised box; without
+//     pixels it falls back to the old flat white block, which is asserted too;
 //  2. the writing direction comes from the recogniser, not from the box's shape;
 //  3. the translation never appears in a window of its own — it is painted over
 //     the original text, and the only chrome the script adds is a small
@@ -237,6 +237,185 @@ try {
     JSON.stringify(masked.paperSample));
   check("框外（气泡描边/画稿）一个像素都没动", masked.opaqueOutside === 0,
     `${masked.opaqueOutside} 个像素被覆盖`);
+
+  console.log("\n白纸上的抗锯齿文字：残留与误盖");
+  const preciseWhite = await page.evaluate(async () => {
+    const WIDTH = 260;
+    const HEIGHT = 160;
+    const CORE = { left: 18, top: 24, right: 242, bottom: 140 };
+    const source = document.createElement("canvas");
+    source.width = WIDTH;
+    source.height = HEIGHT;
+    const sourceContext = source.getContext("2d");
+    sourceContext.fillStyle = "#fbfaf6";
+    sourceContext.fillRect(0, 0, WIDTH, HEIGHT);
+    // Bubble frame outside the text core; it must survive the cover.
+    sourceContext.fillStyle = "#111111";
+    sourceContext.fillRect(0, 2, WIDTH, 7);
+    sourceContext.font = '700 46px "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
+    sourceContext.fillStyle = "#161616";
+    const text = "日本語";
+    const textWidth = sourceContext.measureText(text).width;
+    const textLeft = 28;
+    const textTop = 28;
+    sourceContext.fillText(text, textLeft, 82);
+
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = source.toDataURL("image/png");
+    });
+    const surface = document.createElement("canvas");
+    surface.width = WIDTH;
+    surface.height = HEIGHT;
+    const surfaceContext = surface.getContext("2d", { willReadFrequently: true });
+    surfaceContext.drawImage(image, 0, 0, WIDTH, HEIGHT);
+    const patchPixels = surfaceContext.getImageData(0, 0, WIDTH, HEIGHT);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    MAS_render.drawTranslatedPatch({
+      canvas,
+      context,
+      patchPixels,
+      patch: {
+        core: {
+          left: CORE.left / WIDTH,
+          top: CORE.top / HEIGHT,
+          width: (CORE.right - CORE.left) / WIDTH,
+          height: (CORE.bottom - CORE.top) / HEIGHT,
+        },
+        rect: { width: WIDTH, height: HEIGHT },
+      },
+      direction: "horizontal",
+    }, "");
+
+    const composited = document.createElement("canvas");
+    composited.width = WIDTH;
+    composited.height = HEIGHT;
+    const compositedContext = composited.getContext("2d", { willReadFrequently: true });
+    compositedContext.drawImage(source, 0, 0, WIDTH, HEIGHT);
+    compositedContext.drawImage(canvas, 0, 0, WIDTH, HEIGHT);
+    const result = compositedContext.getImageData(0, 0, WIDTH, HEIGHT).data;
+    const overlay = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+    let residualInk = 0;
+    let covered = 0;
+    let outsideCover = 0;
+    let color = [0, 0, 0];
+    for (let y = 0; y < HEIGHT; y += 1) {
+      for (let x = 0; x < WIDTH; x += 1) {
+        const offset = (y * WIDTH + x) * 4;
+        const inside = x >= CORE.left && x < CORE.right && y >= CORE.top && y < CORE.bottom;
+        if (inside && result[offset + 3] !== 0) {
+          const luminance = 0.299 * result[offset] +
+            0.587 * result[offset + 1] + 0.114 * result[offset + 2];
+          if (luminance < 190) residualInk += 1;
+        }
+        if (overlay[offset + 3] !== 0) {
+          covered += 1;
+          color = [overlay[offset], overlay[offset + 1], overlay[offset + 2]];
+          if (!inside) outsideCover += 1;
+        }
+      }
+    }
+    return { residualInk, covered, outsideCover, color, textLeft, textWidth };
+  });
+
+  check("白纸文字的抗锯齿边缘全部擦除", preciseWhite.residualInk === 0,
+    `${preciseWhite.residualInk} 个残留中等以上暗像素`);
+  check("白纸覆盖使用采样纸色", preciseWhite.color[0] >= 245
+    && preciseWhite.color[1] >= 244 && preciseWhite.color[2] >= 240,
+    JSON.stringify(preciseWhite.color));
+  check("白纸覆盖只发生在文字框内", preciseWhite.outsideCover === 0,
+    `${preciseWhite.outsideCover} 个框外像素`);
+  check("白纸文字区域确实被覆盖", preciseWhite.covered > 300,
+    `${preciseWhite.covered} 个覆盖像素`);
+
+  console.log("\n白纸气泡描边：擦字但保留框线");
+  const bubblePrecise = await page.evaluate(async () => {
+    const WIDTH = 260;
+    const HEIGHT = 160;
+    const CORE = { left: 18, top: 24, right: 242, bottom: 140 };
+    const TEXT_BOX = { left: 26, top: 45, right: 230, bottom: 112 };
+    const BORDER_BAND = { left: CORE.left, top: CORE.top, right: CORE.right, bottom: CORE.top + 7 };
+    const source = document.createElement("canvas");
+    source.width = WIDTH;
+    source.height = HEIGHT;
+    const sourceContext = source.getContext("2d");
+    sourceContext.fillStyle = "#ffffff";
+    sourceContext.fillRect(0, 0, WIDTH, HEIGHT);
+    // A bubble frame lies inside the recognised crop and touches its boundary.
+    sourceContext.fillStyle = "#111111";
+    sourceContext.fillRect(BORDER_BAND.left, BORDER_BAND.top,
+      BORDER_BAND.right - BORDER_BAND.left, BORDER_BAND.bottom - BORDER_BAND.top);
+    sourceContext.font = '700 46px "Microsoft YaHei", "Noto Sans CJK SC", sans-serif';
+    sourceContext.fillStyle = "#161616";
+    sourceContext.fillText("日本語", 30, 102);
+
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = source.toDataURL("image/png");
+    });
+    const surface = document.createElement("canvas");
+    surface.width = WIDTH;
+    surface.height = HEIGHT;
+    const surfaceContext = surface.getContext("2d", { willReadFrequently: true });
+    surfaceContext.drawImage(image, 0, 0, WIDTH, HEIGHT);
+    const patchPixels = surfaceContext.getImageData(0, 0, WIDTH, HEIGHT);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    MAS_render.drawTranslatedPatch({
+      canvas,
+      context,
+      patchPixels,
+      patch: {
+        core: {
+          left: CORE.left / WIDTH,
+          top: CORE.top / HEIGHT,
+          width: (CORE.right - CORE.left) / WIDTH,
+          height: (CORE.bottom - CORE.top) / HEIGHT,
+        },
+        rect: { width: WIDTH, height: HEIGHT },
+      },
+      direction: "horizontal",
+    }, "");
+
+    const composited = document.createElement("canvas");
+    composited.width = WIDTH;
+    composited.height = HEIGHT;
+    const compositedContext = composited.getContext("2d", { willReadFrequently: true });
+    compositedContext.drawImage(source, 0, 0, WIDTH, HEIGHT);
+    compositedContext.drawImage(canvas, 0, 0, WIDTH, HEIGHT);
+    const result = compositedContext.getImageData(0, 0, WIDTH, HEIGHT).data;
+    let textResidual = 0;
+    let borderKept = 0;
+    for (let y = 0; y < HEIGHT; y += 1) {
+      for (let x = 0; x < WIDTH; x += 1) {
+        const offset = (y * WIDTH + x) * 4;
+        const luminance = 0.299 * result[offset] +
+          0.587 * result[offset + 1] + 0.114 * result[offset + 2];
+        const inText = x >= TEXT_BOX.left && x < TEXT_BOX.right &&
+          y >= TEXT_BOX.top && y < TEXT_BOX.bottom;
+        const inBorder = x >= BORDER_BAND.left && x < BORDER_BAND.right &&
+          y >= BORDER_BAND.top && y < BORDER_BAND.bottom;
+        if (inText && luminance < 190) textResidual += 1;
+        if (inBorder && luminance < 80) borderKept += 1;
+      }
+    }
+    return { textResidual, borderKept };
+  });
+  check("文字区域无残留", bubblePrecise.textResidual === 0,
+    `${bubblePrecise.textResidual} 个文字像素`);
+  check("气泡框线没有被擦掉", bubblePrecise.borderKept > 800,
+    `${bubblePrecise.borderKept} 个框线像素`);
 
   const darkCover = await page.evaluate(async () => {
     const WIDTH = 160;
