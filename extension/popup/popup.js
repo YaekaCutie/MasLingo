@@ -92,6 +92,8 @@ const CONTENT_SCRIPTS = [
   "content/auto.js",
   "content/panel.js",
   "content/content.js",
+  "content/text-translate.js",
+    "content/selection-translate.js",
 ];
 
 // Order matters: the tokens and the material come first, then the surfaces that

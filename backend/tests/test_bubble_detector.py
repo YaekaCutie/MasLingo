@@ -1,15 +1,32 @@
 import unittest
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 from backend.ocr.bubble_detector import (
     MAX_TEXT_REGIONS,
+    _is_page_light_background,
     _share_text_line,
     detect_text_regions,
 )
 
 
 class BubbleDetectorTests(unittest.TestCase):
+    def test_page_margin_filter_distinguishes_light_page_from_white_panel_text(self):
+        gray = np.full((320, 480), 255, dtype=np.uint8)
+        self.assertTrue(
+            _is_page_light_background(gray, (0, 0, 480, 40), 480, 320),
+        )
+
+        # A dark panel touching the top edge with white glyph strokes is text,
+        # not the light page margin around it.
+        gray[0:240, 80:400] = 20
+        for left in (120, 145, 170, 195):
+            gray[80:120, left:left + 12] = 250
+        self.assertFalse(
+            _is_page_light_background(gray, (80, 0, 400, 240), 480, 320),
+        )
+
     def test_groups_neighboring_glyphs_and_keeps_separate_text_regions(self):
         image = Image.new("RGB", (400, 200), "white")
         draw = ImageDraw.Draw(image)

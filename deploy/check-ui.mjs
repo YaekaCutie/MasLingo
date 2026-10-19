@@ -144,6 +144,9 @@ try {
       endpoint: !document.getElementById("fieldEndpoint").hidden,
       appId: !document.getElementById("fieldAppId").hidden,
       target: !document.getElementById("fieldTarget").hidden,
+      glossary: !document.getElementById("fieldGlossary").hidden,
+      glossaryOptions: [...document.getElementById("translationGlossary").options]
+        .map((option) => option.value),
       note: document.getElementById("providerNote").textContent.trim(),
     }));
   };
@@ -156,10 +159,16 @@ try {
   check("OpenAI 显示密钥与模型", openaiFields.key && openaiFields.model);
   check("OpenAI 不需要 APP ID", !openaiFields.appId);
   check("对话类来源显示目标语言", openaiFields.target);
+  check("对话类来源显示术语库且包含医学/法律",
+    openaiFields.glossary
+      && openaiFields.glossaryOptions.includes("medical")
+      && openaiFields.glossaryOptions.includes("legal"),
+    JSON.stringify(openaiFields.glossaryOptions));
 
   const baiduFields = await setProvider("baidu");
   check("百度显示 APP ID", baiduFields.appId);
   check("百度不显示目标语言（用语言代码）", !baiduFields.target);
+  check("翻译 API 不显示术语库", !baiduFields.glossary);
 
   const customFields = await setProvider("custom");
   check("自定义来源可编辑接口地址", customFields.endpoint);
@@ -184,6 +193,7 @@ try {
     document.getElementById("translationModel").value = "mock-model";
     document.getElementById("translationApiKey").value = "test-key";
   }, mockEndpoint);
+  await options.select("#translationGlossary", "medical");
   await options.click("#save");
   await new Promise((done) => setTimeout(done, 300));
   await options.click("#test");
@@ -204,6 +214,7 @@ try {
     check("带上配置的模型名", sent.model === "mock-model", sent.model);
     check("提示词包含待翻译原文", sent.prompt.includes("おはよう"));
     check("提示词包含目标语言", sent.prompt.includes("简体中文"));
+    check("提示词包含所选术语库", sent.prompt.includes("术语库（医学）"), sent.prompt.slice(0, 80));
   }
   // 型号归属：刚才的 mock-model 属于 custom，切到别的来源后输入框不应再显示它，
   // 否则下一次保存会把它当成新来源的型号发出去。

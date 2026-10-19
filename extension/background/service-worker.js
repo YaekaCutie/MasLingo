@@ -250,6 +250,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           source: provider.source || "ja",
           texts: [message.text],
           strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
+          glossary: cfg.translationGlossary || "general",
           // Baidu signs with a random salt and a timestamp; without them the
           // signature is built over the literal string "undefined" and the
           // probe can never pass.
@@ -295,6 +296,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  if (message?.type === "TRANSLATE_TEXT_BLOCKS") {
+    // Webpage paragraphs. Same provider settings as the manga flow; the
+    // caller may carry a per-box language chosen in its title menu, which is
+    // mapped to whatever dialect that provider expects.
+    (async () => {
+      try {
+        const cfg = await chrome.storage.local.get([
+          "translationMode", "translationProvider", "translationEndpoint",
+          "translationModel", "translationModelProvider", "translationApiKey",
+          "translationAppId", "targetLanguage", "translationStrength",
+          "translationGlossary",
+        ]);
+        const provider = resolveProvider(cfg);
+        if (!provider) {
+          sendResponse({ ok: false, reason: "尚未选择翻译来源" });
+          return;
+        }
+        const texts = (message.texts || [])
+          .map((text) => String(text ?? ""))
+          .filter((text) => text.trim());
+        if (!texts.length) {
+          sendResponse({ ok: true, translations: [], skipped: [] });
+          return;
+        }
+        const sourceName = message.source || globalThis.MAS_providers.autoSource || "自动识别";
+        const targetName = message.target || cfg.targetLanguage || "简体中文";
+        const language = globalThis.MAS_providers.languageByName(sourceName);
+        const overrides = {
+          source: globalThis.MAS_providers.sourceForLanguage(provider, sourceName),
+          sourceName: sourceName === (globalThis.MAS_providers.autoSource || "自动识别")
+            ? "自动识别"
+            : (language?.zh || sourceName),
+          target: globalThis.MAS_providers.targetForLanguage(provider, targetName),
+        };
+        const { translations, skipped } = await runTranslationDetailed(texts, cfg, overrides);
+        sendResponse({ ok: true, translations, skipped });
+      } catch (error) {
+        sendResponse({ ok: false, reason: String(error?.message || error) });
+      }
+    })();
+    return true;
+  }
+  if (message?.type === "LOOKUP_WORD") {
+    // Selection translation. A short word asks the chat model for a dictionary
+    // entry in the style of the standard dictionaries; a phrase (or any
+    // non-chat source) falls back to an ordinary translation. The response says
+    // which shape it returned so the content script can render it honestly.
+    (async () => {
+      try {
+        sendResponse(await lookupSelection(
+          message.text,
+          message.context,
+          message.word === true,
+        ));
+      } catch (error) {
+        sendResponse({ ok: false, reason: String(error?.message || error) });
+      }
+    })();
+    return true;
+  }
   if (message?.type === "CAPTURE_CROP") {
     // The tab is taken from the sender rather than the message: a content
     // script has no way to know its own tab id, and the first version of this
@@ -324,19 +385,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       try {
         const cfg = await chrome.storage.local.get([
           "translationMode", "translationProvider", "translationEndpoint",
-          "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
+          "translationModel", "translationModelProvider", "translationApiKey",
+          "translationAppId", "targetLanguage", "translationStrength",
+          "translationGlossary",
         ]);
         const provider = resolveProvider(cfg);
         if (!provider) {
           sendResponse({ ok: true, mode: "none", items: [] });
           return;
         }
-        const translated = await runTranslation(message.texts || [], cfg);
+        const { translations: translated, skipped } =
+          await runTranslationDetailed(message.texts || [], cfg);
         sendResponse({
           ok: true,
           mode: effectiveMode(provider),
           items: (message.texts || []).map((text, index) => ({
-            text, translated: translated[index],
+            text,
+            translated: translated[index],
+            skipped: Boolean(skipped[index]),
           })),
         });
       } catch (error) {
@@ -351,7 +417,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const cfg = await chrome.storage.local.get([
         "translationMode", "translationProvider", "translationEndpoint",
         "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
-        "translationStrength", "translationModelProvider",
+        "translationStrength", "translationModelProvider", "translationGlossary",
       ]);
       const translated = await runTranslation(["おはよう"], cfg);
       sendResponse({ ok: true, translated: translated[0] });
@@ -702,26 +768,110 @@ async function providerFetch(url, init, provider, timeoutMs) {
   return json;
 }
 
-async function runTranslation(texts, cfg) {
-  const provider = resolveProvider(cfg);
-  if (!provider) throw new Error("未启用翻译");
-  const registry = globalThis.MAS_providers;
-
-  const common = {
+/**
+ * Everything an adapter needs except the text itself.
+ *
+ * Shared by ordinary translation, the dictionary lookup and the paragraph
+ * translator's per-box language menu. Keeping one builder means a fix to model,
+ * strength or target resolution cannot apply to only one of those paths.
+ */
+function providerRequestCommon(provider, cfg, overrides = {}) {
+  return {
     endpoint: (cfg.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),
     apiKey: cfg.translationApiKey || "",
     appId: cfg.translationAppId || "",
     model: globalThis.MAS_providers.resolveModel(provider, cfg),
     mode: cfg.translationMode || "openai-compatible",
     strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
-    source: provider.source || "ja",
-    // One resolution rule, shared with the connectivity probe above.
-    target: globalThis.MAS_providers.resolveTarget(provider, cfg),
+    glossary: cfg.translationGlossary || "general",
+    source: overrides.source ?? provider.source ?? "ja",
+    // Chat models are told the language in words; code APIs already got a code.
+    sourceName: overrides.sourceName || "日文",
+    // One resolution rule, shared with the connectivity probe above. The
+    // paragraph translator may override it per box (its title menu).
+    target: overrides.target || globalThis.MAS_providers.resolveTarget(provider, cfg),
     salt: Math.floor(Math.random() * 1e9),
   };
+}
+
+/**
+ * Detect the base language of a sample.
+ *
+ * The script guess settles Chinese/Japanese/Korean/Cyrillic/Arabic/etc.
+ * without a round trip. Latin text goes through Chrome's local detector so a
+ * French sentence is not mistaken for English just because it uses the same
+ * alphabet.
+ */
+async function detectLanguageBase(sample) {
+  const text = String(sample || "").trim().slice(0, 800);
+  if (!text) return "";
+  const registry = globalThis.MAS_providers;
+  const script = registry.detectScriptLanguage(text);
+  if (!script) return "";
+  if (script !== "latin") return script;
+  if (typeof globalThis.chrome?.i18n?.detectLanguage !== "function") return script;
+  const result = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish(null), 800);
+    globalThis.chrome.i18n.detectLanguage(text, (detected) => {
+      clearTimeout(timer);
+      finish(detected);
+    });
+  });
+  const top = result?.languages?.[0];
+  return top?.language ? registry.languageBase(top.language) : script;
+}
+
+/**
+ * Translate a batch, preserving skipped items.
+ *
+ * A line already in the target language comes back unchanged and is marked in
+ * `skipped`, so callers can leave the original artwork/paragraph alone instead
+ * of drawing a translation of the same language over it. This is also why the
+ * provider is not called for those lines at all.
+ */
+async function runTranslationDetailed(texts, cfg, overrides = {}) {
+  const provider = resolveProvider(cfg);
+  if (!provider) throw new Error("未启用翻译");
+  const common = providerRequestCommon(provider, cfg, overrides);
   if (!common.endpoint && provider.endpointEditable) {
     throw new Error(`${provider.label} 需要填写接口地址`);
   }
+
+  const registry = globalThis.MAS_providers;
+  const targetBase = registry.languageBase(common.target) ||
+    registry.languageBase(cfg.targetLanguage);
+  const sourceBase = registry.languageBase(overrides.sourceName) ||
+    registry.languageBase(common.source);
+  const skipped = new Array(texts.length).fill(false);
+  const pending = [];
+  for (let index = 0; index < texts.length; index += 1) {
+    const text = String(texts[index] ?? "");
+    if (!text.trim()) {
+      skipped[index] = true;
+      continue;
+    }
+    const sample = index === 0 && overrides.languageSample
+      ? overrides.languageSample
+      : text;
+    if (targetBase && (
+      sourceBase === targetBase ||
+      registry.likelySameLanguage(text, targetBase, sample) ||
+      (await detectLanguageBase(sample)) === targetBase
+    )) {
+      skipped[index] = true;
+      continue;
+    }
+    pending.push({ text, index });
+  }
+
+  const translations = texts.map((text) => String(text ?? ""));
+  if (!pending.length) return { translations, skipped };
 
   // Google's public endpoint takes one query per request, so it is called once
   // per text rather than in a batch. Awaited: adapters may be async (必应
@@ -730,24 +880,157 @@ async function runTranslation(texts, cfg) {
   // network error.
   if (provider.perRequest) {
     const out = [];
-    for (const text of texts) {
+    for (const entry of pending) {
+      const text = entry.text;
       const request = await provider.adapter({ ...common, text, texts: [text] });
       const json = await providerFetch(request.url, request.init, provider);
       out.push(...provider.parse(json, 1));
     }
-    return out;
+    pending.forEach((entry, index) => {
+      translations[entry.index] = String(out[index] ?? "");
+    });
+    return { translations, skipped };
   }
 
-  const request = await provider.adapter({ ...common, texts });
+  const request = await provider.adapter({
+    ...common,
+    texts: pending.map((entry) => entry.text),
+  });
   const json = await providerFetch(request.url, request.init, provider);
-  return provider.parse(json, texts.length);
+  const parsed = provider.parse(json, pending.length);
+  pending.forEach((entry, index) => {
+    translations[entry.index] = String(parsed[index] ?? "");
+  });
+  return { translations, skipped };
+}
+
+async function runTranslation(texts, cfg, overrides = {}) {
+  const { translations } = await runTranslationDetailed(texts, cfg, overrides);
+  return translations;
+}
+
+/**
+ * Answer a selection lookup.
+ *
+ * Words get a structured dictionary entry when the selected source is an AI
+ * model. The entry is not fetched from a dictionary website: the prompt asks
+ * the model to organise its answer according to the standard dictionaries for
+ * the language (広辞苑 / 新明解 for Japanese, 现代汉语词典 for Chinese, Oxford /
+ * Longman for English) and to identify the sense used by the surrounding
+ * sentence. A free translation API cannot produce that structure, so it gets
+ * the ordinary-translation path and the UI says so instead of pretending.
+ */
+async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
+  const text = String(rawText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const context = String(rawContext || "").replace(/\s+/g, " ").trim().slice(0, 600);
+  if (!text) throw new Error("没有选中文本");
+
+  const cfg = await chrome.storage.local.get([
+    "translationMode", "translationProvider", "translationEndpoint",
+    "translationModel", "translationModelProvider", "translationApiKey",
+    "translationAppId", "targetLanguage", "translationStrength",
+    "translationGlossary",
+  ]);
+  const provider = resolveProvider(cfg);
+  if (!provider) throw new Error("尚未选择翻译来源");
+
+  const registry = globalThis.MAS_providers;
+  const targetName = cfg.targetLanguage || "简体中文";
+  const targetLabel = registry.languageByName(targetName)?.name || targetName;
+  const overrides = {
+    source: registry.sourceForLanguage(provider, registry.autoSource),
+    sourceName: "自动识别",
+    target: registry.targetForLanguage(provider, targetName),
+  };
+  const common = providerRequestCommon(provider, cfg, overrides);
+  if (!common.endpoint && provider.endpointEditable) {
+    throw new Error(`${provider.label} 需要填写接口地址`);
+  }
+
+  let dictionaryError = "";
+  const chat = registry.isChatProvider(provider);
+  if (chat && wantsDictionary) {
+    try {
+      const request = await provider.adapter({
+        ...common,
+        text,
+        texts: [text],
+        maxTokens: 4096,
+        prompt: registry.dictionaryPrompt(
+          text,
+          context,
+          targetLabel,
+          cfg.translationGlossary || "general",
+        ),
+      });
+      const json = await providerFetch(request.url, request.init, provider);
+      const content = registry.extractChatText(provider, json);
+      const entry = registry.parseDictionary(content);
+      if (!entry.word) entry.word = text;
+      return {
+        ok: true,
+        kind: "dictionary",
+        entry,
+        target: targetLabel,
+        provider: provider.label,
+      };
+    } catch (error) {
+      dictionaryError = String(error?.message || error).slice(0, 180);
+    }
+  }
+
+  try {
+    const { translations: translated, skipped } = await runTranslationDetailed(
+      [text],
+      cfg,
+      {
+        ...overrides,
+        // The selected word alone is often ambiguous; the surrounding sentence
+        // is what lets the detector see kana around a kanji-only selection.
+        languageSample: context ? `${text}\n${context}` : text,
+      },
+    );
+    if (skipped[0]) {
+      const reason = dictionaryError
+        ? `词典释义未能生成（${dictionaryError}）。`
+        : "";
+      return {
+        ok: true,
+        kind: "notice",
+        text,
+        target: targetLabel,
+        provider: provider.label,
+        notice: `原文已是${targetLabel}，无需翻译。${reason}`,
+      };
+    }
+    return {
+      ok: true,
+      kind: "text",
+      text,
+      translation: String(translated?.[0] ?? "").trim(),
+      target: targetLabel,
+      provider: provider.label,
+      notice: wantsDictionary && chat
+        ? `词典释义未能生成（${dictionaryError}），已改为普通翻译。`
+        : wantsDictionary
+          ? "词典释义需要 AI 大模型来源；当前来源只提供普通翻译。"
+          : "",
+    };
+  } catch (error) {
+    if (dictionaryError) {
+      throw new Error(
+        `词典释义失败：${dictionaryError}；普通翻译也失败：${String(error?.message || error)}`,
+      );
+    }
+    throw error;
+  }
 }
 
 async function translateTexts(msg, port) {
   const cfg = await chrome.storage.local.get([
     "translationMode", "translationProvider", "translationEndpoint",
     "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
-    "translationStrength", "translationModelProvider",
+    "translationStrength", "translationModelProvider", "translationGlossary",
   ]);
   const provider = resolveProvider(cfg);
   try {
@@ -764,14 +1047,19 @@ async function translateTexts(msg, port) {
       });
       return;
     }
-    const translated = await runTranslation(msg.texts || [], cfg);
+    const { translations: translated, skipped } =
+      await runTranslationDetailed(msg.texts || [], cfg);
     postPortMessage(port, {
       type: "TRANSLATION_RESULT",
       requestId: msg.requestId,
       mode: effectiveMode(provider),
       result: {
         ok: true,
-        items: (msg.texts || []).map((text, index) => ({ text, translated: translated[index] })),
+        items: (msg.texts || []).map((text, index) => ({
+          text,
+          translated: translated[index],
+          skipped: Boolean(skipped[index]),
+        })),
       },
     });
   } catch (error) {

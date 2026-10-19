@@ -94,6 +94,18 @@ def _components(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
 MAX_TEXT_REGIONS = 80
 MAX_REGION_AREA_RATIO = 0.05
 MAX_DARK_TEXT_CONTEXT_AREA_RATIO = 0.08
+# White lettering on a black panel can touch a white face highlight or the
+# page margin after the normal dilation, producing one large component that
+# the 5% area cap discards. A second, tighter light-mask pass recovers those
+# groups. It only accepts a large, mostly-dark, mostly-light-ink box, so the
+# extra pass does not add the small face/hair highlights the normal pass
+# already sees (or deliberately ignores).
+LIGHT_TEXT_RECOVERY_KERNEL = 7
+LIGHT_TEXT_RECOVERY_MIN_AREA_RATIO = 0.005
+LIGHT_TEXT_RECOVERY_MAX_AREA_RATIO = 0.08
+LIGHT_TEXT_RECOVERY_DARK_RATIO = 0.50
+LIGHT_TEXT_RECOVERY_LIGHT_RATIO = 0.06
+LIGHT_TEXT_RECOVERY_MIN_ASPECT = 1.2
 
 # Overlap, as a fraction of the smaller box, above which two proposals count as
 # the same piece of text. A balloon proposal and the glyphs inside it overlap
@@ -257,6 +269,40 @@ def _has_text_like_ink(gray_pixels: np.ndarray, box: tuple[int, int, int, int]) 
     score = _glyph_score(gray_pixels, box)
     box_area = (box[2] - box[0]) * (box[3] - box[1])
     return score >= MIN_GLYPH_SCORE and score >= 0.10 * box_area
+
+
+def _is_page_light_background(
+    gray_pixels: np.ndarray,
+    box: tuple[int, int, int, int],
+    width: int,
+    height: int,
+) -> bool:
+    """Whether a light-mask proposal is the page margin, not lettering.
+
+    A white page strip at the top/right edge is a large light component. When
+    it touches the white strokes of a dark-panel caption, the grouping step
+    merges both and the resulting box exceeds the 5% area cap, so the caption
+    vanishes without ever reaching OCR. Black-on-white text is handled by the
+    dark masks, so rejecting a large, edge-touching, mostly-light region from
+    the light masks is safe; white lettering on a dark panel keeps a high dark
+    share and is not rejected.
+    """
+    left, top, right, bottom = box
+    box_area = (right - left) * (bottom - top)
+    page_area = width * height
+    if box_area < page_area * 0.02:
+        return False
+    edge = max(2, round(min(width, height) * 0.005))
+    touches_edge = (
+        left <= edge or top <= edge or
+        right >= width - edge or bottom >= height - edge
+    )
+    if not touches_edge:
+        return False
+    region = gray_pixels[top:bottom, left:right]
+    light_share = np.count_nonzero(region > 235) / box_area
+    dark_share = np.count_nonzero(region < 70) / box_area
+    return light_share >= 0.45 and dark_share < 0.50
 
 
 def _glyph_score(gray_pixels: np.ndarray, box: tuple[int, int, int, int]) -> int:
@@ -468,61 +514,94 @@ def detect_text_regions(
     bubble_candidates = inset_candidates
 
     for mask_index, ink in enumerate(ink_masks):
-        grouped = Image.fromarray(ink.astype(np.uint8) * 255)
-        # Remove isolated one-pixel artwork/panel strokes before dilation.
-        # Otherwise a dense manga hatch/grid becomes one connected component
-        # that encloses and suppresses all of the actual lettering.
-        #
-        # The two local-contrast masks are exempt. They are what catches thin
-        # lettering painted straight onto the artwork — white dialogue over a
-        # dark panel, for instance — and a 3x3 erosion deletes exactly the
-        # one-to-two-pixel strokes they exist to find. Measured with
-        # tools/probe_pipeline.py across display widths 400-900 on a real page,
-        # eroding those two masks lost the white-on-black line at every width
-        # where it would otherwise be found.
-        if mask_index < 2:
-            # Dot-grid textures (some web scans print halftone darker than 185)
-            # are 1-3px specks; dilated they fuse into one page-sized web that
-            # swallows the lettering along with them. Clearing the sub-glyph
-            # specks *before* the dilation keeps glyph strokes — orders of
-            # magnitude larger — and is what finally let the labelled corpus
-            # page's text form a candidate at all.
-            speck_cleared = np.zeros_like(ink)
-            for speck_left, speck_top, speck_right, speck_bottom in _components(ink):
-                if (speck_right - speck_left) * (speck_bottom - speck_top) >= 12:
-                    speck_cleared[speck_top:speck_bottom, speck_left:speck_right] |= (
-                        ink[speck_top:speck_bottom, speck_left:speck_right]
-                    )
-            grouped = Image.fromarray(speck_cleared.astype(np.uint8) * 255)
-            grouped = grouped.filter(ImageFilter.MinFilter(3))
-        grouped = grouped.filter(ImageFilter.MaxFilter(kernel))
-        for left, top, right, bottom in _components(np.asarray(grouped) > 0):
-            box_width, box_height = right - left, bottom - top
-            box_area = box_width * box_height
-            if box_width < 8 or box_height < 8:
-                continue
-            if box_width > width * 0.92 or box_height > height * 0.92:
-                continue
-            if box_area > width * height * MAX_REGION_AREA_RATIO:
-                continue
-            ink_count = int(ink[top:bottom, left:right].sum())
-            if ink_count < minimum_ink:
-                continue
-            if ink_count / box_area > 0.78:
-                continue
-            if mask_index == 1 and np.count_nonzero(
-                gray_values[top:bottom, left:right] < 185
-            ) / box_area < 0.35:
-                continue
-            # Add a small margin around the detected glyph group.
-            padding = max(2, round(min(box_width, box_height) * 0.08))
-            candidates.append((
-                max(0, left - padding),
-                max(0, top - padding),
-                min(width, right + padding),
-                min(height, bottom + padding),
-                ink_count,
-            ))
+        # The global light mask gets a second, tighter dilation. Text painted
+        # on a black panel can sit within one dilation step of a white face
+        # highlight; the normal kernel merges them into a box above the area
+        # cap, and the whole line disappears. The tighter pass only contributes
+        # candidates that still look like large light-on-dark text, so ordinary
+        # artwork highlights do not become extra OCR regions.
+        passes = ((kernel, False),)
+        if mask_index == 1:
+            passes = ((kernel, False), (LIGHT_TEXT_RECOVERY_KERNEL, True))
+        for active_kernel, recovery in passes:
+            grouped = Image.fromarray(ink.astype(np.uint8) * 255)
+            # Remove isolated one-pixel artwork/panel strokes before dilation.
+            # Otherwise a dense manga hatch/grid becomes one connected component
+            # that encloses and suppresses all of the actual lettering.
+            #
+            # The two local-contrast masks are exempt. They are what catches thin
+            # lettering painted straight onto the artwork — white dialogue over a
+            # dark panel, for instance — and a 3x3 erosion deletes exactly the
+            # one-to-two-pixel strokes they exist to find. Measured with
+            # tools/probe_pipeline.py across display widths 400-900 on a real page,
+            # eroding those two masks lost the white-on-black line at every width
+            # where it would otherwise be found.
+            if mask_index < 2:
+                # Dot-grid textures (some web scans print halftone darker than
+                # 185) are 1-3px specks; dilated they fuse into one page-sized
+                # web that swallows the lettering along with them. Clearing the
+                # sub-glyph specks *before* the dilation keeps glyph strokes —
+                # orders of magnitude larger — and is what finally let the
+                # labelled corpus page's text form a candidate at all.
+                speck_cleared = np.zeros_like(ink)
+                for speck_left, speck_top, speck_right, speck_bottom in _components(ink):
+                    if (speck_right - speck_left) * (speck_bottom - speck_top) >= 12:
+                        speck_cleared[speck_top:speck_bottom, speck_left:speck_right] |= (
+                            ink[speck_top:speck_bottom, speck_left:speck_right]
+                        )
+                grouped = Image.fromarray(speck_cleared.astype(np.uint8) * 255)
+                grouped = grouped.filter(ImageFilter.MinFilter(3))
+            grouped = grouped.filter(ImageFilter.MaxFilter(active_kernel))
+            for left, top, right, bottom in _components(np.asarray(grouped) > 0):
+                box_width, box_height = right - left, bottom - top
+                box_area = box_width * box_height
+                if box_width < 8 or box_height < 8:
+                    continue
+                if box_width > width * 0.92 or box_height > height * 0.92:
+                    continue
+                if box_area > width * height * MAX_REGION_AREA_RATIO:
+                    continue
+                ink_count = int(ink[top:bottom, left:right].sum())
+                if ink_count < minimum_ink:
+                    continue
+                if ink_count / box_area > 0.78:
+                    continue
+                region_pixels = gray_values[top:bottom, left:right]
+                if mask_index == 1 and np.count_nonzero(
+                    region_pixels < 185
+                ) / box_area < 0.35:
+                    continue
+                if mask_index in (1, 3) and _is_page_light_background(
+                    gray_values, (left, top, right, bottom), width, height,
+                ):
+                    continue
+                if recovery:
+                    page_area = width * height
+                    if box_area < page_area * LIGHT_TEXT_RECOVERY_MIN_AREA_RATIO:
+                        continue
+                    if box_area > page_area * LIGHT_TEXT_RECOVERY_MAX_AREA_RATIO:
+                        continue
+                    if np.count_nonzero(region_pixels < 70) / box_area < (
+                        LIGHT_TEXT_RECOVERY_DARK_RATIO
+                    ):
+                        continue
+                    if np.count_nonzero(region_pixels > 235) / box_area < (
+                        LIGHT_TEXT_RECOVERY_LIGHT_RATIO
+                    ):
+                        continue
+                    if max(box_width / box_height, box_height / box_width) < (
+                        LIGHT_TEXT_RECOVERY_MIN_ASPECT
+                    ):
+                        continue
+                # Add a small margin around the detected glyph group.
+                padding = max(2, round(min(box_width, box_height) * 0.08))
+                candidates.append((
+                    max(0, left - padding),
+                    max(0, top - padding),
+                    min(width, right + padding),
+                    min(height, bottom + padding),
+                    ink_count,
+                ))
 
     # Keep the most text-like regions if a page contains substantial artwork
     # noise, then restore page reading order (top-to-bottom, right-to-left).

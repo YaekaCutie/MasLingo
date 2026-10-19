@@ -387,8 +387,10 @@ function showTranslationResult(message) {
     clearOverlay();
     showToast(`翻译失败，已保留日文原文：${error}`, "error");
   } else {
+    const skippedCount = items.filter((item) => item?.skipped).length;
     const hasAllTranslations = items.length === resultContents.length &&
-      items.every(item => typeof item.translated === "string" && item.translated.trim());
+      items.every(item => item?.skipped ||
+        (typeof item?.translated === "string" && item.translated.trim()));
     if (!hasAllTranslations) {
       clearOverlay();
       showToast("翻译服务未返回完整结果，已保留日文原文。", "error");
@@ -397,12 +399,17 @@ function showTranslationResult(message) {
       showToast("缺少文字框位置，请重载扩展并刷新漫画页面后重试。", "error");
     } else {
       resultContents.forEach((entry, index) => {
+        if (items[index]?.skipped) return;
         if (entry.canvas.isConnected && entry.patch) {
           const translated = items[index].translated.trim();
           entry.canvas.setAttribute("aria-label", translated);
           drawTranslatedPatch(entry, translated);
         }
       });
+      if (items.length && skippedCount === items.length) {
+        clearOverlay();
+        showToast("原文已是目标语言，无需翻译。", "info");
+      }
     }
   }
   closeRequestPort();

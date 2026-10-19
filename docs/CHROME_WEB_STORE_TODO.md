@@ -71,6 +71,8 @@
 - [ ] 你的 OCR 托管后端（域名 + 用途 + 保留策略）
 - [ ] Google 翻译（仅在用户显式启用 `free-translate` 时）
 - [ ] 用户自己配置的 OpenAI-compatible 接口（域名由用户决定）
+- [ ] 划词翻译：用户选中的文字与附近约 100 字上下文会发给当前翻译来源；关闭「划词翻译」后不发送
+- [ ] 悬停翻译：鼠标停留的网页段落会发给当前翻译来源；移开或关闭开关后不再发送
 - [ ] 写明：截图不写入服务器日志、不用于训练、不做广告用途
 - [ ] 加入 Limited Use 声明原文：*"The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements."*
 - [ ] 托管到一个公开 URL（GitHub Pages 免费且够用）
@@ -111,7 +113,7 @@
 
 "Privacy practices" 标签页每一项都要填，否则无法发布/更新：
 
-- [ ] **单一用途描述**：建议写成"把用户选中的漫画画面文字识别为日文，并在原图位置叠加简体中文翻译"
+- [ ] **单一用途描述**：建议写成"识别并翻译漫画画面、网页段落和用户选中的文字：漫画在原图位置叠加译文，网页文本与划词显示翻译结果"
 - [ ] **权限逐条说明**（每个 manifest 权限一个输入框）
 - [ ] **远程代码声明**：选 **"No, I am not using remote code"**——这是真的，后端只返回 JSON 文本，扩展里没有 `eval`/`new Function`/远程脚本
 - [ ] **数据用途勾选**：至少要勾"网站内容（Website content）"，很可能还要勾"网页浏览活动（Web browsing activity）"

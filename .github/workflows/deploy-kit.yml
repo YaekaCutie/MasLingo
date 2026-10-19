@@ -80,6 +80,22 @@ jobs:
       - name: The AI-mode morph and the probe's text forwarding
         run: xvfb-run -a node deploy/check-ai-panel.mjs
 
+      # 网页文本: paragraphs get a white, collapsible translation card whose
+      # title carries a target-language menu.
+      - name: Webpage paragraph translation cards
+        run: xvfb-run -a node deploy/check-text-translate.mjs
+
+      # 划词翻译: a selected word gets every dictionary sense with its part of
+      # speech and an example, with the sense used on the page highlighted; a
+      # selected phrase falls back to ordinary translation.
+      - name: Selection translation and dictionary senses
+        run: xvfb-run -a node deploy/check-selection-translate.mjs
+
+      # A Chinese line with a Chinese target must not be sent to the provider;
+      # the same batch's Japanese lines still translate.
+      - name: Same-language suppression
+        run: xvfb-run -a node deploy/check-same-language.mjs
+
       # Settings and popup wiring, plus a real translation round trip against a
       # local stand-in for an OpenAI-compatible service. Port 8001 is reused
       # because it is already in host_permissions and nothing else runs in this

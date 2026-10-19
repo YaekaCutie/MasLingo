@@ -374,7 +374,16 @@ const MAS_auto = (() => {
       // answers with an empty list; a configured provider always returns one
       // item per input, or runTranslation throws.
       const translationOff = (translation.items || []).length === 0;
+      const skippedCount = (translation.items || []).filter((item) => item?.skipped).length;
       fresh.forEach((region, index) => {
+        if (translation.items?.[index]?.skipped) {
+          // The source line is already in the target language. Leave the
+          // original artwork untouched; painting the same text with a Chinese
+          // font would replace crisp lettering for no benefit.
+          track(region.id, STATE.TRANSLATED);
+          region.box.finish();
+          return;
+        }
         const translated = String(translation.items?.[index]?.translated || "").trim();
         if (!translated && !translationOff) {
           // A provider *is* configured, so an empty answer for this line is a
@@ -405,6 +414,7 @@ const MAS_auto = (() => {
         // panel clears a persistent error line back to the sample sentence.
         // Translation off is not a resolution of anything, so it stays info.
         if (translationOff) say("已识别文字（未启用翻译）", "info", "翻译未启用");
+        else if (skippedCount === fresh.length) say("原文已是目标语言，无需翻译", "info", "无需翻译");
         else say("翻译完成", "ok", "翻译成功");
       }
     } catch (error) {

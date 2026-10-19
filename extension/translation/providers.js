@@ -16,6 +16,110 @@
 
   const TARGET_DEFAULT = "简体中文";
 
+  // Languages the paragraph translator offers in its menus. `zh` is what a chat
+  // prompt calls the language; `google` is the generic tag; bing / mymemory /
+  // deepl / baidu / youdao spell it their own way, so the mapping lives here
+  // rather than in the content script — one place decides what a language name
+  // means for whichever provider is selected.
+  const AUTO_SOURCE = "自动识别";
+  const LANGUAGES = [
+    { name: "简体中文", zh: "中文", google: "zh-CN", bing: "zh-Hans", mymemory: "zh-CN", deepl: "ZH", baidu: "zh", youdao: "zh-CHS" },
+    { name: "繁體中文", zh: "繁体中文", google: "zh-TW", bing: "zh-Hant", mymemory: "zh-TW", deepl: "ZH-HANT", baidu: "cht", youdao: "zh-CHT" },
+    { name: "English", zh: "英文", google: "en", bing: "en", mymemory: "en", deepl: "EN", baidu: "en", youdao: "en" },
+    { name: "日本語", zh: "日文", google: "ja", bing: "ja", mymemory: "ja", deepl: "JA", baidu: "jp", youdao: "ja" },
+    { name: "한국어（朝鲜语）", zh: "韩文（朝鲜语）", google: "ko", bing: "ko", mymemory: "ko", deepl: "KO", baidu: "kor", youdao: "ko" },
+    { name: "Русский（俄语）", zh: "俄文", google: "ru", bing: "ru", mymemory: "ru", deepl: "RU", baidu: "ru", youdao: "ru" },
+    { name: "Español（西班牙语）", zh: "西班牙文", google: "es", bing: "es", mymemory: "es", deepl: "ES", baidu: "spa", youdao: "es" },
+    { name: "हिन्दी（印地语）", zh: "印地文", google: "hi", bing: "hi", mymemory: "hi", deepl: "HI", baidu: "hi", youdao: "hi" },
+    { name: "العربية（阿拉伯语）", zh: "阿拉伯文", google: "ar", bing: "ar", mymemory: "ar", deepl: "AR", baidu: "ara", youdao: "ar" },
+    { name: "Français（法语）", zh: "法文", google: "fr", bing: "fr", mymemory: "fr", deepl: "FR", baidu: "fra", youdao: "fr" },
+    { name: "Deutsch（德语）", zh: "德文", google: "de", bing: "de", mymemory: "de", deepl: "DE", baidu: "de", youdao: "de" },
+    { name: "Português（葡萄牙语）", zh: "葡萄牙文", google: "pt", bing: "pt", mymemory: "pt", deepl: "PT", baidu: "pt", youdao: "pt" },
+    { name: "Italiano（意大利语）", zh: "意大利文", google: "it", bing: "it", mymemory: "it", deepl: "IT", baidu: "it", youdao: "it" },
+    { name: "ไทย（泰语）", zh: "泰文", google: "th", bing: "th", mymemory: "th", deepl: "TH", baidu: "th", youdao: "th" },
+    { name: "Tiếng Việt（越南语）", zh: "越南文", google: "vi", bing: "vi", mymemory: "vi", deepl: "VI", baidu: "vie", youdao: "vi" },
+    { name: "Bahasa Indonesia（印尼语）", zh: "印尼文", google: "id", bing: "id", mymemory: "id", deepl: "ID", baidu: "id", youdao: "id" },
+    { name: "Türkçe（土耳其语）", zh: "土耳其文", google: "tr", bing: "tr", mymemory: "tr", deepl: "TR", baidu: "tr", youdao: "tr" },
+  ];
+
+  // Domain term bases. Selecting one appends a compact style-and-terms rule to
+  // the chat prompt; dedicated translation APIs cannot accept it, so the UI
+  // only offers this for chat models. The list is deliberately small: one
+  // screen of choices is more useful than a taxonomy nobody reads.
+  const GLOSSARIES = [
+    { id: "general", label: "通用", hint: "不限定专业领域", rule: "" },
+    {
+      id: "medical",
+      label: "医学",
+      hint: "临床、药品、解剖",
+      rule: "医学术语使用规范临床译名，例如 myocardial infarction→心肌梗死、hypertension→高血压、contraindication→禁忌证、adverse reaction→不良反应；同一术语全篇一致。",
+    },
+    {
+      id: "legal",
+      label: "法律",
+      hint: "合同、法条、诉讼",
+      rule: "法律术语按中国大陆法律文本惯用译名，例如 force majeure→不可抗力、jurisdiction→管辖权、burden of proof→举证责任、liquidated damages→违约金；保持条文语气严谨。",
+    },
+    {
+      id: "technology",
+      label: "计算机",
+      hint: "软件、网络、AI",
+      rule: "技术术语使用开发者通行译名；API、SDK 等缩写保留，token 按语境译为令牌/词元、prompt 译为提示词；同一术语全篇一致。",
+    },
+    {
+      id: "finance",
+      label: "金融",
+      hint: "投资、银行、财报",
+      rule: "金融术语使用规范译名，例如 liquidity→流动性、derivative→衍生品、principal→本金、yield→收益率；金额、比率与日期保持准确。",
+    },
+    {
+      id: "gaming",
+      label: "游戏",
+      hint: "机制、UI、技能",
+      rule: "游戏术语使用玩家社区通行译名；技能名、职业名、装备名保持统一，UI 动词简短直接。",
+    },
+    {
+      id: "anime",
+      label: "动漫",
+      hint: "角色、技能、拟声词",
+      rule: "动漫语境优先采用官方或通行译名；角色称呼、技能名、组织名全篇统一；保留语气词和拟声词的表现力。",
+    },
+    {
+      id: "military",
+      label: "军事",
+      hint: "战术、装备、编制",
+      rule: "军事术语使用规范译名，例如 infantry→步兵、artillery→炮兵、flanking→侧翼包抄；装备型号保留原文编号。",
+    },
+    {
+      id: "academic",
+      label: "学术",
+      hint: "论文、教材、研究",
+      rule: "学术文本使用严谨书面语；专业术语采用该学科通行译名，首次出现可保留原文缩写。",
+    },
+    {
+      id: "business",
+      label: "商务",
+      hint: "邮件、合同、财务",
+      rule: "商务文本语气正式简洁；职位、部门、合同条款使用企业惯用译名，数字与日期保持准确。",
+    },
+    {
+      id: "automotive",
+      label: "汽车",
+      hint: "车辆、维修、驾驶",
+      rule: "汽车术语使用行业通行译名，例如 suspension→悬架、torque→扭矩、powertrain→动力总成；车型与零件编号保留原文。",
+    },
+  ];
+
+  const glossaryById = (id) =>
+    GLOSSARIES.find((glossary) => glossary.id === id) || GLOSSARIES[0];
+
+  /** The prompt line for a glossary; 通用 adds nothing. */
+  function glossaryPrompt(id) {
+    const glossary = glossaryById(id);
+    if (!glossary || glossary.id === "general" || !glossary.rule) return "";
+    return `术语库（${glossary.label}）：${glossary.rule} 这些示例以中文为目标语言；若目标语言不是中文，请改用该语言中对应的规范术语。专业术语优先于一般译法，同一术语在整批译文中必须保持一致。`;
+  }
+
   // Shared chat prompt. LLMs are asked for a JSON array because line-splitting
   // a numbered list turned out to be the fragile part of the old backend path.
   //
@@ -25,9 +129,12 @@
   // 名词一致" asks for. The tiers differ in how hard the model is told to work
   // (light polish without web lookup → web-assisted polish → web-assisted
   // perfection pass).
-  function chatPrompt(texts, target, strength = 0) {
+  function chatPrompt(texts, target, strength = 0, source = "日文", glossary = "general") {
+    const sourcePhrase = source === AUTO_SOURCE || source === "auto"
+      ? "下面 JSON 数组里的每一条文本（自动判断源语言）"
+      : "下面 JSON 数组里的每一条" + source;
     const rules = [
-      "你是漫画翻译引擎。把下面 JSON 数组里的每一条日文翻译成" + target + "。",
+      "你是翻译引擎。把" + sourcePhrase + "翻译成" + target + "。",
       "规则：",
       "1. 只输出一个 JSON 字符串数组，不要解释、不要代码块标记。",
       "2. 数组长度必须与输入完全相同，顺序一一对应。",
@@ -38,8 +145,128 @@
     ];
     const extra = STRENGTHS[normalizeStrength(strength)].rule;
     if (extra) rules.push(extra);
+    const terms = glossaryPrompt(glossary);
+    if (terms) rules.push(terms);
     rules.push("", "输入：", JSON.stringify(texts));
     return rules.join("\n");
+  }
+
+  /**
+   * The selection popup's dictionary request.
+   *
+   * One short word in, a structured entry out: every common sense, its part of
+   * speech, an example with a translation, and which sense fits the sentence
+   * the word was selected in. Asking for JSON keeps the popup renderable; the
+   * contextSense index is what lets it highlight "本文义项".
+   */
+  function dictionaryPrompt(text, context, target, glossary = "general") {
+    const lines = [
+      "你是严谨的词典编纂助手。请按权威辞典（日语用《広辞苑》《新明解国語辞典》《大辞林》，中文用《现代汉语词典》《辞海》，英语用《牛津》《朗文》，韩语用《표준국어대사전》，俄语用《Ожегов》，西语用《RAE》，法语用《Le Robert》，德语用《Duden》，其他语言用该语言最权威的现代词典）整理下面这个词的义项。",
+      "词：" + text,
+      "上下文句子：" + (context || "（无）"),
+      "规则：",
+      "1. 只输出一个 JSON 对象，不要解释、不要代码块标记。",
+      '2. 结构：{"word":"…","reading":"…","dictionary":"依据的辞典名","senses":[{"pos":"词性","meaning":"…","example":"…","exampleTranslation":"…"}],"contextSense":1}',
+      "3. senses 要覆盖该词的常见义项（包括不同词性下的义项），按常用程度排序；不能只给一个最贴合上下文的解释。词性用标准名称（名词 / 动词 / 形容词 / 副词 / 助词 / 接续词等）。",
+      "4. 同一个词的每种不同词性都要单独列出义项；如果同一个词性有多个含义，也分别列出。",
+      "5. meaning、词性和 exampleTranslation 用" + target + "；example 用原词的语言。每个义项给一个简短、自然的例句。",
+      "6. contextSense：根据上下文句子判断最贴合本文的义项序号（从 1 开始）；无法判断时为 0。必须结合上下文判断词性和含义，不能只按最常见义项填写。",
+      "7. dictionary 填写释义所参照的权威辞典（如《広辞苑》《新明解国語辞典》《现代汉语词典》），不要声称逐字引用；不确定时留空。",
+      "8. 不得编造生僻义项或例句；不确定的义项不要输出。",
+    ];
+    const terms = glossaryPrompt(glossary);
+    if (terms) {
+      lines.push("9. 判断本文义项时，如果上下文属于下面的专业领域，优先选择该领域的专业义项。" + terms);
+    }
+    return lines.join("\n");
+  }
+
+  /**
+   * Pull the dictionary object out of whatever the model replied.
+   *
+   * Models wrap JSON in fences or prose often enough that a bare JSON.parse is
+   * not worth the failure; the first `{...}` block is the entry.
+   */
+  function parseDictionary(content) {
+    if (typeof content !== "string" || !content.trim()) throw new Error("AI 返回了空内容");
+    let text = content.trim();
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) text = fenced[1].trim();
+    // Take the first balanced object. `lastIndexOf("}")` also swallowed prose
+    // after the entry, and a stray brace in that prose made JSON.parse fail on
+    // an otherwise valid answer.
+    const start = text.indexOf("{");
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+    for (let index = start; start >= 0 && index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = index;
+          break;
+        }
+      }
+    }
+    if (start < 0 || end <= start) throw new Error("AI 没有返回词典 JSON");
+    const json = text.slice(start, end + 1);
+    let parsed;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      // A trailing comma is the one malformed-JSON habit worth repairing here:
+      // several chat gateways emit it even when asked for strict JSON.
+      parsed = JSON.parse(json.replace(/,\s*([}\]])/g, "$1"));
+    }
+    const rawSenses = parsed?.senses || parsed?.definitions || parsed?.meanings;
+    if (!parsed || !Array.isArray(rawSenses) || !rawSenses.length) {
+      throw new Error("AI 没有返回可用义项");
+    }
+    const normalized = rawSenses
+      .slice(0, 24)
+      .map((sense, index) => ({
+        index,
+        pos: String(sense?.pos || sense?.partOfSpeech || sense?.type || "").trim().slice(0, 24),
+        meaning: String(sense?.meaning || sense?.definition || sense?.gloss || "").trim().slice(0, 500),
+        example: String(sense?.example || sense?.sentence || "").trim().slice(0, 300),
+        exampleTranslation: String(
+          sense?.exampleTranslation || sense?.example_translation ||
+          sense?.exampleZh || sense?.example_zh || "",
+        ).trim().slice(0, 300),
+      }))
+      .filter((sense) => sense.meaning);
+    if (!normalized.length) throw new Error("AI 没有返回可用义项");
+    const senses = normalized.map(({ index, ...sense }) => sense);
+
+    // contextSense is 1-based. It was computed against the model's original
+    // list, so map it through the entries that survived validation rather than
+    // indexing the filtered array directly.
+    const rawContext = parsed.contextSense ?? parsed.context_sense ??
+      parsed.contextSenseIndex ?? parsed.context_sense_index ?? 0;
+    const contextDigits = String(rawContext).match(/\d+/);
+    const wanted = contextDigits ? Math.round(Number(contextDigits[0])) : 0;
+    const matched = wanted > 0
+      ? normalized.find((sense) => sense.index === wanted - 1)
+      : null;
+    const contextSense = matched ? normalized.indexOf(matched) + 1 : 0;
+
+    return {
+      word: String(parsed.word || "").trim(),
+      reading: String(parsed.reading || parsed.pronunciation || parsed.pinyin || "").trim(),
+      dictionary: String(parsed.dictionary || parsed.source || "").trim().slice(0, 120),
+      senses,
+      contextSense: contextSense > 0 && contextSense <= senses.length ? contextSense : 0,
+    };
   }
 
   /**
@@ -189,7 +416,7 @@
 
   /** OpenAI /v1/chat/completions shape, which most vendors now imitate. */
   function openAiCompatible(request) {
-    const { endpoint, apiKey, model, texts, target, strength } = request;
+    const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, glossary } = request;
     const headers = { "Content-Type": "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     return {
@@ -200,7 +427,10 @@
         body: JSON.stringify({
           model,
           temperature: 0,
-          messages: [{ role: "user", content: chatPrompt(texts, target, strength) }],
+          messages: [{
+            role: "user",
+            content: prompt || chatPrompt(texts, target, strength, sourceName, glossary),
+          }],
         }),
       },
     };
@@ -215,14 +445,16 @@
   };
 
   function gemini(request) {
-    const { endpoint, apiKey, model, texts, target, strength } = request;
+    const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, glossary } = request;
     return {
       url: `${endpoint}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: chatPrompt(texts, target, strength) }] }],
+          contents: [{
+            parts: [{ text: prompt || chatPrompt(texts, target, strength, sourceName, glossary) }],
+          }],
           generationConfig: { temperature: 0 },
         }),
       },
@@ -236,7 +468,7 @@
   };
 
   function claude(request) {
-    const { endpoint, apiKey, model, texts, target, strength } = request;
+    const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, maxTokens, glossary } = request;
     return {
       url: `${endpoint}/v1/messages`,
       init: {
@@ -250,9 +482,12 @@
         },
         body: JSON.stringify({
           model,
-          max_tokens: 2048,
+          max_tokens: maxTokens || 2048,
           temperature: 0,
-          messages: [{ role: "user", content: chatPrompt(texts, target, strength) }],
+          messages: [{
+            role: "user",
+            content: prompt || chatPrompt(texts, target, strength, sourceName, glossary),
+          }],
         }),
       },
     };
@@ -262,6 +497,53 @@
     const content = (json?.content || []).map((block) => block.text || "").join("");
     return parseChatContent(content, count);
   };
+
+  /**
+   * The raw assistant text from a chat provider, without assuming an array.
+   *
+   * Ordinary translation wants `parseChatContent`; the dictionary path wants
+   * the JSON object the prompt asked for, so it cannot go through a parser that
+   * insists on a top-level array. OpenAI-compatible gateways occasionally send
+   * `content` as an array of parts rather than one string, so both shapes are
+   * accepted here.
+   */
+  function extractChatText(provider, json) {
+    if (typeof provider?.extractText === "function") {
+      const custom = provider.extractText(json);
+      if (typeof custom === "string" && custom.trim()) return custom;
+      throw new Error("AI 返回了空内容");
+    }
+    if (json?.error) throw new Error(json.error.message || "AI 服务返回错误");
+
+    let content;
+    if (provider?.adapter === gemini) {
+      const parts = json?.candidates?.[0]?.content?.parts || [];
+      content = parts.map((part) => part.text || "").join("");
+    } else if (provider?.adapter === claude) {
+      content = (json?.content || []).map((block) => block.text || "").join("");
+    } else {
+      content = json?.choices?.[0]?.message?.content;
+      if (Array.isArray(content)) {
+        content = content.map((part) => {
+          if (typeof part === "string") return part;
+          return part?.text || part?.content || "";
+        }).join("");
+      }
+      if (content === undefined || content === null) {
+        content = json?.output_text ?? json?.response;
+      }
+    }
+    if (typeof content !== "string" || !content.trim()) {
+      const detail = json?.error?.message || json?.message ||
+        "响应中没有可读取的 AI 文本";
+      throw new Error(detail);
+    }
+    return content;
+  }
+
+  /** Whether this provider speaks a chat prompt and can answer a dictionary query. */
+  const isChatProvider = (provider) =>
+    Boolean(provider && (provider.chat || typeof provider.extractText === "function"));
 
   // Google's public web endpoint: no key, no quota dashboard, and it accepts
   // one query per request, so the caller issues one call per text.
@@ -282,12 +564,15 @@
 
   function deepL(request) {
     const { endpoint, apiKey, texts, source, target } = request;
+    const body = { text: texts, target_lang: target };
+    // Omitted source means "detect it": the paragraph translator's 自动识别.
+    if (source) body.source_lang = source.toUpperCase();
     return {
       url: `${endpoint}/v2/translate`,
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `DeepL-Auth-Key ${apiKey}` },
-        body: JSON.stringify({ text: texts, source_lang: source.toUpperCase(), target_lang: target }),
+        body: JSON.stringify(body),
       },
     };
   }
@@ -880,6 +1165,83 @@
 
   const byId = (id) => PROVIDERS.find((provider) => provider.id === id) || null;
 
+  const LANGUAGE_HINTS = [
+    ["简体中文", "zh"], ["繁體中文", "zh"], ["中文", "zh"], ["chinese", "zh"],
+    ["english", "en"], ["英文", "en"],
+    ["日本語", "ja"], ["日文", "ja"], ["japanese", "ja"],
+    ["한국어", "ko"], ["朝鲜语", "ko"], ["korean", "ko"],
+    ["русский", "ru"], ["俄语", "ru"], ["russian", "ru"],
+    ["español", "es"], ["西班牙语", "es"], ["spanish", "es"],
+    ["हिन्दी", "hi"], ["印地语", "hi"], ["hindi", "hi"],
+    ["العربية", "ar"], ["阿拉伯语", "ar"], ["arabic", "ar"],
+    ["français", "fr"], ["法语", "fr"], ["french", "fr"],
+    ["deutsch", "de"], ["德语", "de"], ["german", "de"],
+    ["português", "pt"], ["葡萄牙语", "pt"], ["portuguese", "pt"],
+    ["italiano", "it"], ["意大利语", "it"], ["italian", "it"],
+    ["ไทย", "th"], ["泰语", "th"], ["thai", "th"],
+    ["tiếng việt", "vi"], ["越南语", "vi"], ["vietnamese", "vi"],
+    ["bahasa indonesia", "id"], ["印尼语", "id"], ["indonesian", "id"],
+    ["türkçe", "tr"], ["土耳其语", "tr"], ["turkish", "tr"],
+  ];
+  const CODE_ALIASES = {
+    jp: "ja", kor: "ko", spa: "es", ara: "ar", fra: "fr",
+    vie: "vi", cht: "zh", chs: "zh",
+  };
+
+  /**
+   * Reduce a language name or a provider code to its base ISO-639 language.
+   *
+   * The translation menus say "繁體中文", DeepL says ZH-HANT, Google says
+   * zh-TW and DeepSeek gets a natural-language name. Same-language suppression
+   * has to see through all of those spellings, so it compares this base code
+   * rather than the strings the user happened to select.
+   */
+  function languageBase(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const lower = raw.toLowerCase();
+    if (/^(auto|auto-detect|autodetect|自动识别|unknown)$/.test(lower)) return "";
+    const hint = LANGUAGE_HINTS.find(([name]) => lower.includes(name.toLowerCase()));
+    if (hint) return hint[1];
+    const code = lower.split(/[-_\s（(]/)[0];
+    if (CODE_ALIASES[code]) return CODE_ALIASES[code];
+    if (/^[a-z]{2,3}$/.test(code)) return code;
+    return "";
+  }
+
+  /**
+   * A high-confidence script guess, used before the asynchronous Chrome
+   * detector and as its fallback. Latin is left as "latin" rather than guessed
+   * as English: French and German are also Latin, and a wrong skip is worse
+   * than one redundant translation.
+   */
+  function detectScriptLanguage(text) {
+    const value = String(text || "");
+    if (/[\u3040-\u30ff]/u.test(value)) return "ja";
+    if (/[\uac00-\ud7af]/u.test(value)) return "ko";
+    if (/[\u0600-\u06ff]/u.test(value)) return "ar";
+    if (/[\u0400-\u04ff]/u.test(value)) return "ru";
+    if (/[\u0900-\u097f]/u.test(value)) return "hi";
+    if (/[\u0e00-\u0e7f]/u.test(value)) return "th";
+    if (/[\u4e00-\u9fff]/u.test(value)) return "zh";
+    if (/[A-Za-z]/.test(value)) return "latin";
+    return "";
+  }
+
+  /**
+   * A cheap same-language check for content scripts before they spend a
+   * request. It deliberately only claims the scripts it can tell apart; the
+   * service worker runs Chrome's detector for the ambiguous Latin cases.
+   */
+  function likelySameLanguage(text, target, context = "") {
+    const targetBase = languageBase(target);
+    if (!targetBase) return false;
+    const sample = String(context || text || "");
+    const detected = detectScriptLanguage(sample);
+    if (!detected || detected === "latin") return false;
+    return detected === targetBase;
+  }
+
   /**
    * The target language for a provider, resolved in exactly one place.
    *
@@ -899,6 +1261,56 @@
     return cfg?.targetLanguage || provider?.target || TARGET_DEFAULT;
   }
 
+  const languageByName = (name) =>
+    LANGUAGES.find((language) => language.name === String(name || "").trim()) || null;
+
+  /** The code this provider expects for a language entry. */
+  function codeFor(provider, language) {
+    if (provider?.id === "deepL") return language.deepl;
+    if (provider?.id === "baidu") return language.baidu;
+    if (provider?.id === "youdao") return language.youdao;
+    if (provider?.id === "bing-free") return language.bing;
+    if (provider?.id === "mymemory") return language.mymemory;
+    return language.google;
+  }
+
+  /**
+   * Translate a language *name* ("English") into what this provider expects.
+   *
+   * Chat models get the readable name back; code-speaking APIs get their own
+   * dialect (DeepL's ZH, 百度's jp, 有道's zh-CHS). An unknown name is passed
+   * through unchanged so a hand-typed target still works.
+   */
+  function targetForLanguage(provider, name) {
+    const wanted = String(name || "").trim();
+    if (!wanted) return "";
+    const language = languageByName(wanted);
+    if (!language) return wanted;
+    if (provider?.targetKind !== "code") return language.name;
+    return codeFor(provider, language);
+  }
+
+  /**
+   * The source side of the same menu, including 自动识别.
+   *
+   * Auto detection is spelled differently by each API: Google / 百度 / 有道
+   * say "auto", Bing says "auto-detect", MyMemory says "Autodetect", and DeepL
+   * detects when source_lang is omitted (empty string here).
+   */
+  function sourceForLanguage(provider, name) {
+    const wanted = String(name || "").trim();
+    if (!wanted || wanted === AUTO_SOURCE) {
+      if (provider?.id === "deepL") return "";
+      if (provider?.id === "bing-free") return "auto-detect";
+      if (provider?.id === "mymemory") return "Autodetect";
+      return "auto";
+    }
+    const language = languageByName(wanted);
+    if (!language) return wanted;
+    if (provider?.targetKind !== "code") return language.name;
+    return codeFor(provider, language);
+  }
+
   // Chat-based providers are told the target language in words ("简体中文"),
   // while the dedicated translation APIs take a language *code* ("zh-CN", "ZH",
   // "zh-CHS"). Filling this in here keeps every entry from repeating it.
@@ -909,8 +1321,10 @@
     if (chatBased) {
       provider.target = provider.target || "简体中文";
       provider.targetKind = "name";
+      provider.chat = true;
     } else {
       provider.targetKind = "code";
+      provider.chat = false;
     }
     // Whether the settings page offers a free-text model box for this provider
     // (only the OpenAI-compatible adapter reads one). The panel's model picker
@@ -922,6 +1336,17 @@
     list: PROVIDERS,
     byId,
     resolveTarget,
+    targetForLanguage,
+    sourceForLanguage,
+    languageByName,
+    languages: LANGUAGES,
+    autoSource: AUTO_SOURCE,
+    glossaries: GLOSSARIES,
+    glossaryById,
+    glossaryPrompt,
+    languageBase,
+    detectScriptLanguage,
+    likelySameLanguage,
     strengths: STRENGTHS,
     normalizeStrength,
     strengthLabel,
@@ -929,7 +1354,11 @@
     modelsOf,
     resolveModel,
     chatPrompt,
+    dictionaryPrompt,
+    parseDictionary,
     parseChatContent,
+    extractChatText,
+    isChatProvider,
     md5,
     sha256Hex,
     defaultTarget: TARGET_DEFAULT,

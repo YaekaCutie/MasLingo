@@ -139,7 +139,7 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1000, height: 900 });
   const errors = [];
-  page.on("pageerror", (error) => errors.push(String(error)));
+  page.on("pageerror", (error) => errors.push(error?.stack || String(error)));
   await page.goto(pageUrl, { waitUntil: "load" });
   await new Promise((r) => setTimeout(r, 2500));
 
@@ -233,6 +233,9 @@ try {
       keyPlaceholder: document.getElementById("maslingo-ai-key").placeholder,
       keyValue: document.getElementById("maslingo-ai-key").value,
       lineText: document.getElementById("maslingo-line-text").textContent.trim(),
+      glossary: document.getElementById("maslingo-glossary")?.value || "",
+      glossaryOptions: [...(document.getElementById("maslingo-glossary")?.options || [])]
+        .map((option) => option.value),
     };
   });
 
@@ -304,6 +307,11 @@ try {
   check("模型行显示的是具体型号名", ai.modelLabel === "DeepSeek V4.1 Flash", ai.modelLabel);
   check("档位名字旁边标出该档含义",
     ai.strengthHint === "不联网轻度润色", ai.strengthHint);
+  check("AI 页有术语库选择器且包含医学/法律",
+    ai.glossary === "general"
+      && ai.glossaryOptions.includes("medical")
+      && ai.glossaryOptions.includes("legal"),
+    JSON.stringify({ value: ai.glossary, options: ai.glossaryOptions }));
 
   console.log("\n具体型号选择框");
   await page.click("#maslingo-strength-model");
@@ -455,11 +463,13 @@ try {
     JSON.stringify({ lanes: maxMeteors.lanes }));
 
   console.log("\n取消：返回上一页且什么都不写");
+  await page.select("#maslingo-glossary", "medical");
+  await new Promise((r) => setTimeout(r, 120));
   await page.click("#maslingo-ai-cancel");
   await new Promise((r) => setTimeout(r, 700));
   const cancelled = await sample();
   const afterCancel = await readStorage([
-    "translationStrength", "translationModel", "translationApiKey",
+    "translationStrength", "translationModel", "translationApiKey", "translationGlossary",
   ]);
   check("取消后回到主页面",
     cancelled.aiPage === false && cancelled.basicHeight > 40 && cancelled.providerHeight > 40,
@@ -468,6 +478,7 @@ try {
     cancelled.settingsVisible === true && cancelled.cancelVisible === false && cancelled.saveVisible === false);
   check("取消不写存储", afterCancel.translationStrength === undefined
     && afterCancel.translationModel === undefined && afterCancel.translationApiKey === undefined
+    && afterCancel.translationGlossary === undefined
     && afterCancel.translationSearch === undefined
     && afterCancel.translationContext === undefined,
     JSON.stringify(afterCancel));
@@ -496,18 +507,22 @@ try {
   await page.keyboard.type("sk-saved-key");
   await page.keyboard.press("Tab");
   await new Promise((r) => setTimeout(r, 250));
+  await page.select("#maslingo-glossary", "legal");
+  await new Promise((r) => setTimeout(r, 120));
   await page.click("#maslingo-ai-save");
   await new Promise((r) => setTimeout(r, 700));
   const saved = await sample();
   const stored = await readStorage([
-    "translationStrength", "translationModel", "translationModelProvider", "translationApiKey",
+    "translationStrength", "translationModel", "translationModelProvider",
+    "translationApiKey", "translationGlossary",
   ]);
   check("保存后回到主页面", saved.aiPage === false && saved.basicHeight > 40);
   check("保存写入强度/型号/归属/密钥",
     stored.translationStrength === 2
       && stored.translationModel === "deepseek-v4-pro"
       && stored.translationModelProvider === "deepseek"
-      && stored.translationApiKey === "sk-saved-key",
+      && stored.translationApiKey === "sk-saved-key"
+      && stored.translationGlossary === "legal",
     JSON.stringify(stored));
   check("保存给出反馈（一言行）", saved.lineText.includes("已保存"), saved.lineText);
 
@@ -517,7 +532,8 @@ try {
   check("再进 AI 页显示已保存的值",
     restored.level === "Max" && restored.model === "deepseek-v4-pro"
       && restored.modelLabel === "DeepSeek V4 Pro"
-      && restored.keyValue === "" && restored.keyPlaceholder.includes("已保存"),
+      && restored.keyValue === "" && restored.keyPlaceholder.includes("已保存")
+      && restored.glossary === "legal",
     JSON.stringify({ level: restored.level, model: restored.model, key: restored.keyPlaceholder }));
 
   // A visual record of the state, next to the other material screenshots.

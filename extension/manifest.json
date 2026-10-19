@@ -54,7 +54,9 @@
         "content/overlay.js",
         "content/auto.js",
         "content/panel.js",
-        "content/content.js"
+        "content/content.js",
+        "content/text-translate.js",
+        "content/selection-translate.js"
       ],
       "css": [
         "content/styles/glass.css",

@@ -213,6 +213,191 @@ check("每一档都要求专有名词在整批上下文中前后一致",
     providers.chatPrompt(["おはよう"], "简体中文", level)
       .includes("专有名词必须在整批上下文中前后一致")));
 
+// --- paragraph translation languages ---------------------------------------
+section("网页文本：源/目标语言映射");
+check("语言清单覆盖常见语言",
+  ["简体中文", "繁體中文", "English", "日本語", "한국어（朝鲜语）", "Русский（俄语）",
+    "Español（西班牙语）", "हिन्दी（印地语）", "العربية（阿拉伯语）", "Français（法语）",
+    "Deutsch（德语）", "Português（葡萄牙语）", "Italiano（意大利语）", "ไทย（泰语）",
+    "Tiếng Việt（越南语）", "Bahasa Indonesia（印尼语）", "Türkçe（土耳其语）"]
+    .every((name) => providers.languages.some((language) => language.name === name)));
+check("对话模型直接使用语言名",
+  providers.targetForLanguage(providers.byId("deepseek"), "English") === "English");
+check("Google 使用 BCP-47 代码",
+  providers.targetForLanguage(providers.byId("google-free"), "繁體中文") === "zh-TW"
+    && providers.targetForLanguage(providers.byId("google-free"), "Русский（俄语）") === "ru");
+check("DeepL 使用自己的代码",
+  providers.targetForLanguage(providers.byId("deepL"), "English") === "EN"
+    && providers.targetForLanguage(providers.byId("deepL"), "繁體中文") === "ZH-HANT");
+check("百度 / 有道 各自的语言码",
+  providers.targetForLanguage(providers.byId("baidu"), "日本語") === "jp"
+    && providers.targetForLanguage(providers.byId("youdao"), "日本語") === "ja"
+    && providers.targetForLanguage(providers.byId("baidu"), "Español（西班牙语）") === "spa"
+    && providers.targetForLanguage(providers.byId("youdao"), "العربية（阿拉伯语）") === "ar");
+check("未知语言原样透传",
+  providers.targetForLanguage(providers.byId("google-free"), "Klingon") === "Klingon");
+check("自动识别按各家用各自的写法",
+  providers.sourceForLanguage(providers.byId("google-free"), "自动识别") === "auto"
+    && providers.sourceForLanguage(providers.byId("bing-free"), "自动识别") === "auto-detect"
+    && providers.sourceForLanguage(providers.byId("mymemory"), "自动识别") === "Autodetect"
+    && providers.sourceForLanguage(providers.byId("deepL"), "自动识别") === ""
+    && providers.sourceForLanguage(providers.byId("baidu"), "自动识别") === "auto");
+check("指定源语言按各家映射",
+  providers.sourceForLanguage(providers.byId("google-free"), "English") === "en"
+    && providers.sourceForLanguage(providers.byId("baidu"), "日本語") === "jp"
+    && providers.sourceForLanguage(providers.byId("deepseek"), "English") === "English");
+check("DeepL 自动识别时不发 source_lang",
+  (() => {
+    const built = providers.byId("deepL").adapter({
+      endpoint: "https://api-free.deepl.com",
+      apiKey: "KEY",
+      texts: ["hello"],
+      source: providers.sourceForLanguage(providers.byId("deepL"), "自动识别"),
+      target: "ZH",
+    });
+    return !JSON.parse(built.init.body).source_lang;
+  })());
+
+// --- glossaries -------------------------------------------------------------
+section("术语库");
+check("术语库覆盖常见专业方向",
+  ["medical", "legal", "technology", "finance", "gaming", "anime", "military", "academic", "business", "automotive"]
+    .every((id) => providers.glossaryById(id)?.id === id));
+check("医学术语库给出规范译名",
+  providers.glossaryPrompt("medical").includes("术语库（医学）")
+    && providers.glossaryPrompt("medical").includes("心肌梗死")
+    && providers.glossaryPrompt("medical").includes("高血压"));
+check("法律术语库给出规范译名",
+  providers.glossaryPrompt("legal").includes("不可抗力")
+    && providers.glossaryPrompt("legal").includes("举证责任"));
+check("通用术语库不增加指令",
+  providers.glossaryPrompt("general") === "");
+check("术语库指令进入普通翻译提示词",
+  providers.chatPrompt(["おはよう"], "简体中文", 0, "日文", "medical")
+    .includes("术语库（医学）")
+    && !providers.chatPrompt(["おはよう"], "简体中文", 0, "日文", "general")
+      .includes("术语库（"));
+check("术语库指令进入词典提示词",
+  providers.dictionaryPrompt("cat", "The patient has hypertension.", "简体中文", "medical")
+    .includes("术语库（医学）"));
+
+// --- same-language suppression ---------------------------------------------
+section("同语言识别（不重复翻译）");
+check("语言名与代码归一",
+  providers.languageBase("简体中文") === "zh"
+    && providers.languageBase("zh-CN") === "zh"
+    && providers.languageBase("繁體中文") === "zh"
+    && providers.languageBase("English") === "en"
+    && providers.languageBase("jp") === "ja"
+    && providers.languageBase("自动识别") === "");
+check("脚本识别区分中日英文",
+  providers.detectScriptLanguage("猫が窓辺で眠る") === "ja"
+    && providers.detectScriptLanguage("你好，世界") === "zh"
+    && providers.detectScriptLanguage("hello") === "latin"
+    && providers.detectScriptLanguage("안녕하세요") === "ko");
+check("中文到中文直接判定同语言",
+  providers.likelySameLanguage("这是中文", "简体中文")
+    && providers.likelySameLanguage("日本語の文", "日本語")
+    && !providers.likelySameLanguage("猫が眠る", "简体中文"));
+check("短词用上下文避免误判中文",
+  !providers.likelySameLanguage("猫", "简体中文", "猫が窓辺で眠っている。")
+    && providers.likelySameLanguage("猫", "简体中文", "猫在窗边睡觉。"));
+
+// --- selection dictionary ---------------------------------------------------
+section("划词：权威辞典提示词与词典解析");
+const dictionary = providers.dictionaryPrompt("猫", "猫が窓辺で眠っている。", "简体中文");
+check("词典提示词带上词语与上下文",
+  dictionary.includes("猫") && dictionary.includes("猫が窓辺で眠っている。"));
+check("词典提示词点名权威辞典",
+  dictionary.includes("広辞苑") && dictionary.includes("新明解") && dictionary.includes("现代汉语词典"));
+check("词典提示词要求全部义项、词性和例句",
+  dictionary.includes("常见义项") && dictionary.includes("词性") && dictionary.includes("例句"));
+check("词典提示词要求标出本文义项",
+  dictionary.includes("contextSense") && dictionary.includes("最贴合本文的义项"));
+
+const parsedDictionary = providers.parseDictionary(
+  "```json\n"
+  + JSON.stringify({
+    word: "猫",
+    reading: "ねこ",
+    dictionary: "広辞苑・新明解国語辞典",
+    senses: [
+      { pos: "名词", meaning: "猫。家猫。", example: "猫が鳴く。", exampleTranslation: "猫在叫。" },
+      { pos: "名词", meaning: "（转义）装糊涂的人。", example: "猫をかぶる。", exampleTranslation: "装傻。" },
+    ],
+    contextSense: 1,
+  }, null, 2)
+  + "\n```",
+);
+check("词典解析保留全部义项",
+  parsedDictionary.senses.length === 2
+    && parsedDictionary.senses[0].pos === "名词"
+    && parsedDictionary.senses[0].exampleTranslation === "猫在叫。",
+  JSON.stringify(parsedDictionary.senses));
+check("词典解析保留本文义项序号",
+  parsedDictionary.contextSense === 1 && parsedDictionary.word === "猫"
+    && parsedDictionary.reading === "ねこ",
+  JSON.stringify(parsedDictionary));
+check("词典解析容忍尾逗号与「第 N 项」写法",
+  (() => {
+    const entry = providers.parseDictionary(
+      '{"word":"猫","senses":[{"pos":"名词","meaning":"猫",},{"pos":"动词","meaning":"躲藏",}],"contextSense":"第2项"}',
+    );
+    return entry.senses.length === 2 && entry.contextSense === 2;
+  })());
+check("词典解析拒绝没有义项的回复",
+  (() => {
+    try {
+      providers.parseDictionary('{"word":"猫","senses":[]}');
+      return false;
+    } catch {
+      return true;
+    }
+  })());
+check("词典解析忽略 JSON 后面的说明文字与花括号",
+  (() => {
+    const entry = providers.parseDictionary(
+      '{"word":"猫","senses":[{"pos":"名词","meaning":"猫"}]} 说明：{仅供参考}',
+    );
+    return entry.word === "猫" && entry.senses.length === 1;
+  })());
+
+section("划词：从各家对话响应中取原始文本");
+const wordJson = '{"word":"猫","senses":[{"pos":"名词","meaning":"猫"}]}';
+check("OpenAI 字符串 content",
+  providers.extractChatText(
+    providers.byId("openai"),
+    { choices: [{ message: { content: wordJson } }] },
+  ) === wordJson);
+check("OpenAI parts 数组",
+  providers.extractChatText(
+    providers.byId("openai"),
+    { choices: [{ message: { content: [{ type: "text", text: wordJson }] } }] },
+  ) === wordJson);
+check("Gemini parts",
+  providers.extractChatText(
+    providers.byId("gemini"),
+    { candidates: [{ content: { parts: [{ text: wordJson }] } }] },
+  ) === wordJson);
+check("Claude content blocks",
+  providers.extractChatText(
+    providers.byId("claude"),
+    { content: [{ type: "text", text: wordJson }] },
+  ) === wordJson);
+check("对话来源识别",
+  providers.isChatProvider(providers.byId("deepseek"))
+    && providers.isChatProvider(providers.byId("gemini"))
+    && !providers.isChatProvider(providers.byId("google-free")));
+check("自定义提示词覆盖普通翻译提示词",
+  (() => {
+    const built = providers.byId("openai").adapter({
+      endpoint: "https://api.openai.com/v1/chat/completions",
+      apiKey: "KEY", model: "gpt", texts: ["猫"], target: "简体中文",
+      prompt: "DICTIONARY-PROMPT",
+    });
+    return JSON.parse(built.init.body).messages[0].content === "DICTIONARY-PROMPT";
+  })());
+
 // --- the concrete model per provider ----------------------------------------
 section("具体模型（每个来源自己的型号，不跨来源泄漏）");
 const deepseekProvider = providers.byId("deepseek");

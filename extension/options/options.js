@@ -14,12 +14,14 @@ const fieldModel = document.getElementById("fieldModel");
 const fieldAppId = document.getElementById("fieldAppId");
 const fieldKey = document.getElementById("fieldKey");
 const fieldTarget = document.getElementById("fieldTarget");
+const fieldGlossary = document.getElementById("fieldGlossary");
 const translationEndpoint = document.getElementById("translationEndpoint");
 const translationModel = document.getElementById("translationModel");
 const translationAppId = document.getElementById("translationAppId");
 const translationApiKey = document.getElementById("translationApiKey");
 const translationProvider = providerSelect;
 const targetLanguage = document.getElementById("targetLanguage");
+const translationGlossary = document.getElementById("translationGlossary");
 const clearApiKey = document.getElementById("clearApiKey");
 const keyStatus = document.getElementById("keyStatus");
 const keyLabel = document.getElementById("keyLabel");
@@ -78,6 +80,16 @@ function buildProviderOptions() {
   }
 }
 
+function buildGlossaryOptions() {
+  for (const glossary of registry.glossaries || []) {
+    const option = document.createElement("option");
+    option.value = glossary.id;
+    option.textContent = `${glossary.label} — ${glossary.hint}`;
+    translationGlossary.append(option);
+  }
+  translationGlossary.value = "general";
+}
+
 function selectedProvider() {
   return registry.byId(providerSelect.value) || null;
 }
@@ -100,6 +112,7 @@ function describeProvider() {
   fieldAppId.hidden = !provider.appIdRequired;
   fieldKey.hidden = !provider.keyRequired;
   fieldTarget.hidden = provider.targetKind !== "name";
+  fieldGlossary.hidden = provider.targetKind !== "name";
 
   if (provider.endpointEditable) {
     translationEndpoint.placeholder = provider.endpoint || "https://example.com/v1/chat/completions";
@@ -200,6 +213,7 @@ document.getElementById("save").onclick = async () => {
   // use it.
   if (provider.targetKind === "name") {
     cfg.targetLanguage = targetLanguage.value.trim();
+    cfg.translationGlossary = translationGlossary.value || "general";
   }
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
@@ -250,7 +264,8 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-    "autoTranslate", "autoConcurrency", "fontScale", "overlayOpacity",
+      "translationGlossary", "autoTranslate", "autoConcurrency",
+      "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
   backendUrl.value = cfg.backendUrl || "";
@@ -283,6 +298,7 @@ async function load() {
     : (cfg.translationModel || "");
   translationAppId.value = cfg.translationAppId || "";
   targetLanguage.value = cfg.targetLanguage || "";
+  translationGlossary.value = registry.glossaryById?.(cfg.translationGlossary)?.id || "general";
   savedApiKeyExists = Boolean(cfg.translationApiKey);
   savedAppIdExists = Boolean(cfg.translationAppId);
 
@@ -293,4 +309,5 @@ async function load() {
 backendUrl.addEventListener("input", describeBackend);
 
 buildProviderOptions();
+buildGlossaryOptions();
 load();

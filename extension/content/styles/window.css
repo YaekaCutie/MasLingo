@@ -161,7 +161,11 @@
 #maslingo-rule-foot { margin-top: auto; }
 
 /* A rule that ignores the gutter and reaches both edges. */
-.maslingo-rule { margin: 15px calc(-1 * var(--maslingo-gutter)); }
+.maslingo-rule {
+  flex: 0 0 1px;
+  min-height: 1px;
+  margin: 15px calc(-1 * var(--maslingo-gutter));
+}
 
 .maslingo-row {
   display: flex;
@@ -174,6 +178,24 @@
 .maslingo-label { font-size: 12px; color: var(--maslingo-muted); }
 .maslingo-label + .maslingo-row,
 .maslingo-row + .maslingo-btn { margin-top: 6px; }
+/* 悬停翻译 / 划词翻译: two switches share one row so the fixed-height panel
+   gains the new control without pushing the footer down. */
+.maslingo-toggles {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  /* The two rules around this row are 1px flex items that must not collapse;
+     5px here gives them back the three pixels the tighter row would cost. */
+  margin-top: 5px;
+}
+.maslingo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.maslingo-toggle .maslingo-label { white-space: nowrap; }
 
 /* The message line. Everything the panel reports shares this one line — the
    sample sentence, loading states like "正在 OCR……", connectivity results and
@@ -445,15 +467,18 @@
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
+  justify-content: space-between;
+  gap: 4px;
   margin-top: 0;
 }
 .maslingo-strength-model {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  max-width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  justify-content: flex-start;
   padding: 2px 0;
   border: 0;
   background: transparent;
@@ -478,6 +503,27 @@
   color: var(--maslingo-muted);
   pointer-events: none;
 }
+.maslingo-glossary-label {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--maslingo-muted);
+  white-space: nowrap;
+}
+.maslingo-glossary-select {
+  flex: 0 0 auto;
+  width: 58px;
+  height: 22px;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--maslingo-muted);
+  font-family: inherit;
+  font-size: 10.5px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.maslingo-glossary-select:hover { color: var(--maslingo-ink); background: var(--maslingo-fill); }
 
 /* The 选择框 itself: a flat acrylic panel with one row per concrete model
    (name on top, api id under it when the two differ) and 自定义… at the end. */
