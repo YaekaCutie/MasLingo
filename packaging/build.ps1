@@ -249,6 +249,16 @@ $modelSize = (Get-ChildItem $modelDir -Recurse -File | Measure-Object -Property 
 Ok "模型 $([math]::Round($modelSize/1MB)) MB（一份，不是三份）"
 Get-ChildItem $modelDir -File | ForEach-Object { Info "  $($_.Name)" }
 
+Info "文字检测模型 → models\comictextdetector.onnx"
+Push-Location $Root
+try {
+    $detectorPath = & $BootstrapPython -c "from backend.ocr.text_detector import ensure_model; print(ensure_model())"
+    if ($LASTEXITCODE -ne 0) { throw "文字检测模型下载或校验失败" }
+} finally { Pop-Location }
+Copy-Item ($detectorPath | Select-Object -Last 1) (Join-Path $Stage "models\comictextdetector.onnx") -Force
+Copy-Item (Join-Path $Root "THIRD_PARTY_NOTICES.md") $Stage
+Copy-Item (Join-Path $Root "third_party") (Join-Path $Stage "third_party") -Recurse
+
 $stageSize = (Get-ChildItem $Stage -Recurse -File | Measure-Object -Property Length -Sum).Sum
 Ok "载荷 $([math]::Round($stageSize/1MB)) MB"
 

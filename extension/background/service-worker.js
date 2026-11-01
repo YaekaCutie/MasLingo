@@ -329,6 +329,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             ? "自动识别"
             : (language?.zh || sourceName),
           target: globalThis.MAS_providers.targetForLanguage(provider, targetName),
+          sourceLocked: Boolean(globalThis.MAS_providers.languageBase(sourceName)),
         };
         const { translations, skipped } = await runTranslationDetailed(texts, cfg, overrides);
         sendResponse({ ok: true, translations, skipped });
@@ -357,6 +358,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "CAPTURE_CROP") {
+    if (sender?.frameId !== 0) {
+      sendResponse({ ok: false, error: "iframe 内无法使用截图回退，请在最外层页面框选。" });
+      return true;
+    }
     // The tab is taken from the sender rather than the message: a content
     // script has no way to know its own tab id, and the first version of this
     // passed undefined straight into tabs.get().
@@ -395,7 +400,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
         const { translations: translated, skipped } =
-          await runTranslationDetailed(message.texts || [], cfg);
+          await runTranslationDetailed(message.texts || [], cfg, { sourceLocked: true });
         sendResponse({
           ok: true,
           mode: effectiveMode(provider),
@@ -510,7 +515,12 @@ async function recognizeRegion(msg,tabId,port){
 
 async function captureVisibleImage(tabId){
   const tab=await chrome.tabs.get(tabId);
+  if(!tab.active) throw new Error("请切回发起识别的标签页后重试，后台标签页无法截图。");
   const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"});
+  const [active]=await chrome.tabs.query({active:true,windowId:tab.windowId});
+  if(active?.id!==tabId || active.url!==tab.url){
+    throw new Error("截图期间标签页已切换或导航，请回到原页面重试。");
+  }
   const bytes=Uint8Array.from(atob(data.slice(data.indexOf(",")+1)),char=>char.charCodeAt(0));
   const bmp=await createImageBitmap(new Blob([bytes],{type:"image/png"}));
   return {tab,bmp};
@@ -859,10 +869,13 @@ async function runTranslationDetailed(texts, cfg, overrides = {}) {
     const sample = index === 0 && overrides.languageSample
       ? overrides.languageSample
       : text;
+    const mayDetectSource = !overrides.sourceLocked || !sourceBase;
     if (targetBase && (
       sourceBase === targetBase ||
-      registry.likelySameLanguage(text, targetBase, sample) ||
-      (await detectLanguageBase(sample)) === targetBase
+      (mayDetectSource && (
+        registry.likelySameLanguage(text, targetBase, sample) ||
+        (await detectLanguageBase(sample)) === targetBase
+      ))
     )) {
       skipped[index] = true;
       continue;
@@ -1048,7 +1061,7 @@ async function translateTexts(msg, port) {
       return;
     }
     const { translations: translated, skipped } =
-      await runTranslationDetailed(msg.texts || [], cfg);
+      await runTranslationDetailed(msg.texts || [], cfg, { sourceLocked: true });
     postPortMessage(port, {
       type: "TRANSLATION_RESULT",
       requestId: msg.requestId,

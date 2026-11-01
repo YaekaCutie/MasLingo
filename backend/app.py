@@ -30,7 +30,9 @@ from starlette.concurrency import run_in_threadpool
 
 from .image.decode import decode_image
 from .net_guard import assert_safe_endpoint
-from .ocr.bubble_detector import MAX_TEXT_REGIONS, detect_text_regions
+from .ocr.bubble_detector import MAX_TEXT_REGIONS
+from .ocr.text_detector import detect_text_regions, get_detector
+from .image.erase import make_erase_patch
 from .ocr.manga_ocr_engine import (
     get_engine,
     is_confident_reading,
@@ -82,9 +84,12 @@ async def lifespan(_app):
     if PRELOAD_MODEL:
         try:
             await run_in_threadpool(get_engine)
+            if os.getenv("MAS_TEXT_DETECTOR", "neural") != "heuristic":
+                await run_in_threadpool(get_detector)
             logger.info("MangaOCR 模型已预加载并常驻内存")
         except Exception:
-            logger.exception("预加载 MangaOCR 模型失败，将在首次请求时重试")
+            logger.exception("OCR 模型预加载失败；请检查依赖、模型缓存与下载网络后重试启动")
+            raise
     yield
 
 
@@ -356,8 +361,8 @@ def _drop_duplicate_regions(items: list[dict]) -> list[dict]:
             for other in kept
         ):
             logger.info(
-                "丢弃重复区域（置信度 %.3f，已被 %.3f 覆盖）：%r",
-                item["confidence"], max(o["confidence"] for o in kept), item["text"],
+                "丢弃重复区域（置信度 %.3f，已被 %.3f 覆盖）",
+                item["confidence"], max(o["confidence"] for o in kept),
             )
             continue
         kept.append(item)
@@ -370,11 +375,23 @@ def _recognize_page_sync(img) -> list[dict]:
     regions = detect_text_regions(img, limit=MAX_TEXT_REGIONS)
     logger.info("自动页面 OCR 检测到 %d 个区域（上限 %d）", len(regions), MAX_TEXT_REGIONS)
     items = []
+    mask = getattr(regions, "mask", None)
     for index, (left, top, right, bottom) in enumerate(regions, start=1):
         logger.info("自动页面 OCR 进度 %d/%d", index, len(regions))
         region = img.crop((left, top, right, bottom))
         detailed = recognize_detailed(region)
         text = "\n".join(detailed["texts"]).strip()
+        # Tight neural crops keep balloon frames out, but the recognizer can be
+        # sensitive to a two-pixel boundary change, especially around ellipses.
+        # Retry a rejected Japanese reading once with a little more OCR context;
+        # keep the glyph/erasure rectangle and the confidence gates unchanged.
+        has_japanese = any("\u3040" <= c <= "\u30ff" or "\u4e00" <= c <= "\u9fff" for c in text)
+        if mask is not None and has_japanese and not is_confident_reading(text, detailed["confidence"]):
+            retry_box = (max(0,left-2), max(0,top-2), min(img.width,right+2), min(img.height,bottom+2))
+            retry = recognize_detailed(img.crop(retry_box))
+            retry_text = "\n".join(retry["texts"]).strip()
+            if retry["confidence"] > detailed["confidence"] and is_confident_reading(retry_text,retry["confidence"]):
+                detailed, text = retry, retry_text
         # is_confident_reading decides, not the alphanumeric count.
         #
         # The count used to run first and it rejected anything under four
@@ -385,18 +402,21 @@ def _recognize_page_sync(img) -> list[dict]:
         # stayed Japanese while everything around them was translated.
         if not is_confident_reading(text, detailed["confidence"]):
             logger.info(
-                "丢弃区域 %s（置信度 %.3f）：%r",
-                f"{left},{top},{right},{bottom}", detailed["confidence"], text,
+                "丢弃区域 %s（置信度 %.3f）",
+                f"{left},{top},{right},{bottom}", detailed["confidence"],
             )
             continue
-        items.append({
+        item = {
             "text": text,
             "bbox": {"left": left, "top": top, "right": right, "bottom": bottom},
             # Reported per region so the extension typesets each one the way
             # it was actually read.
             "direction": detailed["direction"],
             "confidence": round(detailed["confidence"], 3),
-        })
+        }
+        if mask is not None:
+            item["erase"] = make_erase_patch(img, (left, top, right, bottom), mask)
+        items.append(item)
     return _drop_duplicate_regions(items)
 
 

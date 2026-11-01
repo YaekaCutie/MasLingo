@@ -30,6 +30,10 @@ RUN pip install --upgrade pip \
 RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('kha-white/manga-ocr-base')"
 
 COPY backend /app/backend
+COPY THIRD_PARTY_NOTICES.md /app/THIRD_PARTY_NOTICES.md
+COPY third_party /app/third_party
+
+RUN python -c "from backend.ocr.text_detector import ensure_model; ensure_model()"
 
 RUN useradd --create-home --uid 10001 omt \
  && chown -R omt:omt /app /models

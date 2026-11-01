@@ -23,6 +23,8 @@ const MAS_auto = (() => {
   const OCR_MAX_SIDE = 1600;
 
   let enabled = false;
+  let generation = 0;
+  let settingsGeneration = 0;
   let concurrency = 1;
   let running = 0;
   /**
@@ -75,7 +77,8 @@ const MAS_auto = (() => {
    * collide. Size and the element's identity disambiguate both.
    */
   function mediaKey(element) {
-    const src = element.currentSrc || element.src || element.getAttribute?.("src") || "";
+    const src = element.currentSrc || element.src || element.getAttribute?.("src") ||
+      getComputedStyle(element).backgroundImage || "";
     const width = element.naturalWidth || element.width || 0;
     const height = element.naturalHeight || element.height || 0;
     return { src, width, height, key: `${src}|${width}x${height}|${elementId(element)}` };
@@ -208,7 +211,16 @@ const MAS_auto = (() => {
     }
     if (!isCandidate(element)) return;
     const media = mediaKey(element);
-    if (processed.get(element) === media.key) return;
+    const previous = processed.get(element);
+    if (previous === media.key) return;
+    if (previous) {
+      MAS_overlay.releaseTarget(element);
+      // Those results no longer exist on the page. Returning to an earlier
+      // image must not reuse its old "translated" flag and leave it blank.
+      for (const id of tracked.keys()) {
+        if (id.startsWith(`${previous}#`)) tracked.delete(id);
+      }
+    }
     seen.candidates += 1;
     visibilityObserver?.unobserve(element);
     sizeObserver?.unobserve(element);
@@ -244,7 +256,7 @@ const MAS_auto = (() => {
     processed.set(element, media.key);
     inFlight.add(element);
     seen.enqueued += 1;
-    queue.push({ element, media, attempts: 0 });
+    queue.push({ element, media, attempts: 0, generation });
     pump();
   }
 
@@ -296,6 +308,8 @@ const MAS_auto = (() => {
 
   async function runTask(task) {
     const { element } = task;
+    const isCurrent = () => enabled && task.generation === generation && element.isConnected &&
+      mediaKey(element).key === task.media.key;
 
     let bitmap = null;
     // Everything is inside the try, including the connectivity check. It used to
@@ -304,34 +318,69 @@ const MAS_auto = (() => {
     // reached the finally, pinning a detached <img> and blocking that element
     // from ever being queued again.
     let boxes = [];
+    let retryScheduled = false;
     try {
-      if (!element.isConnected) return;
+      if (!isCurrent()) return;
       bitmap = await loadBitmap(element);
+      if (!isCurrent()) return;
       if (!bitmap || bitmap.width < MIN_IMAGE_SIDE || bitmap.height < MIN_IMAGE_SIDE) return;
 
       const key = task.media.key;
-      const scale = Math.min(1, OCR_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+      // Preserve the width of long strips. Shrinking their full height to
+      // 1600px turned ordinary dialogue into subpixel noise.
+      const scale = Math.min(1, OCR_MAX_SIDE / bitmap.width);
       const sendWidth = Math.max(1, Math.round(bitmap.width * scale));
-      const sendHeight = Math.max(1, Math.round(bitmap.height * scale));
-
-      const dataUrl = await toDataUrl(bitmap, sendWidth, sendHeight);
-      say("正在 OCR……", "info", "正在 OCR 中");
-      const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
-      if (!ocr?.ok) throw new Error(ocr?.error || "OCR 失败");
+      const tileHeight = Math.max(1, Math.floor(OCR_MAX_SIDE / scale));
+      const overlap = Math.round(tileHeight * 0.15);
+      const found = [];
+      for (let tileTop = 0; tileTop < bitmap.height;) {
+        if (!isCurrent()) return;
+        const sourceHeight = Math.min(tileHeight, bitmap.height - tileTop);
+        const sendHeight = Math.max(1, Math.round(sourceHeight * scale));
+        const dataUrl = toDataUrl(bitmap, sendWidth, sendHeight, tileTop, sourceHeight);
+        say("正在 OCR……", "info", "正在 OCR 中");
+        const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
+        if (!isCurrent()) return;
+        if (!ocr?.ok) throw new Error(ocr?.error || "OCR 失败");
+        const normalized = (r) => ({
+          left: r.left / sendWidth,
+          top: (tileTop + r.top * sourceHeight / sendHeight) / bitmap.height,
+          width: r.width / sendWidth,
+          height: r.height * sourceHeight / sendHeight / bitmap.height,
+        });
+        for (const item of ocr.items || []) {
+          const b = item.bbox;
+          const area = normalized({left:b.left, top:b.top, width:b.right-b.left, height:b.bottom-b.top});
+          found.push({ ...item, area,
+            eraseArea: item.erase ? normalized(item.erase.rect) : null });
+        }
+        if (tileTop + sourceHeight >= bitmap.height) break;
+        tileTop += sourceHeight - overlap;
+      }
+      // Overlapping bands may detect the same line twice. Prefer the fuller,
+      // confident reading and keep exactly one repair for that piece of text.
+      const unique = [];
+      const weight = item => (Number(item.confidence) || 0) + Math.min(20, item.text?.length || 0) * 0.01;
+      for (const item of found.sort((a,b) => weight(b)-weight(a))) {
+        const a = item.area;
+        if (unique.some(other => {
+          const b = other.area;
+          const intersection = Math.max(0, Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)) *
+            Math.max(0, Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top));
+          return intersection / Math.min(a.width*a.height,b.width*b.height) > 0.5;
+        })) continue;
+        unique.push(item);
+      }
+      unique.sort((a,b) => a.area.top-b.area.top || b.area.left-a.area.left);
       say(
-        ocr.items?.length ? "OCR 完成，正在翻译……" : "没有找到文字",
+        unique.length ? "OCR 完成，正在翻译……" : "没有找到文字",
         "info",
-        ocr.items?.length ? "正在翻译中" : "没有找到文字",
+        unique.length ? "正在翻译中" : "没有找到文字",
       );
 
       const fresh = [];
-      for (const item of ocr.items || []) {
-        const area = {
-          left: item.bbox.left / sendWidth,
-          top: item.bbox.top / sendHeight,
-          width: (item.bbox.right - item.bbox.left) / sendWidth,
-          height: (item.bbox.bottom - item.bbox.top) / sendHeight,
-        };
+      for (const item of unique) {
+        const area = item.area;
         const id = regionIdFor(key, area);
         if (tracked.get(id)?.state === STATE.TRANSLATED) continue;
         track(id, STATE.DETECTED);
@@ -350,6 +399,10 @@ const MAS_auto = (() => {
 
       const texts = fresh.map((region) => region.item.text);
       const translation = await chrome.runtime.sendMessage({ type: "AUTO_TRANSLATE", texts });
+      if (!isCurrent()) {
+        for (const box of boxes) box.fail();
+        return;
+      }
       if (translation?.ok) translationMode = translation.mode || "configured";
       for (const region of fresh) track(region.id, STATE.PROCESSING);
 
@@ -375,14 +428,20 @@ const MAS_auto = (() => {
       // item per input, or runTranslation throws.
       const translationOff = (translation.items || []).length === 0;
       const skippedCount = (translation.items || []).filter((item) => item?.skipped).length;
-      fresh.forEach((region, index) => {
+      let paintFailures = 0;
+      let adjacentCount = 0;
+      for (const [index, region] of fresh.entries()) {
+        if (!isCurrent()) {
+          for (const box of boxes) box.fail();
+          return;
+        }
         if (translation.items?.[index]?.skipped) {
           // The source line is already in the target language. Leave the
           // original artwork untouched; painting the same text with a Chinese
           // font would replace crisp lettering for no benefit.
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
-          return;
+          continue;
         }
         const translated = String(translation.items?.[index]?.translated || "").trim();
         if (!translated && !translationOff) {
@@ -391,30 +450,37 @@ const MAS_auto = (() => {
           console.warn("[OMT] 翻译结果为空：", region.item.text);
           track(region.id, STATE.FAILED);
           region.box.fail();
-          return;
+          paintFailures += 1;
+          continue;
         }
         if (!translated && !showSource) {
           // Nothing to draw; the original artwork stays untouched.
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
-          return;
+          continue;
         }
         try {
-          paintRegion(element, bitmap, region, translated || region.item.text);
+          const painted = await paintRegion(element, bitmap, region, translated || region.item.text, isCurrent, Boolean(translated));
+          if (!painted) continue;
+          if (painted === "adjacent") adjacentCount += 1;
           track(region.id, STATE.TRANSLATED);
           region.box.finish();
         } catch (error) {
           console.warn("[OMT] 绘制失败：", error.message);
           track(region.id, STATE.FAILED);
           region.box.fail();
+          paintFailures += 1;
         }
-      });
+      }
+      MAS_overlay.reposition();
       if (enabled) {
         // "ok" on a real translation means the failure (if any) is over: the
         // panel clears a persistent error line back to the sample sentence.
         // Translation off is not a resolution of anything, so it stays info.
-        if (translationOff) say("已识别文字（未启用翻译）", "info", "翻译未启用");
+        if (paintFailures) say(`${paintFailures} 处文字未能安全修复，已保留原图`, "error", "部分保留原图");
+        else if (translationOff) say("已识别文字（未启用翻译）", "info", "翻译未启用");
         else if (skippedCount === fresh.length) say("原文已是目标语言，无需翻译", "info", "无需翻译");
+        else if (adjacentCount) say(`翻译完成，${adjacentCount} 处译文显示在原文旁，原画已保留`, "ok", "翻译成功");
         else say("翻译完成", "ok", "翻译成功");
       }
     } catch (error) {
@@ -424,30 +490,38 @@ const MAS_auto = (() => {
       for (const box of boxes) box.fail();
       bitmap?.close?.();
       bitmap = null;
+      if (!isCurrent()) return;
 
       task.attempts += 1;
       if (task.attempts < MAX_ATTEMPTS) {
+        retryScheduled = true;
         // Retry once, then give up on this picture only. One bad image must not
         // stall the queue behind it.
         setTimeout(() => {
-          if (enabled) {
+          if (isCurrent()) {
             queue.push(task);
             pump();
+          } else {
+            inFlight.delete(element);
+            processed.delete(element);
+            reobserve(element);
           }
         }, 800 * task.attempts);
       } else {
         console.warn("[OMT] 放弃这张图片：", error.message);
-        // Let it be considered again — the failure may have been transient, and
-        // the picture may also have changed since. Re-observing is what makes
-        // that true: nothing else watches an element after it was considered.
-        processed.delete(element);
-        reobserve(element);
+        // Keep the failed media key until it changes or the switch is restarted.
+        // Re-observing immediately would reset attempts and retry forever.
         imageFailures[classify(error)] += 1;
         lastError = { message: String(error.message || error), at: Date.now(), src: task.media.src };
       }
     } finally {
-      inFlight.delete(element);
+      if (!retryScheduled) inFlight.delete(element);
       bitmap?.close?.();
+      if (task.generation !== generation ||
+          (element.isConnected && mediaKey(element).key !== task.media.key)) {
+        processed.delete(element);
+        reobserve(element);
+      }
     }
   }
 
@@ -560,12 +634,12 @@ const MAS_auto = (() => {
     throw new Error(errors.join("；"));
   }
 
-  function toDataUrl(bitmap, width, height) {
+  function toDataUrl(bitmap, width, height, sourceTop = 0, sourceHeight = bitmap.height) {
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    context.drawImage(bitmap, 0, 0, width, height);
+    context.drawImage(bitmap, 0, sourceTop, bitmap.width, sourceHeight, 0, 0, width, height);
     return canvas.toDataURL("image/png");
   }
 
@@ -576,7 +650,13 @@ const MAS_auto = (() => {
    * outside the text box to work out what the paper looks like, so a crop that
    * ends exactly at the text has nothing to sample.
    */
-  function paintRegion(element, bitmap, region, text) {
+  async function paintRegion(element, bitmap, region, text, isCurrent, allowCaption = true) {
+    if ("erase" in region.item && (!region.item.erase || region.item.erase.safe === false)) {
+      if (!isCurrent()) return false;
+      if (!allowCaption) return "preserved";
+      MAS_overlay.caption(element, region.area, text, {sourceText:region.item.text});
+      return "adjacent";
+    }
     const source = {
       left: region.area.left * bitmap.width,
       top: region.area.top * bitmap.height,
@@ -596,11 +676,9 @@ const MAS_auto = (() => {
     if (crop.width < 2 || crop.height < 2) throw new Error("区域太小");
 
     const ratio = window.devicePixelRatio || 1;
-    const displayed = element.getBoundingClientRect();
+    const displayed = MAS_overlay.contentRect(element, bitmap.width, bitmap.height);
     const displayScale = displayed.width / bitmap.width || 1;
 
-    // Only the geometry is needed: the cover is flat white, so no pixels of the
-    // original are carried into the overlay any more.
     const canvas = document.createElement("canvas");
     canvas.className = "maslingo-result";
     canvas.setAttribute("role", "img");
@@ -608,6 +686,10 @@ const MAS_auto = (() => {
     canvas.width = Math.max(1, Math.round(crop.width * displayScale * ratio));
     canvas.height = Math.max(1, Math.round(crop.height * displayScale * ratio));
     const context = canvas.getContext("2d", { willReadFrequently: true });
+    // The shared renderer needs the original crop to erase strokes only.
+    context.drawImage(bitmap, crop.left, crop.top, crop.width, crop.height,
+      0, 0, canvas.width, canvas.height);
+    const patchPixels = context.getImageData(0, 0, canvas.width, canvas.height);
 
     const core = {
       left: (source.left - crop.left) / crop.width,
@@ -624,10 +706,25 @@ const MAS_auto = (() => {
     };
     // Painting is shared with manual mode; see the MAS_render export in
     // content.js.
-    MAS_render.drawTranslatedPatch(
-      { canvas, context, patch: { core, rect }, direction: region.item.direction },
-      text,
-    );
+    const entry = { canvas, context, patchPixels, patch: { core, rect }, direction: region.item.direction,
+      preferVertical:true };
+    if (region.item.erase && region.item.eraseArea) {
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error("文字修复图层读取失败"));
+        image.src = region.item.erase.image;
+      });
+      const area = region.item.eraseArea;
+      entry.erase = { image, luminance: region.item.erase.luminance, rect: {
+        left: (area.left * bitmap.width - crop.left) / crop.width,
+        top: (area.top * bitmap.height - crop.top) / crop.height,
+        width: area.width * bitmap.width / crop.width,
+        height: area.height * bitmap.height / crop.height,
+      } };
+    }
+    if (!isCurrent()) return false;
+    MAS_render.drawTranslatedPatch(entry, text);
 
     MAS_overlay.anchor(canvas, element, {
       left: crop.left / bitmap.width,
@@ -635,9 +732,14 @@ const MAS_auto = (() => {
       width: crop.width / bitmap.width,
       height: crop.height / bitmap.height,
     });
+    return true;
   }
 
   // --- lifecycle ------------------------------------------------------------
+
+  function onMediaLoad(event) {
+    if (event.target?.tagName === "IMG") consider(event.target);
+  }
 
   function attachObservers() {
     if (!visibilityObserver) {
@@ -661,6 +763,9 @@ const MAS_auto = (() => {
         // contributed only its first node, and the rest stayed invisible until
         // the switch was toggled.
         for (const record of records) {
+          if (record.type === "attributes" && !isOurs(record.target)) {
+            pendingRoots.add(record.target);
+          }
           for (const node of record.addedNodes) {
             if (node.nodeType === 1) pendingRoots.add(node);
           }
@@ -680,12 +785,14 @@ const MAS_auto = (() => {
     mutationObserver.observe(document.documentElement, {
       childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset", "style"],
     });
+    document.addEventListener("load", onMediaLoad, true);
   }
 
   function detachObservers() {
     visibilityObserver?.disconnect();
     sizeObserver?.disconnect();
     mutationObserver?.disconnect();
+    document.removeEventListener("load", onMediaLoad, true);
     if (mutationTimer) clearTimeout(mutationTimer);
     mutationTimer = null;
     pendingElements.clear();
@@ -709,7 +816,9 @@ const MAS_auto = (() => {
 
   async function start() {
     if (enabled) return;
+    const startingGeneration = ++generation;
     const cfg = await readSettings(["autoConcurrency", "debugMode"]);
+    if (startingGeneration !== generation) return;
     concurrency = Math.min(3, Math.max(1, Number(cfg.autoConcurrency) || 1));
     showSource = cfg.debugMode !== false;
     enabled = true;
@@ -724,18 +833,25 @@ const MAS_auto = (() => {
   }
 
   function stop() {
+    generation += 1;
+    settingsGeneration += 1;
     if (!enabled) return;
     enabled = false;
     detachObservers();
+    // Queued tasks have not run, so their processed/in-flight marks must not
+    // survive a stop/start cycle.
+    for (const element of inFlight) processed.delete(element);
+    for (const task of queue) inFlight.delete(task.element);
     queue.length = 0;
-    // In-flight work is left to settle rather than aborted mid-request: the
-    // results already painted are valid, and killing a fetch midway would only
-    // leave a half-finished box behind.
+    // Active requests settle, but their generation can no longer paint or send
+    // a follow-up translation after the user switches the feature off.
   }
 
   /** Mirror the stored setting; called at startup and whenever it changes. */
   async function sync() {
+    const pendingSettings = ++settingsGeneration;
     const cfg = await readSettings(["autoTranslate"]);
+    if (pendingSettings !== settingsGeneration) return;
     if (cfg.autoTranslate) await start();
     else stop();
   }

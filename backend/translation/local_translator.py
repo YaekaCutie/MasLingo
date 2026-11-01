@@ -66,9 +66,20 @@ def _translate_single(text: str) -> str:
             raise RuntimeError("免费翻译服务不可用，请稍后重试。") from exc
 
     try:
-        return payload[0][0][0].strip()
-    except (TypeError, IndexError, KeyError):
-        return text.strip()
+        segments = payload[0]
+        if not isinstance(segments, list) or not segments:
+            raise ValueError("missing translation segments")
+        parts = []
+        for segment in segments:
+            if not isinstance(segment, list) or not segment or not isinstance(segment[0], str):
+                raise ValueError("invalid translation segment")
+            parts.append(segment[0])
+        translated = "".join(parts).strip()
+        if not translated:
+            raise ValueError("empty translation")
+        return translated
+    except (TypeError, IndexError, KeyError, ValueError) as exc:
+        raise RuntimeError("免费翻译服务返回的译文格式无效。") from exc
 
 
 def translate_texts(texts: Sequence[str]) -> list[str]:

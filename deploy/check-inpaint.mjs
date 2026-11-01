@@ -502,6 +502,53 @@ try {
   check("后端没意见时才退回长宽比（宽框→横排）", direction.fallbackWideBox === false);
   check("字段缺失时也走退路", direction.fallbackUndefined === true);
 
+  const shortAnswer = await page.evaluate(() => {
+    const canvas=document.createElement("canvas");canvas.width=24;canvas.height=56;
+    const context=canvas.getContext("2d"),drawn=[];
+    const original=context.fillText.bind(context);
+    context.fillText=(text,x,y,...args)=>{drawn.push({text,x,y,font:context.font});return original(text,x,y,...args);};
+    MAS_render.drawTranslatedPatch({canvas,context,direction:"vertical",patch:{
+      core:{left:0,top:0,width:1,height:1},rect:{width:24,height:56}}},"诶？");
+    return drawn;
+  });
+  check("窄气泡的两个字使用可读字号",shortAnswer.length===2 && shortAnswer.every(g=>
+    Number(g.font.match(/([\d.]+)px/)[1])>=18),JSON.stringify(shortAnswer));
+  check("两个字在同一竖列内且未超出气泡",shortAnswer[0]?.x===shortAnswer[1]?.x &&
+    shortAnswer.every(g=>g.x>=0&&g.x<=24&&g.y>0&&g.y<56),JSON.stringify(shortAnswer));
+
+  const mangaColumns = await page.evaluate(() => {
+    const canvas=document.createElement("canvas");canvas.width=78;canvas.height=96;
+    const context=canvas.getContext("2d"),drawn=[];
+    const original=context.fillText.bind(context);
+    context.fillText=(text,x,y,...args)=>{drawn.push({text,x,y});return original(text,x,y,...args);};
+    MAS_render.drawTranslatedPatch({canvas,context,direction:"horizontal",preferVertical:true,patch:{
+      core:{left:0,top:0,width:1,height:1},rect:{width:78,height:96}}},"天地玄黄宇宙洪荒");
+    return drawn;
+  });
+  check("漫画多行译文优先竖排、从右至左分列",mangaColumns.length===8 &&
+    mangaColumns.every(g=>g.text.length===1) && mangaColumns[0].x===mangaColumns[1].x &&
+    mangaColumns[0].y<mangaColumns[1].y && mangaColumns[0].x>mangaColumns.at(-1).x,JSON.stringify(mangaColumns));
+
+  const dashShape = await page.evaluate(() => {
+    const canvas=document.createElement("canvas");canvas.width=80;canvas.height=200;
+    const context=canvas.getContext("2d");
+    MAS_render.drawTranslatedPatch({canvas,context,direction:"vertical",patch:{
+      core:{left:0,top:0,width:1,height:1},rect:{width:80,height:200}}},"一—");
+    const pixels=context.getImageData(0,0,80,200).data;
+    const measure=(top,bottom)=>{
+      let left=80,right=-1,first=200,last=-1;
+      for(let y=top;y<bottom;y++)for(let x=0;x<80;x++){
+        const p=(y*80+x)*4;if(pixels[p+3]&&Math.max(pixels[p],pixels[p+1],pixels[p+2])<90){
+          left=Math.min(left,x);right=Math.max(right,x);first=Math.min(first,y);last=Math.max(last,y);
+        }
+      }
+      return {width:right-left+1,height:last-first+1};
+    };
+    return {one:measure(70,100),dash:measure(100,130)};
+  });
+  check("竖排中汉字一保持横笔画、破折号显示为竖线",dashShape.one.width>dashShape.one.height*3 &&
+    dashShape.dash.height>dashShape.dash.width*3,JSON.stringify(dashShape));
+
   // --- the overlay must never become its own window -------------------------
   console.log("\n译文呈现方式");
   const overlay = await page.evaluate(() => {

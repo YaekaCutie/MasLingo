@@ -50,7 +50,7 @@ def update_config(url: str) -> str:
 def update_manifest(url: str) -> list[str]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     host = re.sub(r"^(https?://[^/]+).*$", r"\1/*", url)
-    hosts = list(LOCAL_HOSTS)
+    hosts = list(dict.fromkeys([*manifest.get("host_permissions", []), *LOCAL_HOSTS]))
     if host not in hosts:
         hosts.append(host)
     manifest["host_permissions"] = hosts

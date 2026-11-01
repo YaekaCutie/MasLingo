@@ -1,9 +1,7 @@
 // Same-language suppression through the real service worker.
 //
-// A Chinese line with a Chinese target must never reach the provider; a
-// Japanese line in the same batch still must. The response keeps the skipped
-// line in place and marks it, so the manga overlay can leave the original
-// artwork alone instead of drawing a Chinese-font copy over it.
+// Auto-detected webpage text already in the target language is skipped.
+// MangaOCR has a known Japanese source: kanji-only lines must still translate.
 //
 //   node deploy/check-same-language.mjs
 
@@ -90,20 +88,21 @@ try {
   const chinese = "这是已经写好的中文，不需要再次翻译。";
   const japanese = "おはようございます。";
 
-  const auto = await popup.evaluate(({ chinese, japanese }) => chrome.runtime.sendMessage({
+  const kanji = "用事";
+  const auto = await popup.evaluate(({ kanji, japanese }) => chrome.runtime.sendMessage({
     type: "AUTO_TRANSLATE",
-    texts: [chinese, japanese],
-  }), { chinese, japanese });
+    texts: [kanji, japanese],
+  }), { kanji, japanese });
   check("AUTO_TRANSLATE 返回两项", auto?.ok && auto.items?.length === 2,
     JSON.stringify(auto));
-  check("中文项被标记为无需翻译且保留原文",
-    auto.items?.[0]?.skipped === true && auto.items?.[0]?.translated === chinese,
+  check("日文 OCR 的纯汉字短句不会被误判中文而跳过",
+    auto.items?.[0]?.skipped === false && auto.items?.[0]?.translated === `译:${kanji}`,
     JSON.stringify(auto.items?.[0]));
   check("同一批里的日文仍然翻译",
     auto.items?.[1]?.skipped === false && auto.items?.[1]?.translated === `译:${japanese}`,
     JSON.stringify(auto.items?.[1]));
-  check("翻译服务只收到日文",
-    received.length === 1 && received[0]?.texts?.length === 1 && received[0]?.texts?.[0] === japanese,
+  check("翻译服务收到纯汉字和假名两条日文",
+    received.length === 1 && received[0]?.texts?.length === 2 && received[0]?.texts?.[0] === kanji,
     JSON.stringify(received));
 
   const beforeParagraph = received.length;
@@ -156,4 +155,4 @@ if (failures.length) {
   console.error(`${failures.length} 项不合格`);
   process.exit(1);
 }
-console.log("同语言抑制：批量翻译 / 段落 / 划词均不调用翻译服务");
+console.log("同语言抑制：已知日文 OCR 不漏翻；自动识别的同语言段落和划词不请求服务");

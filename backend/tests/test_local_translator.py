@@ -9,6 +9,23 @@ from backend.translation.local_translator import _translate_single, translate_te
 
 class LocalTranslatorTests(unittest.TestCase):
     @patch("backend.translation.local_translator.urllib_request.urlopen")
+    def test_preserves_all_google_translation_segments(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps([
+            [["你好。", "こんにちは。"], ["再见。", "さようなら。"]]
+        ]).encode("utf-8")
+        urlopen.return_value = response
+        self.assertEqual(_translate_single("こんにちは。さようなら。"), "你好。再见。")
+
+    @patch("backend.translation.local_translator.urllib_request.urlopen")
+    def test_invalid_response_is_a_failure_instead_of_an_untranslated_success(self, urlopen):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = b'[]'
+        urlopen.return_value = response
+        with self.assertRaisesRegex(RuntimeError, "格式无效"):
+            _translate_single("こんにちは。")
+
+    @patch("backend.translation.local_translator.urllib_request.urlopen")
     def test_translates_full_japanese_text_from_japanese_to_simplified_chinese(self, urlopen):
         response = MagicMock()
         response.__enter__.return_value.read.return_value = json.dumps([

@@ -54,8 +54,15 @@ jobs:
       # response shape.
       - run: node deploy/check-providers.mjs
 
+      - run: node deploy/check-capture-privacy.mjs
+
+      - run: node deploy/check-japanese-ocr-translation.mjs
+
       - name: Install Puppeteer
         run: npm install --no-save --no-package-lock puppeteer
+
+      - name: Automatic manga repair and image lifecycle
+        run: xvfb-run -a node deploy/check-auto-lifecycle.mjs
 
       # The translated overlay has to actually cover the original lettering, so
       # both the old and the new background reconstruction are scored against a

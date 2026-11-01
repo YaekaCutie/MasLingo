@@ -792,6 +792,23 @@ function preparePatchPixels(entry, dataUrl) {
   image.src = dataUrl;
 }
 
+function fitTextGrid(count, width, height, maxFont, vertical) {
+  // Choose the grid and font together. Shrinking for an initial two-column
+  // guess and then repacking into one column left short answers unnecessarily
+  // tiny: two characters in a 24x56 box dropped from ~20px to 10px.
+  let best = 0;
+  for (let runs = 1; runs <= count; runs += 1) {
+    const length = Math.ceil(count / runs);
+    const size = Math.min(maxFont,
+      width / (vertical ? runs * 1.2 : length * 1.1),
+      height / (vertical ? length * 1.2 : runs * 1.25));
+    if (size > best) best = size;
+  }
+  const fontSize = Math.max(8, best);
+  const perRun = Math.max(1, Math.floor((vertical ? height : width) / (fontSize * (vertical ? 1.2 : 1.1))));
+  return {fontSize, perRun};
+}
+
 function drawTranslatedPatch(entry, text) {
   const {canvas, context, image, patch} = entry;
   const left = Math.max(0, Math.floor(patch.core.left * canvas.width));
@@ -811,9 +828,17 @@ function drawTranslatedPatch(entry, text) {
   // keep their pixels. Without pixels (an older worker, or a geometry-only
   // caller) the flat white block is still the fallback.
   context.clearRect(0, 0, canvas.width, canvas.height);
-  const cover = entry.patchPixels
-    ? paintLetteringCover(entry, left, top, right, bottom)
-    : paintFlatCover(context, left, top, right, bottom);
+  let cover;
+  if (entry.erase) {
+    const r = entry.erase.rect;
+    context.drawImage(entry.erase.image, r.left * canvas.width, r.top * canvas.height,
+      r.width * canvas.width, r.height * canvas.height);
+    cover = { luminance: entry.erase.luminance };
+  } else {
+    cover = entry.patchPixels
+      ? paintLetteringCover(entry, left, top, right, bottom)
+      : paintFlatCover(context, left, top, right, bottom);
+  }
   canvas.style.visibility = "visible";
 
   const cssScale = canvas.width / patch.rect.width;
@@ -823,11 +848,15 @@ function drawTranslatedPatch(entry, text) {
   if (!characters.length) return;
   // Trust the recogniser's verdict; only guess from the box's shape when it had
   // no opinion.
-  const vertical = resolveTextDirection(entry.direction, coreWidth, coreHeight);
+  let vertical = resolveTextDirection(entry.direction, coreWidth, coreHeight);
   let fontSize = Math.max(8, Math.min(
     25,
     Math.sqrt(coreWidth * coreHeight / (characters.length * (vertical ? 0.8 : 0.95)))
   ));
+  if (entry.preferVertical && characters.length*fontSize*MAS_display.fontScale*1.1>coreWidth) {
+    vertical = true;
+    fontSize = Math.max(8,Math.min(25,Math.sqrt(coreWidth*coreHeight/(characters.length*.8))));
+  }
   fontSize *= cssScale * MAS_display.fontScale;
   canvas.style.opacity = String(MAS_display.opacity);
   context.textAlign = "center";
@@ -851,28 +880,36 @@ function drawTranslatedPatch(entry, text) {
   context.clip();
 
   if (vertical) {
-    const maxCharsPerColumn = Math.max(1, Math.floor((bottom - top) / (fontSize * 1.2)));
-    let columns = [];
+    const fit = fitTextGrid(characters.length,right-left,bottom-top,fontSize,true);
+    fontSize = fit.fontSize;
+    const maxCharsPerColumn = fit.perRun;
+    context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
+    context.lineWidth = Math.max(1,fontSize*0.09);
+    const columns = [];
     for (let index = 0; index < characters.length; index += maxCharsPerColumn) {
       columns.push(characters.slice(index, index + maxCharsPerColumn));
     }
-    if (columns.length * fontSize * 1.2 > right - left) {
-      fontSize = Math.max(8, (right - left) / (columns.length * 1.2));
-      context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
-      const adjustedCharsPerColumn = Math.max(1, Math.floor((bottom - top) / (fontSize * 1.2)));
-      columns = [];
-      for (let index = 0; index < characters.length; index += adjustedCharsPerColumn) {
-        columns.push(characters.slice(index, index + adjustedCharsPerColumn));
-      }
-    }
+    const columnStep = fontSize * 1.2;
+    const firstX = (left + right + (columns.length - 1) * columnStep) / 2;
     columns.forEach((column, columnIndex) => {
-      const x = right - (columnIndex + 0.5) * fontSize * 1.2;
+      const x = firstX - columnIndex * columnStep;
       const blockHeight = column.length * fontSize * 1.2;
       const startY = top + (bottom - top - blockHeight) / 2 + fontSize * 0.6;
       column.forEach((character, characterIndex) => {
         const y = startY + characterIndex * fontSize * 1.2;
-        context.strokeText(character, x, y);
-        context.fillText(character, x, y);
+        if (/[—―–ー－]/u.test(character)) {
+          // Vertical dashes turn with the text flow; the Han numeral 一 keeps
+          // its horizontal stroke. Do not guess/replace either OCR character.
+          context.save();
+          context.translate(x,y);
+          context.rotate(Math.PI/2);
+          context.strokeText(character,0,0);
+          context.fillText(character,0,0);
+          context.restore();
+        } else {
+          context.strokeText(character, x, y);
+          context.fillText(character, x, y);
+        }
       });
     });
     context.restore();
@@ -880,14 +917,14 @@ function drawTranslatedPatch(entry, text) {
   }
 
   const maxLineWidth = right - left;
-  const maxCharsPerLine = Math.max(1, Math.floor(maxLineWidth / (fontSize * 1.1)));
+  const fit = fitTextGrid(characters.length,maxLineWidth,bottom-top,fontSize,false);
+  fontSize = fit.fontSize;
+  const maxCharsPerLine = fit.perRun;
+  context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
+  context.lineWidth = Math.max(1,fontSize*0.09);
   const lines = [];
   for (let index = 0; index < characters.length; index += maxCharsPerLine) {
     lines.push(characters.slice(index, index + maxCharsPerLine).join(""));
-  }
-  if (lines.length * fontSize * 1.25 > bottom - top) {
-    fontSize = Math.max(8, (bottom - top) / (lines.length * 1.25));
-    context.font = `600 ${fontSize}px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif`;
   }
   const lineHeight = fontSize * 1.25;
   const firstY = top + (bottom - top - lines.length * lineHeight) / 2 + lineHeight / 2;

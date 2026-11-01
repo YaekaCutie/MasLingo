@@ -121,6 +121,17 @@
   z-index: 2147483641 !important;
 }
 
+#maslingo-layer .maslingo-adjacent-translation {
+  position:absolute !important;
+  display:block !important;
+  margin:0 !important;
+  padding:0 !important;
+  border:0 !important;
+  transform:none !important;
+  pointer-events:auto !important;
+  z-index:2147483642 !important;
+}
+
 /* Manual-mode results live in the same layer as the auto ones now, but keep
    their own copy of the rules: the class is what the renderer and `isOurs`
    check, and the two result kinds are allowed to drift apart. Absolute with a

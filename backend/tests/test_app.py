@@ -1,4 +1,5 @@
 import io
+import os
 import socket
 import unittest
 from unittest.mock import patch
@@ -6,9 +7,11 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image, ImageDraw
+import numpy as np
 
 from backend.app import _drop_duplicate_regions, app
 from backend.ocr.bubble_detector import MAX_TEXT_REGIONS
+from backend.ocr.text_detector import TextRegions
 from backend.ocr.manga_ocr_engine import (
     _detect_text_direction,
     _vertical_column_bounds,
@@ -26,6 +29,9 @@ def detailed(*texts, direction="horizontal", confidence=0.9):
 
 class AppTests(unittest.TestCase):
     def setUp(self):
+        detector_mode = patch.dict(os.environ, {"MAS_TEXT_DETECTOR": "heuristic"})
+        detector_mode.start()
+        self.addCleanup(detector_mode.stop)
         self.client = TestClient(app)
 
     def test_rejects_empty_upload(self):
@@ -92,9 +98,10 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(response.json()["direction"], "vertical")
 
-    @patch("backend.ocr.manga_ocr_engine.MangaOcr")
-    def test_recognize_splits_multiline_output(self, mock_manga_ocr):
-        mock_manga_ocr.return_value.return_value = "  first line\n\n second line  "
+    @patch("backend.ocr.manga_ocr_engine._confidence", return_value=0.99)
+    @patch("backend.ocr.manga_ocr_engine.get_engine")
+    def test_recognize_splits_multiline_output(self, mock_engine, _confidence):
+        mock_engine.return_value.return_value = "  first line\n\n second line  "
 
         result = recognize(Image.new("RGB", (64, 64), "white"))
 
@@ -374,6 +381,31 @@ class AppTests(unittest.TestCase):
         detect_mock.assert_called_once()
         self.assertEqual(detect_mock.call_args.kwargs, {"limit": MAX_TEXT_REGIONS})
         recognize_mock.assert_called_once()
+
+    @patch("backend.app.recognize_detailed")
+    @patch("backend.app.detect_text_regions")
+    def test_rejected_tight_crop_retries_once_without_expanding_erase_geometry(self, detect_mock, recognize_mock):
+        detect_mock.return_value = TextRegions([(10,12,60,55)],np.zeros((80,100),np.float32))
+        recognize_mock.side_effect = [detailed("わたし帰る．．",confidence=0.31),
+                                      detailed("わたし帰る．．．",confidence=0.94)]
+        image = io.BytesIO()
+        Image.new("RGB",(100,80),"white").save(image,format="PNG")
+        response = self.client.post("/api/recognize-page",files={"image":("page.png",image.getvalue(),"image/png")})
+        self.assertEqual(response.status_code,200)
+        item = response.json()["items"][0]
+        self.assertEqual(item["text"],"わたし帰る．．．")
+        self.assertEqual(item["bbox"],{"left":10,"top":12,"right":60,"bottom":55})
+        self.assertEqual([call.args[0].size for call in recognize_mock.call_args_list],[(50,43),(54,47)])
+
+    @patch("backend.app.recognize_detailed",return_value=detailed("そういえば、",confidence=0.33))
+    @patch("backend.app.detect_text_regions")
+    def test_crop_retry_keeps_confidence_gate_and_is_bounded(self, detect_mock, recognize_mock):
+        detect_mock.return_value = TextRegions([(10,12,60,55)],np.zeros((80,100),np.float32))
+        image = io.BytesIO()
+        Image.new("RGB",(100,80),"white").save(image,format="PNG")
+        response = self.client.post("/api/recognize-page",files={"image":("page.png",image.getvalue(),"image/png")})
+        self.assertEqual(response.json()["items"],[])
+        self.assertEqual(recognize_mock.call_count,2)
 
     @patch(
         "backend.app.recognize_detailed",
