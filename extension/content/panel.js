@@ -858,7 +858,7 @@ globalThis.MAS_panel = (() => {
                 </div>
                 <div class="maslingo-toggle">
                   <span class="maslingo-label" id="maslingo-selection-label"
-                        title="选中网页文字、输入框或文本域中的文字即可查词或翻译（仅 AI）">划词词典</span>
+                        title="选中网页文字查词；输入框选中文字可自动翻译替换，在设置中可关闭（仅 AI）">划词词典</span>
                   <label class="maslingo-switch" aria-labelledby="maslingo-selection-label">
                     <input id="maslingo-selection-toggle" type="checkbox" aria-labelledby="maslingo-selection-label">
                     <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
@@ -1044,7 +1044,7 @@ globalThis.MAS_panel = (() => {
     row.classList.toggle("maslingo-ai-disabled", !ai);
     row.title = ai ? "" : "划词词典仅支持 AI 翻译，请切换到 DeepSeek 等 AI 来源";
     root.querySelector("#maslingo-selection-label").title = row.title ||
-      "选中网页文字、输入框或文本域中的文字即可查词或翻译（仅 AI）";
+      "选中网页文字查词；输入框选中文字可自动翻译替换，在设置中可关闭（仅 AI）";
     renderGlossary();
   }
 

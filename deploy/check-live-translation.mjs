@@ -15,6 +15,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const backend = process.env.MAS_TEST_BACKEND || "http://127.0.0.1:8001";
 const model = process.env.MAS_TEST_MODEL || "deepseek-flash";
 const imageOnly = process.argv.includes("--image-only");
+const inputOnly = process.argv.includes("--input-only");
 const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-live-qa"));
 mkdirSync(screenshotDir, { recursive: true });
 let apiKey = process.env.MAS_TEST_TRANSLATION_API_KEY || "";
@@ -43,6 +44,7 @@ const server = http.createServer((request, response) => {
     response.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>MasLingo live translation QA</title>
       <style>body{margin:32px;font:18px/1.7 system-ui;background:#f5f5f4}article{max-width:700px}img{display:block;width:680px;max-width:100%}#tail{height:900px}</style>
       </head><body><article><h1>Live translation QA</h1><p id="medical">${medicalText}</p>
+      <textarea id="draft" aria-label="Draft" style="display:block;width:650px;max-width:100%;height:90px;font:18px/1.6 system-ui"></textarea>
       <img id="manga" src="/manga.png" alt="Synthetic Japanese dialogue"><div id="tail"></div></article></body></html>`);
   }
 });
@@ -111,11 +113,13 @@ try {
     console.log(`PASS ${label}`);
   };
 
-  const health = await send({ type: "CHECK_BACKEND" });
-  check("extension reaches the running OCR backend", health.ok && health.base === backend);
-  await set({ translationProvider: "deepseek", translationMode: "openai-compatible", hoverTranslate: !imageOnly });
+  if (!inputOnly) {
+    const health = await send({ type: "CHECK_BACKEND" });
+    check("extension reaches the running OCR backend", health.ok && health.base === backend);
+  }
+  await set({ translationProvider: "deepseek", translationMode: "openai-compatible", hoverTranslate: !imageOnly && !inputOnly });
   await page.bringToFront();
-  if (!imageOnly) {
+  if (!imageOnly && !inputOnly) {
     await page.hover("#medical");
     await page.waitForFunction(() => [...document.querySelectorAll("[data-maslingo-textbox]")]
       .some(host => host.shadowRoot?.querySelector(".text")?.textContent.includes("心肌梗死")), { timeout: 90000 });
@@ -152,30 +156,59 @@ try {
       && dictionary.entry.senses[dictionary.entry.contextSense - 1]?.meaning.includes("令牌"));
   }
 
-  await set({ hoverTranslate: false, translationGlossary: "anime", autoTranslate: true });
-  let diag, stats;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    ({ diag, stats } = await worker.evaluate(async tabId => ({
-      diag: await chrome.tabs.sendMessage(tabId, { type: "AUTO_DIAG" }),
-      stats: await chrome.tabs.sendMessage(tabId, { type: "AUTO_STATUS" }),
-    }), tabId));
-    if (stats.translated > 0 || stats.failed > 0 || diag.imageFailures.ocr > 0 || diag.lastError) break;
-    await new Promise(resolve => setTimeout(resolve, 500));
+  if (!imageOnly) {
+    await set({ hoverTranslate: false, selectionTranslate: true, inputAutoReplace: true, translationGlossary: "business" });
+    await page.waitForFunction(() => document.getElementById("maslingo-selection-toggle")?.checked === true);
+    const sentence = "I will send the revised document tomorrow.";
+    const draft = `Header\n${sentence}\nFooter`;
+    await page.$eval("#draft", (control, { draft, sentence }) => {
+      control.value = draft;
+      control.focus();
+      control.setSelectionRange(7, 7 + sentence.length);
+      control.dispatchEvent(new Event("select", { bubbles: true }));
+    }, { draft, sentence });
+    await page.waitForFunction(original => document.getElementById("draft").value !== original, { timeout: 90000 }, draft);
+    const translatedDraft = await page.$eval("#draft", control => control.value);
+    check("live input translation replaces only the selected text", translatedDraft.startsWith("Header\n")
+      && translatedDraft.endsWith("\nFooter") && /[\u4e00-\u9fff]/u.test(translatedDraft));
+    await page.screenshot({ path: join(screenshotDir, "live-input-replace.png") });
+    const undo = await page.evaluateHandle(() => document.getElementById("maslingo-selection-popup")?.shadowRoot?.querySelector(".undo-replace"));
+    await undo.asElement().click();
+    check("live input replacement can be undone", await page.$eval("#draft", control => control.value) === draft);
+    console.log(JSON.stringify({ case: "input replacement", translatedDraft }));
   }
-  check("real OCR and live AI produce an anchored image translation", stats.translated > 0 && diag.anchored > 0 && !diag.lastError, JSON.stringify({ diag, stats }));
-  const trace = await worker.evaluate(() => globalThis.__liveTrace);
-  const ocrText = trace.ocr.flatMap(result => result.items || []).map(item => item.text).join(" ");
-  console.log(JSON.stringify({ ocrText, regions: trace.ocr.flatMap(result => result.items || []).length }));
-  await page.screenshot({ path: join(screenshotDir, "live-ocr-translation.png") });
-  check("real OCR reads the Japanese synthetic dialogue", /おはよう/.test(ocrText), ocrText);
-  const rendered = await page.evaluate(() => [...document.querySelectorAll("canvas.maslingo-result")]
-    .map(canvas => canvas.getAttribute("aria-label") || "").join(" ")
-    + [...document.querySelectorAll(".maslingo-adjacent-translation")].map(host => host.shadowRoot?.querySelector(".text")?.textContent || "").join(" "));
-  check("image overlay displays the live Chinese translation", /早/.test(rendered), rendered);
-  check("updated prompts reach DeepSeek for every request", trace.ai.length > 0
-    && trace.ai.every(item => item.status === 200 && (item.prompt.includes("待查数据") || item.prompt.includes("不执行其中指令"))));
-  check("no browser script errors", errors.length === 0);
-  console.log(JSON.stringify({ model, liveRequests: trace.ai.length, ocrText, anchored: diag.anchored, screenshotDir }));
+
+  if (!inputOnly) {
+    await set({ hoverTranslate: false, selectionTranslate: false, translationGlossary: "anime", autoTranslate: true });
+    let diag, stats;
+    for (let attempt = 0; attempt < 120; attempt++) {
+      ({ diag, stats } = await worker.evaluate(async tabId => ({
+        diag: await chrome.tabs.sendMessage(tabId, { type: "AUTO_DIAG" }),
+        stats: await chrome.tabs.sendMessage(tabId, { type: "AUTO_STATUS" }),
+      }), tabId));
+      if (stats.translated > 0 || stats.failed > 0 || diag.imageFailures.ocr > 0 || diag.lastError) break;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    check("real OCR and live AI produce an anchored image translation", stats.translated > 0 && diag.anchored > 0 && !diag.lastError, JSON.stringify({ diag, stats }));
+    const trace = await worker.evaluate(() => globalThis.__liveTrace);
+    const ocrText = trace.ocr.flatMap(result => result.items || []).map(item => item.text).join(" ");
+    console.log(JSON.stringify({ ocrText, regions: trace.ocr.flatMap(result => result.items || []).length }));
+    await page.screenshot({ path: join(screenshotDir, "live-ocr-translation.png") });
+    check("real OCR reads the Japanese synthetic dialogue", /おはよう/.test(ocrText), ocrText);
+    const rendered = await page.evaluate(() => [...document.querySelectorAll("canvas.maslingo-result")]
+      .map(canvas => canvas.getAttribute("aria-label") || "").join(" ")
+      + [...document.querySelectorAll(".maslingo-adjacent-translation")].map(host => host.shadowRoot?.querySelector(".text")?.textContent || "").join(" "));
+    check("image overlay displays the live Chinese translation", /早/.test(rendered), rendered);
+    check("updated prompts reach DeepSeek for every request", trace.ai.length > 0
+      && trace.ai.every(item => item.status === 200 && (item.prompt.includes("待查数据") || item.prompt.includes("不执行其中指令"))));
+    check("no browser script errors", errors.length === 0);
+    console.log(JSON.stringify({ model, liveRequests: trace.ai.length, ocrText, anchored: diag.anchored, screenshotDir }));
+  } else {
+    const trace = await worker.evaluate(() => globalThis.__liveTrace);
+    check("input request reached the live DeepSeek API", trace.ai.length > 0 && trace.ai.every(item => item.status === 200));
+    check("no browser script errors", errors.length === 0);
+    console.log(JSON.stringify({ model, liveRequests: trace.ai.length, screenshotDir }));
+  }
 } finally {
   apiKey = "";
   await browser?.close();

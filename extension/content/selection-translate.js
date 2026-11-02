@@ -39,6 +39,9 @@
   let seq = 0;
   let minimized = false;
   let targetLanguage = "简体中文";
+  let inputAutoReplace = true;
+  let applyingEdit = false;
+  const composing = new WeakSet();
   const cache = new Map();
 
   const readStore = (keys) => chrome.storage?.local?.get?.(keys).catch(() => ({}));
@@ -444,6 +447,7 @@
           cursor: pointer;
         }
         .retry:hover { background: #f6f6f5; }
+        .retry:disabled { opacity: .5; cursor: not-allowed; }
         @media (prefers-reduced-motion: reduce) {
           .loading i { animation: none; opacity: .7; }
         }
@@ -567,6 +571,90 @@
     if (result.notice) wrap.append(make("p", "notice", result.notice));
     setBody(wrap);
     setFooter(result.provider || result.target || "", "Esc 关闭");
+    if (job.input) replaceInput(job, result, wrap);
+  }
+
+  function writable(control) {
+    return control?.isConnected && !control.disabled && !control.readOnly &&
+      (control instanceof HTMLTextAreaElement ||
+        (control instanceof HTMLInputElement && ["text", "search"].includes(control.type)));
+  }
+
+  function inputStillCurrent(input) {
+    const { control, value, start, end } = input;
+    return writable(control) && !composing.has(control) && document.activeElement === control &&
+      control.value === value && control.selectionStart === start && control.selectionEnd === end;
+  }
+
+  function editInput(control, text, start, end, inputType = "insertReplacementText", valid = () => true) {
+    const value = control.value;
+    const next = value.slice(0, start) + text + value.slice(end);
+    if (control.maxLength >= 0 && next.length > control.maxLength) return false;
+    const allowed = control.dispatchEvent(new InputEvent("beforeinput", {
+      bubbles: true, composed: true, cancelable: true, inputType, data: text,
+    }));
+    if (!allowed || !writable(control) || control.value !== value || !valid()) return false;
+    applyingEdit = true;
+    try {
+      const prototype = control instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      prototype.setRangeText.call(control, text, start, end, "end");
+      control.dispatchEvent(new InputEvent("input", {
+        bubbles: true, composed: true, inputType, data: text,
+      }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    } finally {
+      applyingEdit = false;
+    }
+    return control.value === next;
+  }
+
+  function replaceInput(job, result, wrap) {
+    const input = job.input;
+    let translation = result.translation;
+    const note = make("p", "notice");
+    wrap.append(note);
+    if (!inputStillCurrent(input)) {
+      note.textContent = "输入内容或选区已变化，未替换原文。";
+      return;
+    }
+    if (typeof translation !== "string" || !translation.trim() || translation === job.text) {
+      note.textContent = "译文与原文相同或为空，未替换。";
+      return;
+    }
+    const { control, start, end, value } = input;
+    const selected = value.slice(start, end);
+    translation = selected.match(/^\s*/u)[0] + translation.trim() + selected.match(/\s*$/u)[0];
+    if (!editInput(control, translation, start, end, "insertReplacementText", () =>
+      currentJob === job && inputStillCurrent(input))) {
+      note.textContent = control.value === value
+        ? "输入框未接受替换，已保留原文；可复制上方译文。"
+        : "网页调整了输入内容，请检查输入框。";
+      return;
+    }
+    if (!host || currentJob !== job) return;
+    const replacedValue = value.slice(0, start) + translation + value.slice(end);
+    meta.textContent = ["已替换", result.target || targetLanguage].join(" · ");
+    note.textContent = "已自动替换选中文字，其他内容保持不变。";
+    const undo = make("button", "retry undo-replace", "撤销替换");
+    undo.type = "button";
+    undo.addEventListener("click", () => {
+      if (!writable(control) || control.value !== replacedValue || composing.has(control)) {
+        note.textContent = "输入内容已变化，未撤销，以免覆盖新内容。";
+        undo.disabled = true;
+        return;
+      }
+      control.focus({ preventScroll: true });
+      if (editInput(control, value.slice(start, end), start, start + translation.length, "historyUndo")) {
+        note.textContent = "已恢复原文。";
+        meta.textContent = "已撤销替换";
+      } else {
+        note.textContent = "输入框未接受原样恢复，请检查输入框。";
+      }
+      undo.disabled = true;
+    });
+    wrap.append(undo);
+    requestAnimationFrame(placeCard);
   }
 
   function renderNotice(job, result = {}) {
@@ -579,7 +667,7 @@
   }
 
   function cacheKey(job) {
-    return `${job.isWord ? "word" : "text"}|${job.text}|${job.context}`;
+    return `${job.input ? "input" : job.isWord ? "word" : "text"}|${job.text}|${job.context}`;
   }
 
   function remember(key, result) {
@@ -604,12 +692,19 @@
     }
     let result;
     try {
-      result = await chrome.runtime.sendMessage({
-        type: "LOOKUP_WORD",
-        text: job.text,
-        context: job.context,
-        word: job.isWord,
-      });
+      if (job.input) {
+        const response = await chrome.runtime.sendMessage({
+          type: "TRANSLATE_TEXT_BLOCKS", texts: [job.text], source: "自动识别", target: targetLanguage,
+        });
+        result = response?.ok ? {
+          ok: true, kind: response.skipped?.[0] ? "notice" : "text",
+          translation: response.translations?.[0], target: targetLanguage,
+        } : response;
+      } else {
+        result = await chrome.runtime.sendMessage({
+          type: "LOOKUP_WORD", text: job.text, context: job.context, word: job.isWord,
+        });
+      }
     } catch (error) {
       result = { ok: false, reason: String(error?.message || error) };
     }
@@ -672,8 +767,9 @@
     const end = control.selectionEnd;
     if (start === null || end === null || end <= start) return;
     const value = String(control.value || "");
-    const text = value.slice(start, end).replace(/\s+/g, " ").trim();
-    if (!text) return;
+    const input = inputAutoReplace && writable(control) ? { control, value, start, end } : null;
+    const text = input ? value.slice(start, end).trim() : value.slice(start, end).replace(/\s+/g, " ").trim();
+    if (!text.trim() || composing.has(control)) return;
     if (text.length > MAX_TEXT) {
       closePopup();
       return;
@@ -685,8 +781,10 @@
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 600);
-    const isWord = WORD_PATTERN.test(text) && !/\s/u.test(text);
-    const job = { text, context, isWord };
+    if (currentJob?.input?.control === control && currentJob.input.value === value &&
+      currentJob.input.start === start && currentJob.input.end === end) return;
+    const isWord = !input && WORD_PATTERN.test(text) && !/\s/u.test(text);
+    const job = { text, context, isWord, input };
     if (!isWord && globalThis.MAS_providers?.likelySameLanguage?.(text, targetLanguage, context)) {
       openNotice(job, rect, `原文已是${targetLanguage}，无需翻译。`);
       return;
@@ -786,12 +884,21 @@
     if (elementInOwnUi(event.target)) return;
     if (isTextControl(event.target)) scheduleControl(event.target);
   }, true);
+  document.addEventListener("input", (event) => {
+    if (!applyingEdit && currentJob?.input?.control === event.target) closePopup();
+  }, true);
+  document.addEventListener("compositionstart", (event) => {
+    if (!isTextControl(event.target)) return;
+    composing.add(event.target);
+    if (currentJob?.input?.control === event.target) closePopup();
+  }, true);
+  document.addEventListener("compositionend", (event) => composing.delete(event.target), true);
   document.addEventListener("pointerdown", (event) => {
     if (!host || elementInOwnUi(event.target)) return;
     closePopup();
   }, true);
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && host) closePopup();
+    if (event.key === "Escape") closePopup();
   }, true);
 
   window.addEventListener("resize", () => {
@@ -832,7 +939,7 @@
 
   async function sync() {
     const cfg = await readStore([
-      "selectionTranslate", "translationProvider", "translationMode", "targetLanguage",
+      "selectionTranslate", "inputAutoReplace", "translationProvider", "translationMode", "targetLanguage",
     ]);
     // On by default: the feature is a headline behaviour of the extension, and
     // the panel switch is the way to stop it (including on sites where every
@@ -843,18 +950,22 @@
     const registry = globalThis.MAS_providers;
     const provider = registry.byId(registry.resolveProviderId(cfg));
     targetLanguage = cfg.targetLanguage || "简体中文";
+    inputAutoReplace = cfg.inputAutoReplace !== false;
     enabled = cfg.selectionTranslate !== false && registry.isChatProvider(provider);
     if (!enabled) closePopup();
   }
 
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area !== "local") return;
-    if (changes.selectionTranslate) {
+    if (changes.inputAutoReplace || changes.selectionTranslate) {
+      closePopup();
+      cache.clear();
       sync().catch(() => {});
       return;
     }
     if (changes.translationProvider || changes.translationMode) {
       cache.clear();
+      closePopup();
       sync().catch(() => {});
       return;
     }
@@ -868,6 +979,7 @@
       changes.translationGlossary
     ) {
       cache.clear();
+      closePopup();
     }
   });
 

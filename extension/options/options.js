@@ -34,7 +34,9 @@ const autoTranslate = document.getElementById("autoTranslate");
 const webAutoTranslate = document.getElementById("webAutoTranslate");
 const hoverTranslate = document.getElementById("hoverTranslate");
 const selectionTranslate = document.getElementById("selectionTranslate");
+const inputAutoReplace = document.getElementById("inputAutoReplace");
 let selectionPreference = true;
+let inputReplacePreference = true;
 const autoConcurrency = document.getElementById("autoConcurrency");
 const fontScale = document.getElementById("fontScale");
 const overlayOpacity = document.getElementById("overlayOpacity");
@@ -126,6 +128,8 @@ function describeProvider() {
   document.getElementById("selectionField").classList.toggle("ai-disabled", !ai);
   selectionTranslate.disabled = !ai;
   selectionTranslate.checked = ai && selectionPreference;
+  inputAutoReplace.disabled = !ai || !selectionPreference;
+  inputAutoReplace.checked = ai && selectionPreference && inputReplacePreference;
   document.getElementById("selectionHint").textContent = ai
     ? "选中文字，查看词义、例句或短句译文。"
     : "划词词典仅支持 AI 翻译，切换到 DeepSeek 等 AI 来源后可用。";
@@ -189,6 +193,11 @@ providerSelect.addEventListener("change", () => {
 
 selectionTranslate.addEventListener("change", () => {
   selectionPreference = selectionTranslate.checked;
+  describeProvider();
+});
+
+inputAutoReplace.addEventListener("change", () => {
+  inputReplacePreference = inputAutoReplace.checked;
 });
 
 document.getElementById("save").onclick = async () => {
@@ -225,6 +234,7 @@ document.getElementById("save").onclick = async () => {
     webAutoTranslate: webAutoTranslate.checked,
     hoverTranslate: hoverTranslate.checked,
     selectionTranslate: selectionPreference,
+    inputAutoReplace: inputReplacePreference,
     translationGlossary: translationGlossary.value || "general",
     autoConcurrency: Number(autoConcurrency.value) || 1,
     fontScale: Number(fontScale.value) / 100,
@@ -287,7 +297,7 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate", "autoConcurrency",
+      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
       "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
@@ -297,6 +307,7 @@ async function load() {
   webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
   hoverTranslate.checked = Boolean(cfg.hoverTranslate);
   selectionPreference = cfg.selectionTranslate !== false;
+  inputReplacePreference = cfg.inputAutoReplace !== false;
   autoConcurrency.value = String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1)));
   fontScale.value = String(Math.round((cfg.fontScale ?? 1) * 100));
   overlayOpacity.value = String(Math.round((cfg.overlayOpacity ?? 1) * 100));

@@ -339,6 +339,7 @@ const BROWSER_GLOBALS = new Set([
   "isNaN", "isFinite", "parseInt", "parseFloat", "encodeURIComponent",
   "decodeURIComponent", "encodeURI", "decodeURI", "importScripts", "Worker",
   "MutationObserver", "IntersectionObserver", "ResizeObserver", "AbortController",
+  "Event", "InputEvent",
 ]);
 const KEYWORDS = new Set([
   "if", "for", "while", "switch", "catch", "return", "typeof", "function", "new",
