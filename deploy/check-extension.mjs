@@ -191,7 +191,7 @@ const injectedByFile = new Map();
 // ever reaches `files:` — the first version of this check matched nothing at all
 // and passed everything.
 const injectionPattern =
-  /(?:executeScript|insertCSS)\(\s*\{[\s\S]{0,400}?files:\s*(\[[^\]]*\]|[A-Za-z_$][\w$]*)/g;
+  /(?:executeScript|insertCSS)\(\s*\{[\s\S]{0,400}?files:\s*(\[[^\]]*\]|[A-Za-z_$][\w$]*(?:\.(?:js|css))?)/g;
 for (const file of jsFiles) {
   const source = readFileSync(file, "utf8");
   // `files:` is often a named constant rather than an inline array — popup.js
@@ -202,6 +202,13 @@ for (const file of jsFiles) {
     /const\s+([A-Za-z_$][\w$]*)\s*=\s*(\[[^\]]*\])\s*;/g,
   )) {
     constants.set(name, [...list.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]));
+  }
+  for (const [, name, index] of source.matchAll(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*chrome\.runtime\.getManifest\(\)\.content_scripts\[(\d+)\]/g,
+  )) {
+    const entry = manifest.content_scripts?.[Number(index)];
+    constants.set(`${name}.js`, entry?.js || []);
+    constants.set(`${name}.css`, entry?.css || []);
   }
 
   const names = [];
@@ -349,12 +356,9 @@ const KEYWORDS = new Set([
 
 /** Strip comments and string bodies so prose is not read as code. */
 function stripLiterals(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:\\])\/\/[^\n]*/g, "$1 ")
-    .replace(/`(?:\\[\s\S]|[^`\\])*`/g, '""')
-    .replace(/"(?:\\[\s\S]|[^"\\\n])*"/g, '""')
-    .replace(/'(?:\\[\s\S]|[^'\\\n])*'/g, "''");
+  // Match tokens in source order: a URL glob inside a string is not a block
+  // comment, and must not swallow the declarations that follow it.
+  return source.replace(/"(?:\\[\s\S]|[^"\\\n])*"|'(?:\\[\s\S]|[^'\\\n])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ");
 }
 
 const addNames = (set, list) => {

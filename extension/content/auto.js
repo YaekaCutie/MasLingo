@@ -61,6 +61,7 @@ const MAS_auto = (() => {
   /** Pictures already handed to the queue, by media key. */
   const processed = new WeakMap();
   const inFlight = new Set();
+  const manualElements = new WeakSet();
 
   // --- identity -------------------------------------------------------------
 
@@ -247,22 +248,29 @@ const MAS_auto = (() => {
 
   // --- queue ----------------------------------------------------------------
 
-  function enqueue(element, media) {
-    if (!enabled) return;
-    if (inFlight.has(element)) return;
-    if (queue.some((task) => task.element === element)) return;
+  function enqueue(element, media, manual = false, report = null) {
+    if (!enabled && !manual) return false;
+    if (inFlight.has(element)) return false;
+    if (queue.some((task) => task.element === element)) return false;
     // Remembered now so a resize mid-flight cannot queue the same picture twice;
     // cleared on failure so a genuine retry is still possible.
     processed.set(element, media.key);
     inFlight.add(element);
+    if (manual) manualElements.add(element);
     seen.enqueued += 1;
-    queue.push({ element, media, attempts: 0, generation });
+    queue.push({ element, media, attempts: 0, generation, manual, report });
     pump();
+    return true;
   }
 
   function pump() {
-    while (enabled && running < concurrency && queue.length) {
+    while (running < concurrency && queue.length) {
       const task = queue.shift();
+      if (!enabled && !task.manual) {
+        inFlight.delete(task.element);
+        processed.delete(task.element);
+        continue;
+      }
       running += 1;
       runTask(task)
         .catch((error) => console.warn("[OMT] 自动翻译任务异常：", error.message))
@@ -308,8 +316,9 @@ const MAS_auto = (() => {
 
   async function runTask(task) {
     const { element } = task;
-    const isCurrent = () => enabled && task.generation === generation && element.isConnected &&
+    const isCurrent = () => (task.manual || (enabled && task.generation === generation)) && element.isConnected &&
       mediaKey(element).key === task.media.key;
+    const report = task.report || say;
 
     let bitmap = null;
     // Everything is inside the try, including the connectivity check. It used to
@@ -323,7 +332,11 @@ const MAS_auto = (() => {
       if (!isCurrent()) return;
       bitmap = await loadBitmap(element);
       if (!isCurrent()) return;
-      if (!bitmap || bitmap.width < MIN_IMAGE_SIDE || bitmap.height < MIN_IMAGE_SIDE) return;
+      const minimumSide = task.manual ? 16 : MIN_IMAGE_SIDE;
+      if (!bitmap || bitmap.width < minimumSide || bitmap.height < minimumSide) {
+        if (task.manual) throw new Error("原图像素过小，无法识别文字");
+        return;
+      }
 
       const key = task.media.key;
       // Preserve the width of long strips. Shrinking their full height to
@@ -338,7 +351,7 @@ const MAS_auto = (() => {
         const sourceHeight = Math.min(tileHeight, bitmap.height - tileTop);
         const sendHeight = Math.max(1, Math.round(sourceHeight * scale));
         const dataUrl = toDataUrl(bitmap, sendWidth, sendHeight, tileTop, sourceHeight);
-        say("正在 OCR……", "info", "正在 OCR 中");
+        report("正在 OCR……", "info", "正在 OCR 中");
         const ocr = await chrome.runtime.sendMessage({ type: "AUTO_OCR", image: dataUrl });
         if (!isCurrent()) return;
         if (!ocr?.ok) throw new Error(ocr?.error || "OCR 失败");
@@ -372,7 +385,7 @@ const MAS_auto = (() => {
         unique.push(item);
       }
       unique.sort((a,b) => a.area.top-b.area.top || b.area.left-a.area.left);
-      say(
+      report(
         unique.length ? "OCR 完成，正在翻译……" : "没有找到文字",
         "info",
         unique.length ? "正在翻译中" : "没有找到文字",
@@ -389,7 +402,7 @@ const MAS_auto = (() => {
       boxes = fresh.map((region) => region.box);
 
       if (!fresh.length) return;
-      say(`检测到 ${fresh.length} 个文字区域，正在翻译……`, "info", "正在翻译中");
+      report(`检测到 ${fresh.length} 个文字区域，正在翻译……`, "info", "正在翻译中");
 
       // Every box is already on screen in full, dashed, because that is what
       // `show` does — the instant a region is known, its whole rectangle is
@@ -413,7 +426,7 @@ const MAS_auto = (() => {
         // fails identically, and a line per region is how one cause read as a
         // console flood.
         console.warn("[OMT] 翻译失败：", translation?.error || "未知原因");
-        say(`翻译失败：${translation?.error || "未知原因"}`, "error", "翻译失败");
+        report(`翻译失败：${translation?.error || "未知原因"}`, "error", "翻译失败");
         for (const region of fresh) {
           track(region.id, STATE.FAILED);
           region.box.fail();
@@ -473,15 +486,15 @@ const MAS_auto = (() => {
         }
       }
       MAS_overlay.reposition();
-      if (enabled) {
+      if (enabled || task.manual) {
         // "ok" on a real translation means the failure (if any) is over: the
         // panel clears a persistent error line back to the sample sentence.
         // Translation off is not a resolution of anything, so it stays info.
-        if (paintFailures) say(`${paintFailures} 处文字未能安全修复，已保留原图`, "error", "部分保留原图");
-        else if (translationOff) say("已识别文字（未启用翻译）", "info", "翻译未启用");
-        else if (skippedCount === fresh.length) say("原文已是目标语言，无需翻译", "info", "无需翻译");
-        else if (adjacentCount) say(`翻译完成，${adjacentCount} 处译文显示在原文旁，原画已保留`, "ok", "翻译成功");
-        else say("翻译完成", "ok", "翻译成功");
+        if (paintFailures) report(`${paintFailures} 处文字未能安全修复，已保留原图`, "error", "部分保留原图");
+        else if (translationOff) report("已识别文字（未启用翻译）", "info", "翻译未启用");
+        else if (skippedCount === fresh.length) report("原文已是目标语言，无需翻译", "info", "无需翻译");
+        else if (adjacentCount) report(`翻译完成，${adjacentCount} 处译文显示在原文旁，原画已保留`, "ok", "翻译成功");
+        else report("翻译完成", "ok", "翻译成功");
       }
     } catch (error) {
       // Release this run's boxes. The retry below creates a fresh set, and
@@ -503,6 +516,7 @@ const MAS_auto = (() => {
             pump();
           } else {
             inFlight.delete(element);
+            manualElements.delete(element);
             processed.delete(element);
             reobserve(element);
           }
@@ -513,11 +527,15 @@ const MAS_auto = (() => {
         // Re-observing immediately would reset attempts and retry forever.
         imageFailures[classify(error)] += 1;
         lastError = { message: String(error.message || error), at: Date.now(), src: task.media.src };
+        if (task.manual) report(`图片翻译失败：${error.message}`, "error", "翻译失败");
       }
     } finally {
-      if (!retryScheduled) inFlight.delete(element);
+      if (!retryScheduled) {
+        inFlight.delete(element);
+        manualElements.delete(element);
+      }
       bitmap?.close?.();
-      if (task.generation !== generation ||
+      if ((!task.manual && task.generation !== generation) ||
           (element.isConnected && mediaKey(element).key !== task.media.key)) {
         processed.delete(element);
         reobserve(element);
@@ -840,11 +858,17 @@ const MAS_auto = (() => {
     detachObservers();
     // Queued tasks have not run, so their processed/in-flight marks must not
     // survive a stop/start cycle.
-    for (const element of inFlight) processed.delete(element);
-    for (const task of queue) inFlight.delete(task.element);
-    queue.length = 0;
-    // Active requests settle, but their generation can no longer paint or send
-    // a follow-up translation after the user switches the feature off.
+    for (const element of inFlight) {
+      if (!manualElements.has(element)) processed.delete(element);
+    }
+    for (let index = queue.length - 1; index >= 0; index--) {
+      if (!queue[index].manual) {
+        inFlight.delete(queue[index].element);
+        queue.splice(index, 1);
+      }
+    }
+    // Automatic requests settle without painting or translating. Explicit
+    // image-menu tasks are independent of the page-wide automatic switch.
   }
 
   /** Mirror the stored setting; called at startup and whenever it changes. */
@@ -862,11 +886,36 @@ const MAS_auto = (() => {
     showSource = cfg.debugMode !== false;
   }
 
+  /** Explicitly translate one image without enabling page-wide discovery. */
+  async function translateImage(element, report = say) {
+    if (!element?.isConnected || isOurs(element)) throw new Error("目标图片已失效，请重新右键选择");
+    const media = mediaKey(element);
+    const cfg = await readSettings(["autoConcurrency", "debugMode", "translationProvider", "translationMode", "translationEndpoint"]);
+    if (!element.isConnected || mediaKey(element).key !== media.key) throw new Error("图片已变化，请重新右键选择");
+    const registry = globalThis.MAS_providers;
+    if (!registry?.byId(registry.resolveProviderId(cfg))?.adapter) throw new Error("请先在设置中选择翻译来源");
+    if (inFlight.has(element)) return { ok: true, alreadyRunning: true };
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 16 || rect.height < 16) throw new Error("图片太小或不可见，无法翻译");
+    concurrency = Math.min(3, Math.max(1, Number(cfg.autoConcurrency) || 1));
+    showSource = cfg.debugMode !== false;
+    MAS_overlay.releaseTarget(element);
+    const previous = processed.get(element);
+    for (const id of tracked.keys()) {
+      if (id.startsWith(`${media.key}#`) || (previous && id.startsWith(`${previous}#`))) tracked.delete(id);
+    }
+    if (lastError?.src === media.src) lastError = null;
+    report("正在翻译所选图片……", "info", "正在 OCR 中");
+    enqueue(element, media, true, report);
+    return { ok: true };
+  }
+
   return {
     sync,
     start,
     stop,
     refreshPreferences,
+    translateImage,
     get enabled() { return enabled; },
     stats: () => ({
       enabled,

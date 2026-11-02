@@ -5,6 +5,7 @@ import puppeteer from "puppeteer";
 
 const scripts = ["overlay.js", "auto.js", "content.js"].map(name =>
   readFileSync(new URL(`../extension/content/${name}`, import.meta.url), "utf8"));
+scripts.unshift(readFileSync(new URL("../extension/translation/providers.js", import.meta.url), "utf8"));
 const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const errors = [];
 try {
@@ -81,6 +82,21 @@ try {
   assert.equal(await pendingStart.evaluate(() => MAS_auto.enabled),false,"A stale settings read cannot reopen auto mode");
   assert.equal(await pendingStart.evaluate(() => calls.ocr),0);
   await pendingStart.close();
+
+  const manual = await fixture(700, false);
+  await manual.evaluate(() => { hold = true; return MAS_auto.translateImage(document.getElementById("manga")); });
+  await manual.waitForFunction(() => typeof releaseOcr === "function");
+  const duplicate = await manual.evaluate(() => MAS_auto.translateImage(document.getElementById("manga")));
+  assert.equal(duplicate.alreadyRunning, true, "Repeated clicks do not duplicate an active image request");
+  await manual.evaluate(() => { MAS_auto.stop(); releaseOcr(); });
+  await manual.waitForFunction(() => calls.pixels === 1);
+  assert.equal(await manual.evaluate(() => MAS_auto.enabled), false, "One image never enables page-wide discovery");
+  assert.equal(await manual.evaluate(() => calls.ocr), 1);
+  await manual.evaluate(() => { hold = false; return MAS_auto.translateImage(document.getElementById("manga")); });
+  await manual.waitForFunction(() => calls.pixels === 2);
+  assert.equal(await manual.evaluate(() => document.querySelectorAll("canvas.maslingo-result").length), 1,
+    "Explicit retry replaces the previous overlay");
+  await manual.close();
 
   const painted = await fixture();
   await painted.waitForFunction(() => calls.pixels === 1);

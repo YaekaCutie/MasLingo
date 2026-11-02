@@ -1,5 +1,91 @@
 importScripts("../config.js", "../translation/providers.js");
 
+const IMAGE_MENU_ID = "maslingo-translate-image";
+let imageMenuReady = null;
+
+function ensureImageMenu() {
+  if (!chrome.contextMenus) return Promise.resolve();
+  if (imageMenuReady) return imageMenuReady;
+  imageMenuReady = (async () => {
+    const properties = {
+      title: "MasLingo：翻译这张图片", contexts: ["image"],
+      documentUrlPatterns: ["http://*/*", "https://*/*", "file:///*"],
+    };
+    try {
+      await chrome.contextMenus.update(IMAGE_MENU_ID, properties);
+    } catch {
+      await new Promise((resolve, reject) => {
+        chrome.contextMenus.create({ id: IMAGE_MENU_ID, ...properties }, () => {
+          const error = chrome.runtime.lastError;
+          if (error) reject(new Error(error.message));
+          else resolve();
+        });
+      });
+    }
+  })().catch(error => { imageMenuReady = null; throw error; });
+  return imageMenuReady;
+}
+
+async function sendImageStatus(tabId, text, kind = "info") {
+  const message = String(text || "").slice(0, 200);
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "IMAGE_TRANSLATION_STATUS", text: message, kind }, { frameId: 0 });
+  } catch {
+    // A pre-existing tab may not have a panel yet. Still give the user feedback.
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] }, args: [message],
+      func: text => {
+        document.getElementById("maslingo-image-status")?.remove();
+        const node = document.createElement("div");
+        node.id = "maslingo-image-status";
+        node.textContent = text;
+        node.setAttribute("role", "status");
+        Object.assign(node.style, { position: "fixed", right: "20px", bottom: "20px", zIndex: "2147483647",
+          maxWidth: "340px", padding: "12px 16px", borderRadius: "12px", background: "#fff", color: "#1c1e21",
+          border: "1px solid #ddd", boxShadow: "0 4px 18px #0002", font: "14px/1.5 system-ui" });
+        document.documentElement.append(node);
+        setTimeout(() => node.remove(), 8000);
+      },
+    }).catch(() => {});
+  }
+}
+
+async function handleImageMenuClick(info, tab) {
+  if (info?.menuItemId !== IMAGE_MENU_ID || !tab?.id) return { ok: false, error: "图片菜单无效" };
+  const frameId = Number.isInteger(info.frameId) ? info.frameId : 0;
+  const target = { tabId: tab.id, frameIds: [frameId] };
+  const message = { type: "TRANSLATE_CONTEXT_IMAGE", srcUrl: info.srcUrl };
+  try {
+    let result;
+    try {
+      result = await chrome.tabs.sendMessage(tab.id, message, { frameId });
+    } catch {
+      const [probe] = await chrome.scripting.executeScript({ target, func: () => Boolean(globalThis.__MAS_LOADED__) });
+      if (probe?.result) throw new Error("扩展已更新，请刷新网页后重新右键图片");
+      const scripts = chrome.runtime.getManifest().content_scripts[0];
+      await chrome.scripting.insertCSS({ target, files: scripts.css });
+      await chrome.scripting.executeScript({ target, files: scripts.js });
+      result = await chrome.tabs.sendMessage(tab.id, message, { frameId });
+    }
+    if (!result?.ok) throw new Error(result?.error || "无法定位所选图片，请刷新网页后重新右键");
+    return result;
+  } catch (error) {
+    const reason = String(error?.message || error).slice(0, 180);
+    await sendImageStatus(tab.id, `图片翻译无法启动：${reason}`, "error");
+    return { ok: false, error: reason };
+  }
+}
+
+if (chrome.contextMenus) {
+  const register = () => ensureImageMenu().catch(error => console.warn("图片菜单初始化失败：", error.message));
+  chrome.runtime.onInstalled?.addListener(register);
+  chrome.runtime.onStartup?.addListener(register);
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === IMAGE_MENU_ID) handleImageMenuClick(info, tab);
+  });
+  register();
+}
+
 /**
  * Put a deadline on a fetch.
  *
@@ -174,6 +260,12 @@ async function captureElementCrop(tabId, message) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "IMAGE_TRANSLATION_STATUS") {
+    if (!sender?.tab?.id || sender.frameId === 0) return undefined;
+    sendImageStatus(sender.tab.id, message.text, ["error", "ok"].includes(message.kind) ? message.kind : "info")
+      .then(() => sendResponse({ ok: true }));
+    return true;
+  }
   if (message?.type === "START_SELECT") {
     // Relayed, not handled. The in-page panel cannot reach content scripts:
     // chrome.runtime.sendMessage only travels between extension contexts, so its

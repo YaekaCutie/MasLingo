@@ -43,8 +43,52 @@ let busyPanel = null;
 // makes recognition visible at all — otherwise a successful run leaves the page
 // pixel-identical and looks like nothing happened.
 let showSourceText = true;
+let contextImage = null;
+let contextImageSource = "";
+let contextImageAttribute = "";
+let contextImageSrcset = "";
+
+document.addEventListener("contextmenu", event => {
+  contextImage = event.composedPath().find(node => node instanceof HTMLImageElement) || null;
+  contextImageSource = contextImage ? (contextImage.currentSrc || contextImage.src) : "";
+  contextImageAttribute = contextImage?.src || "";
+  contextImageSrcset = contextImage?.srcset || "";
+}, true);
+
+function reportImageStatus(text, kind = "info") {
+  if (MAS_isTopFrame) showToast(text, kind);
+  else chrome.runtime.sendMessage({ type: "IMAGE_TRANSLATION_STATUS", text, kind }).catch(() => {});
+}
+
+async function translateContextImage(srcUrl) {
+  let image = contextImage;
+  if (image) {
+    if (!image.isConnected || image.src !== contextImageAttribute || image.srcset !== contextImageSrcset ||
+        (image.currentSrc || image.src) !== contextImageSource ||
+        (srcUrl && srcUrl !== contextImageSource && srcUrl !== image.src)) {
+      throw new Error("所选图片已变化，请重新右键选择");
+    }
+  } else {
+    // Needed when this tab was already open when the extension was installed.
+    const matches = [...document.images].filter(node => srcUrl && (node.currentSrc === srcUrl || node.src === srcUrl));
+    if (matches.length !== 1) throw new Error("无法唯一定位图片，请刷新网页后重新右键选择");
+    image = matches[0];
+  }
+  const result = await MAS_auto.translateImage(image, reportImageStatus);
+  if (result.alreadyRunning) reportImageStatus("这张图片正在翻译，请稍候");
+  return result;
+}
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "TRANSLATE_CONTEXT_IMAGE") {
+    translateContextImage(message.srcUrl).then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+  if (message.type === "IMAGE_TRANSLATION_STATUS") {
+    showToast(message.text, message.kind);
+    sendResponse({ ok: true });
+    return true;
+  }
   if (message.type === "START_SELECT") startSelect();
   if (message.type === "START_AUTO") startAutoRecognition();
   if (message.type === "RECOGNITION_RESULT") showRecognitionResult(message, activePageMode);

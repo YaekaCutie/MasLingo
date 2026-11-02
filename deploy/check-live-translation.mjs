@@ -14,7 +14,8 @@ import puppeteer from "puppeteer";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const backend = process.env.MAS_TEST_BACKEND || "http://127.0.0.1:8001";
 const model = process.env.MAS_TEST_MODEL || "deepseek-flash";
-const imageOnly = process.argv.includes("--image-only");
+const contextImageOnly = process.argv.includes("--context-image-only");
+const imageOnly = process.argv.includes("--image-only") || contextImageOnly;
 const inputOnly = process.argv.includes("--input-only");
 const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-live-qa"));
 mkdirSync(screenshotDir, { recursive: true });
@@ -179,7 +180,17 @@ try {
   }
 
   if (!inputOnly) {
-    await set({ hoverTranslate: false, selectionTranslate: false, translationGlossary: "anime", autoTranslate: true });
+    await set({ hoverTranslate: false, selectionTranslate: false, translationGlossary: "anime", autoTranslate: !contextImageOnly });
+    if (contextImageOnly) {
+      await page.click("#manga", { button: "right" });
+      await page.keyboard.press("Escape");
+      const started = await worker.evaluate(async ({ tabId, srcUrl }) => {
+        await ensureImageMenu();
+        await chrome.contextMenus.update(IMAGE_MENU_ID, { enabled: true });
+        return handleImageMenuClick({ menuItemId: IMAGE_MENU_ID, frameId: 0, srcUrl }, { id: tabId });
+      }, { tabId, srcUrl: `${pageUrl}manga.png` });
+      check("context image command starts a single-image translation", started.ok);
+    }
     let diag, stats;
     for (let attempt = 0; attempt < 120; attempt++) {
       ({ diag, stats } = await worker.evaluate(async tabId => ({
@@ -193,7 +204,7 @@ try {
     const trace = await worker.evaluate(() => globalThis.__liveTrace);
     const ocrText = trace.ocr.flatMap(result => result.items || []).map(item => item.text).join(" ");
     console.log(JSON.stringify({ ocrText, regions: trace.ocr.flatMap(result => result.items || []).length }));
-    await page.screenshot({ path: join(screenshotDir, "live-ocr-translation.png") });
+    await page.screenshot({ path: join(screenshotDir, contextImageOnly ? "live-context-image.png" : "live-ocr-translation.png") });
     check("real OCR reads the Japanese synthetic dialogue", /おはよう/.test(ocrText), ocrText);
     const rendered = await page.evaluate(() => [...document.querySelectorAll("canvas.maslingo-result")]
       .map(canvas => canvas.getAttribute("aria-label") || "").join(" ")
@@ -202,6 +213,10 @@ try {
     check("updated prompts reach DeepSeek for every request", trace.ai.length > 0
       && trace.ai.every(item => item.status === 200 && (item.prompt.includes("待查数据") || item.prompt.includes("不执行其中指令"))));
     check("no browser script errors", errors.length === 0);
+    if (contextImageOnly) {
+      const settings = await worker.evaluate(() => chrome.storage.local.get("autoTranslate"));
+      check("context translation leaves page-wide auto mode off", settings.autoTranslate === false && stats.enabled === false);
+    }
     console.log(JSON.stringify({ model, liveRequests: trace.ai.length, ocrText, anchored: diag.anchored, screenshotDir }));
   } else {
     const trace = await worker.evaluate(() => globalThis.__liveTrace);
