@@ -241,20 +241,18 @@ try {
     JSON.stringify({ source: lastSource.source, sourceName: lastSource.sourceName }));
 
   console.log("\n覆盖至原文 / 还原");
-  const hostFor = (id) => page.evaluate((id) => {
-    const node = document.getElementById(id)?.nextElementSibling;
-    return node?.matches?.("[data-maslingo-textbox='1']") ? true : false;
-  }, id);
-  check("结果框插在段落之后", await hostFor("p1"));
+  check("悬停结果框在页面浮层中，避免挤动原文", await page.evaluate(() =>
+    [...document.querySelectorAll('[data-maslingo-textbox]')].some((host) =>
+      host.dataset.mode === "hover" && getComputedStyle(host).position === "fixed")));
   const paragraphText = () => page.evaluate(() => document.getElementById("p1")?.textContent.trim() || "");
   await page.evaluate(() => {
-    const host = document.getElementById("p1")?.nextElementSibling;
+    const host = [...document.querySelectorAll('[data-maslingo-textbox]')].find((node) => node.style.display !== "none");
     host?.shadowRoot?.querySelector(".cover")?.click();
   });
   await new Promise((done) => setTimeout(done, 250));
   check("覆盖至原文：段落换成译文", (await paragraphText()) === `译:${paragraphs[1]}`);
   await page.evaluate(() => {
-    const host = document.getElementById("p1")?.nextElementSibling;
+    const host = [...document.querySelectorAll('[data-maslingo-textbox]')].find((node) => node.style.display !== "none");
     host?.shadowRoot?.querySelector(".cover")?.click();
   });
   await new Promise((done) => setTimeout(done, 250));

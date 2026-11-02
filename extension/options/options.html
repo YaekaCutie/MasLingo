@@ -14,7 +14,7 @@
     </header>
 
     <section>
-      <h2>自动翻译</h2>
+      <h2>漫画自动翻译</h2>
       <div class="row">
         <div class="row-text">
           <div class="label">自动识别全图</div>
@@ -35,6 +35,18 @@
           <option value="2">2</option>
           <option value="3">3</option>
         </select>
+      </div>
+    </section>
+
+    <section>
+      <h2>网页文本翻译</h2>
+      <div class="row">
+        <div class="row-text"><label class="label" for="webAutoTranslate">网页自动翻译</label><div class="hint">按阅读位置分批翻译正文、标题、图注、列表和表格。保留原文中的链接、引用和公式，关闭后移除译文。</div></div>
+        <label class="switch"><input id="webAutoTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
+      </div>
+      <div class="row">
+        <div class="row-text"><label class="label" for="hoverTranslate">悬停翻译</label><div class="hint">鼠标停留或聚焦文字后显示浮层，可固定、关闭、定位原文和失败重试；选择文字时让出位置供划词翻译使用。</div></div>
+        <label class="switch"><input id="hoverTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>
     </section>
 

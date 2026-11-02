@@ -92,6 +92,9 @@ jobs:
       - name: Webpage paragraph translation cards
         run: xvfb-run -a node deploy/check-text-translate.mjs
 
+      - name: Webpage reading, text coverage and stale responses
+        run: xvfb-run -a node deploy/check-web-text-dom.mjs
+
       # 划词翻译: a selected word gets every dictionary sense with its part of
       # speech and an example, with the sense used on the page highlighted; a
       # selected phrase falls back to ordinary translation.

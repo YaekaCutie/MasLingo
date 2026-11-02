@@ -831,11 +831,20 @@ globalThis.MAS_panel = (() => {
 
             <div class="maslingo-basic maslingo-fold"><div class="maslingo-fold-in">
               <div class="maslingo-row">
-                <span class="maslingo-label" id="maslingo-auto-label">自动识别</span>
-                <label class="maslingo-switch" aria-labelledby="maslingo-auto-label">
-                  <input id="maslingo-auto" type="checkbox" aria-labelledby="maslingo-auto-label">
-                  <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
-                </label>
+                <div class="maslingo-toggle">
+                  <span class="maslingo-label" id="maslingo-auto-label" title="自动识别并翻译漫画图片">漫画自动</span>
+                  <label class="maslingo-switch" aria-labelledby="maslingo-auto-label">
+                    <input id="maslingo-auto" type="checkbox" aria-labelledby="maslingo-auto-label">
+                    <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
+                  </label>
+                </div>
+                <div class="maslingo-toggle">
+                  <span class="maslingo-label" id="maslingo-web-auto-label" title="网页自动翻译：按阅读位置分批翻译正文，保留原文与引用">网页自动</span>
+                  <label class="maslingo-switch" aria-labelledby="maslingo-web-auto-label">
+                    <input id="maslingo-web-auto" type="checkbox" aria-labelledby="maslingo-web-auto-label">
+                    <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
+                  </label>
+                </div>
               </div>
               <button class="maslingo-btn" id="maslingo-select">框选翻译</button>
               <div class="maslingo-toggles">
@@ -1448,12 +1457,13 @@ globalThis.MAS_panel = (() => {
     fillGlossaries();
 
     const cfg = await readStore([
-      "autoTranslate", "hoverTranslate", "selectionTranslate",
+      "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate",
       "translationProvider", "panelPosition", "panelCollapsed",
       "translationModel", "translationModelProvider", "translationApiKey",
       "translationStrength", "translationGlossary",
     ]);
     root.querySelector("#maslingo-auto").checked = Boolean(cfg.autoTranslate);
+    root.querySelector("#maslingo-web-auto").checked = Boolean(cfg.webAutoTranslate);
     root.querySelector("#maslingo-text").checked = Boolean(cfg.hoverTranslate);
     root.querySelector("#maslingo-selection-toggle").checked = cfg.selectionTranslate !== false;
     if (cfg.translationProvider) root.querySelector("#maslingo-provider").value = cfg.translationProvider;
@@ -1496,7 +1506,15 @@ globalThis.MAS_panel = (() => {
     });
     root.querySelector("#maslingo-text").addEventListener("change", (event) => {
       writeStore({ hoverTranslate: event.target.checked });
-      status(event.target.checked ? "悬停段落即可翻译" : "悬停翻译已关闭");
+      status(event.target.checked
+        ? (selectedProvider()?.id === "none" ? "悬停翻译已开启，请先选择翻译来源" : "悬停段落即可翻译")
+        : "悬停翻译已关闭");
+    });
+    root.querySelector("#maslingo-web-auto").addEventListener("change", (event) => {
+      writeStore({ webAutoTranslate: event.target.checked });
+      status(event.target.checked
+        ? (selectedProvider()?.id === "none" ? "网页翻译已开启，请先选择翻译来源" : "按阅读位置翻译网页正文，可随时关闭")
+        : "网页自动翻译已关闭");
     });
     root.querySelector("#maslingo-selection-toggle").addEventListener("change", (event) => {
       writeStore({ selectionTranslate: event.target.checked });
@@ -1575,6 +1593,9 @@ globalThis.MAS_panel = (() => {
           if (box && box.checked !== Boolean(changes.hoverTranslate.newValue)) {
             box.checked = Boolean(changes.hoverTranslate.newValue);
           }
+        }
+        if (changes.webAutoTranslate) {
+          root.querySelector("#maslingo-web-auto").checked = Boolean(changes.webAutoTranslate.newValue);
         }
         if (changes.selectionTranslate) {
           const box = root.querySelector("#maslingo-selection-toggle");

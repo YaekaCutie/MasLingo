@@ -259,6 +259,11 @@ autoToggle.addEventListener("change", async () => {
   // moment before reading the status back.
   setTimeout(refreshAutoStatus, 600);
 });
+for (const setting of ["webAutoTranslate", "hoverTranslate"]) {
+  document.getElementById(setting).addEventListener("change", (event) => {
+    chrome.storage.local.set({ [setting]: event.target.checked });
+  });
+}
 
 document.getElementById("settings").onclick = () => chrome.runtime.openOptionsPage();
 
@@ -322,8 +327,10 @@ document.getElementById("autoPage").onclick = async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id ?? null;
   lastTabUrl = tab?.url || "";
-  const cfg = await chrome.storage.local.get(["autoTranslate", "debugMode"]);
+  const cfg = await chrome.storage.local.get(["autoTranslate", "webAutoTranslate", "hoverTranslate", "debugMode"]);
   autoToggle.checked = Boolean(cfg.autoTranslate);
+  document.getElementById("webAutoTranslate").checked = Boolean(cfg.webAutoTranslate);
+  document.getElementById("hoverTranslate").checked = Boolean(cfg.hoverTranslate);
   showsSourceText = cfg.debugMode !== false;
   pollWhileOpen();
 })();

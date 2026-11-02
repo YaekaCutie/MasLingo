@@ -31,6 +31,8 @@ const testResult = document.getElementById("testResult");
 // --- new controls -----------------------------------------------------------
 
 const autoTranslate = document.getElementById("autoTranslate");
+const webAutoTranslate = document.getElementById("webAutoTranslate");
+const hoverTranslate = document.getElementById("hoverTranslate");
 const autoConcurrency = document.getElementById("autoConcurrency");
 const fontScale = document.getElementById("fontScale");
 const overlayOpacity = document.getElementById("overlayOpacity");
@@ -202,6 +204,8 @@ document.getElementById("save").onclick = async () => {
     translationModelProvider: provider.id,
     translationAppId: translationAppId.value.trim(),
     autoTranslate: autoTranslate.checked,
+    webAutoTranslate: webAutoTranslate.checked,
+    hoverTranslate: hoverTranslate.checked,
     autoConcurrency: Number(autoConcurrency.value) || 1,
     fontScale: Number(fontScale.value) / 100,
     overlayOpacity: Number(overlayOpacity.value) / 100
@@ -264,13 +268,15 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "autoConcurrency",
+      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "autoConcurrency",
       "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
   backendUrl.value = cfg.backendUrl || "";
 
   autoTranslate.checked = Boolean(cfg.autoTranslate);
+  webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
+  hoverTranslate.checked = Boolean(cfg.hoverTranslate);
   autoConcurrency.value = String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1)));
   fontScale.value = String(Math.round((cfg.fontScale ?? 1) * 100));
   overlayOpacity.value = String(Math.round((cfg.overlayOpacity ?? 1) * 100));
