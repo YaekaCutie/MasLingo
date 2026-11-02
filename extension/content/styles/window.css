@@ -196,6 +196,14 @@
   min-width: 0;
 }
 .maslingo-toggle .maslingo-label { white-space: nowrap; }
+.maslingo-ai-disabled { opacity: .4; cursor: not-allowed; }
+.maslingo-ai-disabled .maslingo-switch,
+.maslingo-ai-disabled select { cursor: not-allowed; }
+.maslingo-provider-heading,
+.maslingo-glossary-control { display: flex; align-items: center; gap: 4px; }
+.maslingo-provider-heading { justify-content: space-between; }
+.maslingo-provider-heading + .maslingo-row { margin-top: 6px; }
+.maslingo-provider-heading .maslingo-glossary-select { height: 18px; }
 
 /* The message line. Everything the panel reports shares this one line — the
    sample sentence, loading states like "正在 OCR……", connectivity results and
@@ -523,7 +531,7 @@
   line-height: 1.2;
   cursor: pointer;
 }
-.maslingo-glossary-select:hover { color: var(--maslingo-ink); background: var(--maslingo-fill); }
+.maslingo-glossary-select:hover:not(:disabled) { color: var(--maslingo-ink); background: var(--maslingo-fill); }
 
 /* The 选择框 itself: a flat acrylic panel with one row per concrete model
    (name on top, api id under it when the two differ) and 自定义… at the end. */

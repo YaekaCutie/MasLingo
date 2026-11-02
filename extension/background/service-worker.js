@@ -341,9 +341,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message?.type === "LOOKUP_WORD") {
     // Selection translation. A short word asks the chat model for a dictionary
-    // entry in the style of the standard dictionaries; a phrase (or any
-    // non-chat source) falls back to an ordinary translation. The response says
-    // which shape it returned so the content script can render it honestly.
+    // entry in the style of the standard dictionaries; an AI phrase lookup
+    // takes the ordinary translation path. Non-AI sources are rejected.
     (async () => {
       try {
         sendResponse(await lookupSelection(
@@ -662,15 +661,10 @@ async function recognizePage(msg,tabId,port){
 // working: `translationMode` used to be the only choice the user had.
 function resolveProvider(cfg) {
   const registry = globalThis.MAS_providers;
-  const explicit = cfg.translationProvider;
   // "none" is a real entry so the settings dropdown can offer it, but it has no
   // adapter and must resolve to "translation is off".
-  const usable = (provider) => (provider && provider.adapter ? provider : null);
-  if (explicit) return usable(registry.byId(explicit));
-  const mode = cfg.translationMode || "none";
-  if (mode === "none") return null;
-  if (mode === "free-translate") return usable(registry.byId("google-free"));
-  return cfg.translationEndpoint ? usable(registry.byId("custom")) : usable(registry.byId("openai"));
+  const provider = registry.byId(registry.resolveProviderId(cfg));
+  return provider?.adapter ? provider : null;
 }
 
 /**
@@ -930,8 +924,8 @@ async function runTranslation(texts, cfg, overrides = {}) {
  * the model to organise its answer according to the standard dictionaries for
  * the language (広辞苑 / 新明解 for Japanese, 现代汉语词典 for Chinese, Oxford /
  * Longman for English) and to identify the sense used by the surrounding
- * sentence. A free translation API cannot produce that structure, so it gets
- * the ordinary-translation path and the UI says so instead of pretending.
+ * sentence. Non-AI providers cannot use this feature, including requests from
+ * a page that has not yet received the provider-change event.
  */
 async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
   const text = String(rawText || "").replace(/\s+/g, " ").trim().slice(0, 200);
@@ -948,6 +942,9 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
   if (!provider) throw new Error("尚未选择翻译来源");
 
   const registry = globalThis.MAS_providers;
+  if (!registry.isChatProvider(provider)) {
+    throw new Error("划词词典仅支持 AI 翻译，请切换到 DeepSeek 等 AI 来源");
+  }
   const targetName = cfg.targetLanguage || "简体中文";
   const targetLabel = registry.languageByName(targetName)?.name || targetName;
   const overrides = {
@@ -961,8 +958,7 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
   }
 
   let dictionaryError = "";
-  const chat = registry.isChatProvider(provider);
-  if (chat && wantsDictionary) {
+  if (wantsDictionary) {
     try {
       const request = await provider.adapter({
         ...common,
@@ -1023,11 +1019,9 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
       translation: String(translated?.[0] ?? "").trim(),
       target: targetLabel,
       provider: provider.label,
-      notice: wantsDictionary && chat
+      notice: wantsDictionary
         ? `词典释义未能生成（${dictionaryError}），已改为普通翻译。`
-        : wantsDictionary
-          ? "词典释义需要 AI 大模型来源；当前来源只提供普通翻译。"
-          : "",
+        : "",
     };
   } catch (error) {
     if (dictionaryError) {

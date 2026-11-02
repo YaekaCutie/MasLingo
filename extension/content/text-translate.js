@@ -931,8 +931,8 @@
     const cfg = await readStore(["hoverTranslate", "webAutoTranslate", "targetLanguage", "translationProvider", "translationMode"]);
     if (version !== syncVersion) return;
     language = cfg.targetLanguage || "简体中文";
-    const provider = String(cfg.translationProvider || "");
-    const configured = provider ? provider !== "none" : String(cfg.translationMode || "none") !== "none";
+    const providerId = globalThis.MAS_providers.resolveProviderId(cfg);
+    const configured = providerId !== "none";
     const oldAuto = autoEnabled;
     const oldHover = hoverEnabled;
     autoEnabled = Boolean(cfg.webAutoTranslate) && configured;

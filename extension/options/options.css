@@ -76,6 +76,8 @@ h2 {
 .field:last-of-type { margin-bottom: 0; }
 .field > label { display: block; font-size: 13px; margin-bottom: 7px; }
 .field > label output { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ai-disabled { opacity: .45; }
+.ai-disabled, .ai-disabled label, .ai-disabled select { cursor: not-allowed; }
 
 /* --- controls ------------------------------------------------------------- */
 

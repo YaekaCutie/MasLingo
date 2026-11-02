@@ -48,6 +48,10 @@
         <div class="row-text"><label class="label" for="hoverTranslate">悬停翻译</label><div class="hint">鼠标停留或聚焦文字后显示浮层，可固定、关闭、定位原文和失败重试；选择文字时让出位置供划词翻译使用。</div></div>
         <label class="switch"><input id="hoverTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>
+      <div class="row" id="selectionField">
+        <div class="row-text"><label class="label" for="selectionTranslate">划词词典</label><div class="hint" id="selectionHint">仅支持 AI 翻译：选中文字，查看词义、例句或短句译文。</div></div>
+        <label class="switch"><input id="selectionTranslate" type="checkbox" aria-describedby="selectionHint"><span class="switch-track"><span class="switch-thumb"></span></span></label>
+      </div>
     </section>
 
     <section>
@@ -96,10 +100,10 @@
         <div class="hint">用自然语言描述即可，会原样写进给模型的指令里。</div>
       </div>
 
-      <div class="field" id="fieldGlossary" hidden>
+      <div class="field" id="fieldGlossary">
         <label for="translationGlossary">术语库</label>
         <select id="translationGlossary"></select>
-        <div class="hint">仅 AI 大模型来源生效：译文会优先采用所选领域的专业术语与表达。</div>
+        <div class="hint" id="glossaryHint">仅 AI 大模型来源生效：译文会优先采用所选领域的专业术语与表达。</div>
       </div>
 
       <div class="row-actions">

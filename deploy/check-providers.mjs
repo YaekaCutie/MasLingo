@@ -32,6 +32,21 @@ const check = (name, condition, detail = "") => {
 };
 const section = (title) => console.log(`\n${title}`);
 
+section("默认来源与旧设置迁移");
+for (const [name, cfg, expected] of [
+  ["新安装默认 DeepSeek", {}, "deepseek"],
+  ["空设置默认 DeepSeek", { translationProvider: "", translationMode: "" }, "deepseek"],
+  ["保留用户选择的 API", { translationProvider: "bing-free" }, "bing-free"],
+  ["保留明确关闭", { translationProvider: "none" }, "none"],
+  ["保留旧版关闭", { translationMode: "none" }, "none"],
+  ["保留旧版免费翻译", { translationMode: "free-translate" }, "google-free"],
+  ["保留旧版自定义接口", { translationMode: "openai-compatible", translationEndpoint: "http://localhost/v1" }, "custom"],
+  ["保留旧版 OpenAI", { translationMode: "openai-compatible" }, "openai"],
+  ["明确来源优先于旧模式", { translationProvider: "deepseek", translationMode: "none" }, "deepseek"],
+]) {
+  check(name, providers.resolveProviderId(cfg) === expected);
+}
+
 // --- hashing: the hand-written MD5 is the risky part ------------------------
 section("MD5（百度签名用，手写实现）");
 const md5Vectors = [

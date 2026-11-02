@@ -33,6 +33,8 @@ const testResult = document.getElementById("testResult");
 const autoTranslate = document.getElementById("autoTranslate");
 const webAutoTranslate = document.getElementById("webAutoTranslate");
 const hoverTranslate = document.getElementById("hoverTranslate");
+const selectionTranslate = document.getElementById("selectionTranslate");
+let selectionPreference = true;
 const autoConcurrency = document.getElementById("autoConcurrency");
 const fontScale = document.getElementById("fontScale");
 const overlayOpacity = document.getElementById("overlayOpacity");
@@ -114,7 +116,19 @@ function describeProvider() {
   fieldAppId.hidden = !provider.appIdRequired;
   fieldKey.hidden = !provider.keyRequired;
   fieldTarget.hidden = provider.targetKind !== "name";
-  fieldGlossary.hidden = provider.targetKind !== "name";
+  const ai = registry.isChatProvider(provider);
+  fieldGlossary.classList.toggle("ai-disabled", !ai);
+  translationGlossary.disabled = !ai;
+  translationGlossary.setAttribute("aria-describedby", "glossaryHint");
+  document.getElementById("glossaryHint").textContent = ai
+    ? "译文会优先采用所选领域的专业术语与表达。"
+    : "专业术语库仅支持 AI 翻译，切换到 DeepSeek 等 AI 来源后可用。";
+  document.getElementById("selectionField").classList.toggle("ai-disabled", !ai);
+  selectionTranslate.disabled = !ai;
+  selectionTranslate.checked = ai && selectionPreference;
+  document.getElementById("selectionHint").textContent = ai
+    ? "选中文字，查看词义、例句或短句译文。"
+    : "划词词典仅支持 AI 翻译，切换到 DeepSeek 等 AI 来源后可用。";
 
   if (provider.endpointEditable) {
     translationEndpoint.placeholder = provider.endpoint || "https://example.com/v1/chat/completions";
@@ -173,6 +187,10 @@ providerSelect.addEventListener("change", () => {
   describeProvider();
 });
 
+selectionTranslate.addEventListener("change", () => {
+  selectionPreference = selectionTranslate.checked;
+});
+
 document.getElementById("save").onclick = async () => {
   const provider = selectedProvider();
   if (!provider) return;
@@ -206,6 +224,8 @@ document.getElementById("save").onclick = async () => {
     autoTranslate: autoTranslate.checked,
     webAutoTranslate: webAutoTranslate.checked,
     hoverTranslate: hoverTranslate.checked,
+    selectionTranslate: selectionPreference,
+    translationGlossary: translationGlossary.value || "general",
     autoConcurrency: Number(autoConcurrency.value) || 1,
     fontScale: Number(fontScale.value) / 100,
     overlayOpacity: Number(overlayOpacity.value) / 100
@@ -217,7 +237,6 @@ document.getElementById("save").onclick = async () => {
   // use it.
   if (provider.targetKind === "name") {
     cfg.targetLanguage = targetLanguage.value.trim();
-    cfg.translationGlossary = translationGlossary.value || "general";
   }
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
@@ -268,7 +287,7 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "autoConcurrency",
+      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate", "autoConcurrency",
       "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
@@ -277,6 +296,7 @@ async function load() {
   autoTranslate.checked = Boolean(cfg.autoTranslate);
   webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
   hoverTranslate.checked = Boolean(cfg.hoverTranslate);
+  selectionPreference = cfg.selectionTranslate !== false;
   autoConcurrency.value = String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1)));
   fontScale.value = String(Math.round((cfg.fontScale ?? 1) * 100));
   overlayOpacity.value = String(Math.round((cfg.overlayOpacity ?? 1) * 100));
@@ -284,15 +304,7 @@ async function load() {
 
   document.getElementById("version").textContent = chrome.runtime.getManifest().version;
 
-  // Migrate the old two-value setting onto a provider id.
-  let providerId = cfg.translationProvider;
-  if (!providerId) {
-    providerId = cfg.translationMode === "none" || !cfg.translationMode ? "none" : null;
-    if (!providerId && cfg.translationMode === "free-translate") providerId = "google-free";
-    if (!providerId && cfg.translationMode === "openai-compatible") {
-      providerId = cfg.translationEndpoint ? "custom" : "openai";
-    }
-  }
+  const providerId = registry.resolveProviderId(cfg);
   providerSelect.value = registry.byId(providerId) ? providerId : "none";
 
   translationEndpoint.value = cfg.translationEndpoint || "";

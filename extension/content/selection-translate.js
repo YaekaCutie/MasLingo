@@ -838,12 +838,12 @@
     // the panel switch is the way to stop it (including on sites where every
     // drag would otherwise cost a request).
     //
-    // It also stays quiet until a translation source exists. Otherwise every
-    // selection on a fresh install would pop "尚未选择翻译来源" over the page.
-    const provider = String(cfg.translationProvider || "");
-    const configured = provider ? provider !== "none" : String(cfg.translationMode || "none") !== "none";
+    // Keep the saved preference, but only run while the source supports AI
+    // dictionary entries. Switching away also closes an existing card.
+    const registry = globalThis.MAS_providers;
+    const provider = registry.byId(registry.resolveProviderId(cfg));
     targetLanguage = cfg.targetLanguage || "简体中文";
-    enabled = cfg.selectionTranslate !== false && configured;
+    enabled = cfg.selectionTranslate !== false && registry.isChatProvider(provider);
     if (!enabled) closePopup();
   }
 

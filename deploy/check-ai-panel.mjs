@@ -19,7 +19,7 @@
 //   node deploy/check-ai-panel.mjs
 
 import http from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,8 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-ai-panel-qa"));
+mkdirSync(screenshotDir, { recursive: true });
 const failures = [];
 const check = (label, condition, detail = "") => {
   console.log(`  ${condition ? "ok  " : "FAIL"}  ${label}${condition || !detail ? "" : ` — ${detail}`}`);
@@ -340,10 +342,10 @@ try {
     };
   });
   await page.screenshot({
-    path: join(repoRoot, "deploy", "screenshots", "ai-panel-modelbox.png"),
+    path: join(screenshotDir, "ai-panel-modelbox.png"),
     clip: boxShot,
   });
-  console.log("      截图：deploy/screenshots/ai-panel-modelbox.png");
+  console.log(`      截图：${join(screenshotDir, "ai-panel-modelbox.png")}`);
   // Click-away closes without changing anything.
   await page.click(".maslingo-dots");
   await new Promise((r) => setTimeout(r, 200));
@@ -547,8 +549,8 @@ try {
         height: Math.round(rect.height) + 16,
       };
     });
-    await page.screenshot({ path: join(repoRoot, "deploy", "screenshots", name), clip: box });
-    console.log(`      截图：deploy/screenshots/${name}`);
+    await page.screenshot({ path: join(screenshotDir, name), clip: box });
+    console.log(`      截图：${join(screenshotDir, name)}`);
   };
   await shot("ai-panel.png");
   await page.click("#maslingo-ai-cancel");

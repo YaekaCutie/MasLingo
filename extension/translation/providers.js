@@ -15,6 +15,17 @@
   "use strict";
 
   const TARGET_DEFAULT = "简体中文";
+  const PROVIDER_DEFAULT = "deepseek";
+
+  // Use one migration rule in the worker, settings and content scripts.
+  // A fresh profile uses DeepSeek; explicit and legacy choices stay intact.
+  function resolveProviderId(cfg = {}) {
+    if (cfg.translationProvider) return cfg.translationProvider;
+    if (!cfg.translationMode) return PROVIDER_DEFAULT;
+    if (cfg.translationMode === "none") return "none";
+    if (cfg.translationMode === "free-translate") return "google-free";
+    return cfg.translationEndpoint ? "custom" : "openai";
+  }
 
   // Languages the paragraph translator offers in its menus. `zh` is what a chat
   // prompt calls the language; `google` is the generic tag; bing / mymemory /
@@ -820,7 +831,7 @@
   const PROVIDERS = [
     {
       id: "none",
-      label: "关闭翻译（默认）",
+      label: "关闭翻译",
       group: "其它",
       adapter: null,
       parse: null,
@@ -1335,6 +1346,7 @@
   root.MAS_providers = {
     list: PROVIDERS,
     byId,
+    resolveProviderId,
     resolveTarget,
     targetForLanguage,
     sourceForLanguage,
@@ -1362,6 +1374,7 @@
     md5,
     sha256Hex,
     defaultTarget: TARGET_DEFAULT,
+    defaultProvider: PROVIDER_DEFAULT,
     /** Every host the fixed providers talk to, for the manifest. */
     hosts() {
       const out = [];

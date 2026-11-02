@@ -858,7 +858,7 @@ globalThis.MAS_panel = (() => {
                 </div>
                 <div class="maslingo-toggle">
                   <span class="maslingo-label" id="maslingo-selection-label"
-                        title="选中网页文字、输入框或文本域中的文字即可翻译">划词翻译</span>
+                        title="选中网页文字、输入框或文本域中的文字即可查词或翻译（仅 AI）">划词词典</span>
                   <label class="maslingo-switch" aria-labelledby="maslingo-selection-label">
                     <input id="maslingo-selection-toggle" type="checkbox" aria-labelledby="maslingo-selection-label">
                     <span class="maslingo-switch-track"><span class="maslingo-switch-thumb"></span></span>
@@ -870,7 +870,13 @@ globalThis.MAS_panel = (() => {
             <div class="maslingo-rule" id="maslingo-rule-top"></div>
 
             <div class="maslingo-provider maslingo-fold"><div class="maslingo-fold-in">
-              <div class="maslingo-label" id="maslingo-provider-label">翻译类型</div>
+              <div class="maslingo-provider-heading">
+                <div class="maslingo-label" id="maslingo-provider-label">翻译类型</div>
+                <span class="maslingo-glossary-control">
+                  <label class="maslingo-glossary-label" for="maslingo-glossary-main">术语</label>
+                  <select id="maslingo-glossary-main" class="maslingo-glossary-select" aria-label="专业术语库"></select>
+                </span>
+              </div>
               <div class="maslingo-row maslingo-row-tight">
                 <select id="maslingo-provider" class="maslingo-select" aria-labelledby="maslingo-provider-label"></select>
                 <button class="maslingo-btn maslingo-btn-small" id="maslingo-connect">连通检测</button>
@@ -968,18 +974,18 @@ globalThis.MAS_panel = (() => {
   }
 
   function fillGlossaries() {
-    const select = root.querySelector("#maslingo-glossary");
     const glossaries = globalThis.MAS_providers?.glossaries || [];
-    if (!select) return;
-    select.textContent = "";
-    for (const glossary of glossaries) {
-      const option = document.createElement("option");
-      option.value = glossary.id;
-      option.textContent = glossary.label;
-      option.title = glossary.hint || glossary.label;
-      select.append(option);
+    for (const select of root.querySelectorAll("#maslingo-glossary, #maslingo-glossary-main")) {
+      select.textContent = "";
+      for (const glossary of glossaries) {
+        const option = document.createElement("option");
+        option.value = glossary.id;
+        option.textContent = glossary.label;
+        option.title = glossary.hint || glossary.label;
+        select.append(option);
+      }
+      select.value = "general";
     }
-    select.value = "general";
   }
 
   // --- AI mode --------------------------------------------------------------
@@ -1011,6 +1017,7 @@ globalThis.MAS_panel = (() => {
   // What storage says (the main page's truth) —
   let storedStrength = 0;
   let storedGlossary = "general";
+  let selectionPreference = true;
   let modelOverride = "";
   let modelOverrideOwner = "";
   let keySaved = false;
@@ -1027,6 +1034,19 @@ globalThis.MAS_panel = (() => {
 
   const isAiProvider = (provider) => Boolean(provider && provider.group === AI_GROUP);
   const aiPageOpen = () => Boolean(root?.classList.contains("maslingo-panel-ai"));
+
+  function syncAiFeatures() {
+    const ai = globalThis.MAS_providers.isChatProvider(selectedProvider());
+    const toggle = root.querySelector("#maslingo-selection-toggle");
+    toggle.disabled = !ai;
+    toggle.checked = ai && selectionPreference;
+    const row = toggle.closest(".maslingo-toggle");
+    row.classList.toggle("maslingo-ai-disabled", !ai);
+    row.title = ai ? "" : "划词词典仅支持 AI 翻译，请切换到 DeepSeek 等 AI 来源";
+    root.querySelector("#maslingo-selection-label").title = row.title ||
+      "选中网页文字、输入框或文本域中的文字即可查词或翻译（仅 AI）";
+    renderGlossary();
+  }
 
   /** The small grey 来源 note at the right end of the message line. */
   function renderSourceHint() {
@@ -1063,13 +1083,13 @@ globalThis.MAS_panel = (() => {
     draft.modelOwner = provider.id;
     draft.key = "";
     draft.glossary = storedGlossary;
+    root.classList.add("maslingo-panel-ai");
     const input = root.querySelector("#maslingo-ai-key");
     if (input) input.value = "";
     renderStrength(draft.strength);
     renderModelBox();
     renderGlossary();
     renderKeyPlaceholder();
-    root.classList.add("maslingo-panel-ai");
     scheduleMeteors();
     tracker?.refresh?.();
   }
@@ -1098,8 +1118,8 @@ globalThis.MAS_panel = (() => {
     const input = root.querySelector("#maslingo-ai-key");
     if (input) input.value = "";
     renderStrength(storedStrength);
-    renderGlossary();
     root.classList.remove("maslingo-panel-ai");
+    renderGlossary();
     stopMeteors();
     renderKeyPlaceholder();
     if (!quiet) status(save ? "已保存" : "已取消", save ? "ok" : "info");
@@ -1230,22 +1250,35 @@ globalThis.MAS_panel = (() => {
 
   /** The compact term-base selector beside the model name. */
   function renderGlossary() {
-    const select = root?.querySelector("#maslingo-glossary");
-    if (!select) return;
-    const id = aiPageOpen() ? draft.glossary : storedGlossary;
-    const glossary = globalThis.MAS_providers?.glossaryById?.(id) ||
-      globalThis.MAS_providers?.glossaryById?.("general");
-    select.value = glossary?.id || "general";
-    select.title = glossary
-      ? `术语库：${glossary.label}（${glossary.hint}）`
-      : "术语库";
+    const registry = globalThis.MAS_providers;
+    const ai = registry.isChatProvider(selectedProvider());
+    for (const select of root?.querySelectorAll("#maslingo-glossary, #maslingo-glossary-main") || []) {
+      const id = select.id === "maslingo-glossary" && aiPageOpen() ? draft.glossary : storedGlossary;
+      const glossary = registry.glossaryById(id);
+      select.value = glossary.id;
+      select.disabled = !ai;
+      select.title = ai
+        ? `术语库：${glossary.label}（${glossary.hint}）`
+        : "专业术语库仅支持 AI 翻译，请切换到 DeepSeek 等 AI 来源";
+      const control = select.closest(".maslingo-glossary-control");
+      control?.classList.toggle("maslingo-ai-disabled", !ai);
+      if (control) control.title = select.title;
+    }
   }
 
   function mountGlossary() {
     const select = root.querySelector("#maslingo-glossary");
     if (!select) return;
     select.addEventListener("change", () => {
+      if (select.disabled) return;
       draft.glossary = select.value || "general";
+      renderGlossary();
+    });
+    const mainSelect = root.querySelector("#maslingo-glossary-main");
+    mainSelect.addEventListener("change", () => {
+      if (mainSelect.disabled) return;
+      storedGlossary = mainSelect.value || "general";
+      writeStore({ translationGlossary: storedGlossary });
       renderGlossary();
     });
   }
@@ -1458,22 +1491,22 @@ globalThis.MAS_panel = (() => {
 
     const cfg = await readStore([
       "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate",
-      "translationProvider", "panelPosition", "panelCollapsed",
+      "translationProvider", "translationMode", "translationEndpoint", "panelPosition", "panelCollapsed",
       "translationModel", "translationModelProvider", "translationApiKey",
       "translationStrength", "translationGlossary",
     ]);
     root.querySelector("#maslingo-auto").checked = Boolean(cfg.autoTranslate);
     root.querySelector("#maslingo-web-auto").checked = Boolean(cfg.webAutoTranslate);
     root.querySelector("#maslingo-text").checked = Boolean(cfg.hoverTranslate);
-    root.querySelector("#maslingo-selection-toggle").checked = cfg.selectionTranslate !== false;
-    if (cfg.translationProvider) root.querySelector("#maslingo-provider").value = cfg.translationProvider;
+    selectionPreference = cfg.selectionTranslate !== false;
+    root.querySelector("#maslingo-provider").value = globalThis.MAS_providers.resolveProviderId(cfg);
     modelOverride = cfg.translationModel || "";
     modelOverrideOwner = cfg.translationModelProvider || "";
     keySaved = Boolean(cfg.translationApiKey);
     storedStrength = globalThis.MAS_providers?.normalizeStrength?.(cfg.translationStrength) ?? 0;
     storedGlossary = globalThis.MAS_providers?.glossaryById?.(cfg.translationGlossary)?.id || "general";
     renderStrength(storedStrength);
-    renderGlossary();
+    syncAiFeatures();
     renderSourceHint();
     syncConnectButton();
     // An AI source lands on its page (no animation: the instant class is on).
@@ -1517,8 +1550,10 @@ globalThis.MAS_panel = (() => {
         : "网页自动翻译已关闭");
     });
     root.querySelector("#maslingo-selection-toggle").addEventListener("change", (event) => {
+      if (event.target.disabled) return;
+      selectionPreference = event.target.checked;
       writeStore({ selectionTranslate: event.target.checked });
-      status(event.target.checked ? "划词翻译已开启" : "划词翻译已关闭");
+      status(event.target.checked ? "划词词典已开启" : "划词词典已关闭");
     });
     root.querySelector("#maslingo-provider").addEventListener("change", (event) => {
       const providerId = event.target.value;
@@ -1536,8 +1571,10 @@ globalThis.MAS_panel = (() => {
       setDot(root.querySelector("#maslingo-dot-translation"), STATE.UNKNOWN, "翻译未检测");
       renderSourceHint();
       syncConnectButton();
+      syncAiFeatures();
       if (isAiProvider(selectedProvider())) openAiPage();
       else closeAiPage({ quiet: true });
+      status(`已切换到${selectedProvider()?.label.replace(/（.*?）/g, "") || "所选来源"}`);
     });
     root.querySelector("#maslingo-connect").addEventListener("click", (event) => {
       if (event.currentTarget.dataset.action === "configure") openAiPage();
@@ -1598,25 +1635,25 @@ globalThis.MAS_panel = (() => {
           root.querySelector("#maslingo-web-auto").checked = Boolean(changes.webAutoTranslate.newValue);
         }
         if (changes.selectionTranslate) {
-          const box = root.querySelector("#maslingo-selection-toggle");
-          if (box && box.checked !== (changes.selectionTranslate.newValue !== false)) {
-            box.checked = changes.selectionTranslate.newValue !== false;
-          }
+          selectionPreference = changes.selectionTranslate.newValue !== false;
+          syncAiFeatures();
         }
         if (changes.translationProvider) {
           const select = root.querySelector("#maslingo-provider");
           if (select && select.value !== changes.translationProvider.newValue) {
-            select.value = changes.translationProvider.newValue;
+            select.value = changes.translationProvider.newValue || globalThis.MAS_providers.defaultProvider;
             setDot(root.querySelector("#maslingo-dot-translation"), STATE.UNKNOWN, "翻译未检测");
           }
           renderSourceHint();
           syncConnectButton();
+          syncAiFeatures();
           // The page follows the source, and a draft only makes sense for the
           // source it was taken for.
           if (aiPageOpen()) {
             if (isAiProvider(selectedProvider())) openAiPage();
             else closeAiPage({ quiet: true });
           }
+          status(`已切换到${selectedProvider()?.label.replace(/（.*?）/g, "") || "所选来源"}`);
         }
         if (changes.translationStrength) {
           storedStrength = globalThis.MAS_providers?.normalizeStrength?.(

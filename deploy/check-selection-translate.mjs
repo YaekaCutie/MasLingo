@@ -4,13 +4,13 @@
 // The page selects 猫 and dispatches mouseup, then checks that the card shows
 // every sense, part of speech and example, and highlights the sense the
 // context points at. A phrase must take the ordinary-translation path, Esc
-// must close the card, and a non-chat source must say plainly that it cannot
-// produce a dictionary entry.
+// must close the card, and a non-chat source must disable AI-only features
+// without sending a lookup request.
 //
 //   node deploy/check-selection-translate.mjs
 
 import http from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-selection-qa"));
+mkdirSync(screenshotDir, { recursive: true });
 const failures = [];
 const check = (label, condition, detail = "") => {
   console.log(`  ${condition ? "ok  " : "FAIL"}  ${label}${condition || !detail ? "" : ` — ${detail}`}`);
@@ -124,9 +126,68 @@ try {
   );
   const worker = await target.worker();
 
+  console.log("\n新安装默认与设置页 AI 功能");
+  const extensionId = new URL(worker.url()).host;
+  const freshPage = await browser.newPage();
+  await freshPage.goto(pageUrl, { waitUntil: "load" });
+  await freshPage.waitForFunction(() => document.getElementById("maslingo-provider")?.value === "deepseek");
+  check("新安装悬浮窗默认 DeepSeek", await freshPage.$eval("#maslingo-provider", (node) => node.value) === "deepseek");
+  await freshPage.close();
+  const options = await browser.newPage();
+  const optionsErrors = [];
+  options.on("pageerror", (error) => optionsErrors.push(String(error)));
+  const optionsUrl = `chrome-extension://${extensionId}/options/options.html`;
+  await options.setViewport({ width: 900, height: 900 });
+  await options.goto(optionsUrl, { waitUntil: "load" });
+  await options.waitForFunction(() => document.getElementById("translationProvider").value === "deepseek");
+  check("设置页身份正确且非空", await options.title() === "MasLingo 设置"
+    && await options.$eval("main", (node) => node.innerText.includes("划词词典")));
+  check("工作线程默认同样是 DeepSeek", await worker.evaluate(() => resolveProvider({})?.id) === "deepseek");
+  const settingsState = () => options.evaluate(() => ({
+    provider: document.getElementById("translationProvider").value,
+    selectionDisabled: document.getElementById("selectionTranslate").disabled,
+    selectionChecked: document.getElementById("selectionTranslate").checked,
+    glossaryDisabled: document.getElementById("translationGlossary").disabled,
+    glossary: document.getElementById("translationGlossary").value,
+    glossaryVisible: !document.getElementById("fieldGlossary").hidden,
+  }));
+  check("默认 DeepSeek 启用划词词典和术语库", !(await settingsState()).selectionDisabled
+    && !(await settingsState()).glossaryDisabled);
+  await options.select("#translationGlossary", "medical");
+  await options.select("#translationProvider", "google-free");
+  const nonAiSettings = await settingsState();
+  check("非 AI 设置显示灰色禁用且保留术语选择", nonAiSettings.selectionDisabled
+    && !nonAiSettings.selectionChecked && nonAiSettings.glossaryDisabled
+    && nonAiSettings.glossaryVisible && nonAiSettings.glossary === "medical");
+  await options.screenshot({ path: join(screenshotDir, "options-non-ai.png"), fullPage: true });
+  await options.setViewport({ width: 390, height: 844 });
+  check("窄屏设置无横向溢出", await options.evaluate(() =>
+    document.documentElement.scrollWidth <= window.innerWidth));
+  await options.screenshot({ path: join(screenshotDir, "options-non-ai-mobile.png"), fullPage: true });
+  await options.setViewport({ width: 900, height: 900 });
+  await options.click("#save");
+  await options.waitForFunction(() => !document.getElementById("result").hidden);
+  check("保存非 AI 不覆盖划词开关偏好", await worker.evaluate(async () =>
+    (await chrome.storage.local.get("selectionTranslate")).selectionTranslate) === true);
+  await options.reload({ waitUntil: "load" });
+  await options.waitForFunction(() => document.getElementById("translationProvider").value === "google-free");
+  check("重载保留非 AI 来源和术语偏好", (await settingsState()).selectionDisabled
+    && (await settingsState()).glossary === "medical");
+  await options.select("#translationProvider", "deepseek");
+  check("切回 AI 恢复划词开关", (await settingsState()).selectionChecked
+    && !(await settingsState()).selectionDisabled && !(await settingsState()).glossaryDisabled);
+  await options.click("#selectionField .switch");
+  await options.select("#translationProvider", "bing-free");
+  await options.select("#translationProvider", "deepseek");
+  check("主动关闭的划词开关切换后保持关闭", !(await settingsState()).selectionChecked);
+  await options.select("#translationGlossary", "medical");
+  await options.click("#save");
+  await options.waitForFunction(() => !document.getElementById("result").hidden);
+  check("设置页无脚本错误", optionsErrors.length === 0, optionsErrors.join(" | "));
+  await options.close();
+
   await worker.evaluate((url) => {
-    globalThis.MAS_providers.list.push({
-      id: "echo-selection",
+    Object.assign(globalThis.MAS_providers.byId("deepseek"), {
       label: "Echo Selection",
       group: "AI 大模型",
       chat: true,
@@ -148,8 +209,7 @@ try {
         return JSON.parse(content).map((text) => String(text));
       },
     });
-    globalThis.MAS_providers.list.push({
-      id: "echo-basic",
+    Object.assign(globalThis.MAS_providers.byId("google-free"), {
       label: "Echo Basic",
       group: "翻译 API",
       chat: false,
@@ -164,12 +224,14 @@ try {
       parse: (json) => (json?.translations || []).map((text) => String(text)),
     });
     return chrome.storage.local.set({
-      translationProvider: "echo-selection",
+      translationProvider: "deepseek",
       translationMode: "openai-compatible",
       targetLanguage: "简体中文",
       autoTranslate: false,
       hoverTranslate: false,
       selectionTranslate: true,
+      translationApiKey: "test-key",
+      translationGlossary: "medical",
     });
   }, echoUrl);
 
@@ -281,8 +343,7 @@ try {
     mini.minimized && mini.cardVisible === false && mini.miniVisible === true,
     JSON.stringify({ minimized: mini.minimized, card: mini.cardVisible, icon: mini.miniVisible }));
   check("图标缩到 38px", mini.width <= 40, String(mini.width));
-  await page.screenshot({ path: join(repoRoot, "deploy", "screenshots", "selection-minimized.png") });
-  console.log("      截图：deploy/screenshots/selection-minimized.png");
+  await page.screenshot({ path: join(screenshotDir, "selection-minimized.png") });
   await page.evaluate(() => {
     document.getElementById("maslingo-selection-popup")
       ?.shadowRoot?.querySelector(".mini")?.click();
@@ -357,17 +418,32 @@ try {
   check("面板开关重新开启会写入存储", onStored.selectionTranslate === true,
     JSON.stringify(onStored));
 
-  console.log("\n非 AI 来源：普通翻译与如实提示");
+  console.log("\n非 AI 来源：禁用划词与专业术语库");
   await worker.evaluate(() => chrome.storage.local.set({
-    translationProvider: "echo-basic",
+    translationProvider: "google-free",
   }));
   await new Promise((done) => setTimeout(done, 300));
   await selectText("two", 0, 1);
-  const basic = await waitForPopup((state) => state.translation === "译:吾");
-  check("非 AI 来源仍能给出普通翻译", basic.translation === "译:吾", basic.translation);
-  check("非 AI 来源明确说明没有词典释义",
-    basic.notice.includes("词典释义需要 AI 大模型来源"),
-    basic.notice);
+  await new Promise((done) => setTimeout(done, 500));
+  check("非 AI 来源不弹出划词卡片", !(await readPopup()).exists);
+  const nonAiPanel = await page.evaluate(() => ({
+    selectionDisabled: document.getElementById("maslingo-selection-toggle").disabled,
+    selectionChecked: document.getElementById("maslingo-selection-toggle").checked,
+    glossaryDisabled: document.getElementById("maslingo-glossary-main").disabled,
+    glossaryVisible: document.getElementById("maslingo-glossary-main").getBoundingClientRect().height > 0,
+    opacity: getComputedStyle(document.getElementById("maslingo-selection-toggle").closest(".maslingo-toggle")).opacity,
+  }));
+  check("悬浮窗两个 AI 入口灰色禁用", nonAiPanel.selectionDisabled && !nonAiPanel.selectionChecked
+    && nonAiPanel.glossaryDisabled && nonAiPanel.glossaryVisible && Number(nonAiPanel.opacity) < 0.6);
+  await page.evaluate(() => document.getElementById("maslingo-selection-toggle").click());
+  check("禁用开关点击不覆盖用户偏好", await worker.evaluate(async () =>
+    (await chrome.storage.local.get("selectionTranslate")).selectionTranslate) === true);
+  const beforeRejected = received.length;
+  const rejected = await worker.evaluate(() => lookupSelection("吾", "吾輩は猫である。", true)
+    .then(() => "allowed", (error) => error.message));
+  check("后台拦截非 AI 划词请求且不产生翻译调用", rejected.includes("仅支持 AI 翻译")
+    && received.length === beforeRejected);
+  await (await page.$("#maslingo-panel")).screenshot({ path: join(screenshotDir, "panel-non-ai.png") });
   check("页面无脚本错误", errors.length === 0, errors.slice(0, 2).join(" | "));
 
   await page.keyboard.press("Escape");
@@ -382,17 +458,22 @@ try {
   // A visual record for the docs: put the dictionary view back and hide the
   // floating panel so it does not cover the card.
   await worker.evaluate(() => chrome.storage.local.set({
-    translationProvider: "echo-selection", translationMode: "openai-compatible",
+    translationProvider: "deepseek", translationMode: "openai-compatible",
   }));
   await new Promise((done) => setTimeout(done, 200));
+  check("切回 AI 自动恢复划词开关与专业术语库", await page.evaluate(() =>
+    !document.getElementById("maslingo-selection-toggle").disabled
+      && document.getElementById("maslingo-selection-toggle").checked
+      && !document.getElementById("maslingo-glossary-main").disabled
+      && document.getElementById("maslingo-glossary-main").value === "medical"));
   await page.evaluate(() => {
     const panel = document.getElementById("maslingo-panel");
     if (panel) panel.style.display = "none";
   });
   await selectText("one", 0, 1);
   await waitForPopup((state) => state.word === "猫");
-  await page.screenshot({ path: join(repoRoot, "deploy", "screenshots", "selection-translate.png") });
-  console.log("      截图：deploy/screenshots/selection-translate.png");
+  await page.screenshot({ path: join(screenshotDir, "selection-translate.png") });
+  console.log(`      截图：${screenshotDir}`);
 } finally {
   await browser.close();
   echo.close();
