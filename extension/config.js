@@ -13,6 +13,9 @@ globalThis.MAS_BACKEND_URL = "";
 // backend locally without touching the extension at all.
 globalThis.MAS_LOCAL_BACKENDS = ["http://127.0.0.1:8001", "http://localhost:8001"];
 
+globalThis.MAS_webDisplayMode = value =>
+  ["bilingual", "translated", "source"].includes(value) ? value : "bilingual";
+
 // Returns the ordered, de-duplicated list of backends to try: what the user
 // typed in the options page first, then the hosted backend, then localhost.
 globalThis.MAS_backendCandidates = async function () {

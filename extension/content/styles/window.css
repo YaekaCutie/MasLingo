@@ -306,6 +306,18 @@
   gap: 8px;
 }
 .maslingo-ai-only { display: none; }
+.maslingo-web-display {
+  max-width: 100px;
+  height: 24px;
+  padding: 2px 5px;
+  border: 1px solid var(--maslingo-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--maslingo-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
 .maslingo-panel-ai .maslingo-ai-only { display: inline-flex; align-items: center; }
 .maslingo-panel-ai .maslingo-main-only { display: none; }
 /* 保存 wears the accent — this product's primary is ink, not a hue (colour

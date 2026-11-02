@@ -32,6 +32,7 @@ const testResult = document.getElementById("testResult");
 
 const autoTranslate = document.getElementById("autoTranslate");
 const webAutoTranslate = document.getElementById("webAutoTranslate");
+const webDisplayMode = document.getElementById("webDisplayMode");
 const hoverTranslate = document.getElementById("hoverTranslate");
 const selectionTranslate = document.getElementById("selectionTranslate");
 const inputAutoReplace = document.getElementById("inputAutoReplace");
@@ -232,6 +233,7 @@ document.getElementById("save").onclick = async () => {
     translationAppId: translationAppId.value.trim(),
     autoTranslate: autoTranslate.checked,
     webAutoTranslate: webAutoTranslate.checked,
+    webDisplayMode: globalThis.MAS_webDisplayMode(webDisplayMode.value),
     hoverTranslate: hoverTranslate.checked,
     selectionTranslate: selectionPreference,
     inputAutoReplace: inputReplacePreference,
@@ -297,7 +299,7 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
+      "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
       "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
@@ -305,6 +307,7 @@ async function load() {
 
   autoTranslate.checked = Boolean(cfg.autoTranslate);
   webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
+  webDisplayMode.value = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
   hoverTranslate.checked = Boolean(cfg.hoverTranslate);
   selectionPreference = cfg.selectionTranslate !== false;
   inputReplacePreference = cfg.inputAutoReplace !== false;

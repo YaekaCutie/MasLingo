@@ -45,6 +45,10 @@
         <label class="switch"><input id="webAutoTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>
       <div class="row">
+        <div class="row-text"><label class="label" for="webDisplayMode">网页显示模式</label><div class="hint">纯原文暂停新的自动翻译请求；纯译文模式遇到公式、控件等复杂段落时保留原结构。</div></div>
+        <select id="webDisplayMode"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
+      </div>
+      <div class="row">
         <div class="row-text"><label class="label" for="hoverTranslate">悬停翻译</label><div class="hint">鼠标停留或聚焦文字后显示浮层，可固定、关闭、定位原文和失败重试；选择文字时让出位置供划词翻译使用。</div></div>
         <label class="switch"><input id="hoverTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>

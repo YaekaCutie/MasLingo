@@ -17,6 +17,7 @@ const model = process.env.MAS_TEST_MODEL || "deepseek-flash";
 const contextImageOnly = process.argv.includes("--context-image-only");
 const imageOnly = process.argv.includes("--image-only") || contextImageOnly;
 const inputOnly = process.argv.includes("--input-only");
+const webDisplayOnly = process.argv.includes("--web-display-only");
 const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-live-qa"));
 mkdirSync(screenshotDir, { recursive: true });
 let apiKey = process.env.MAS_TEST_TRANSLATION_API_KEY || "";
@@ -114,13 +115,13 @@ try {
     console.log(`PASS ${label}`);
   };
 
-  if (!inputOnly) {
+  if (!inputOnly && !webDisplayOnly) {
     const health = await send({ type: "CHECK_BACKEND" });
     check("extension reaches the running OCR backend", health.ok && health.base === backend);
   }
-  await set({ translationProvider: "deepseek", translationMode: "openai-compatible", hoverTranslate: !imageOnly && !inputOnly });
+  await set({ translationProvider: "deepseek", translationMode: "openai-compatible", hoverTranslate: !imageOnly && !inputOnly && !webDisplayOnly });
   await page.bringToFront();
-  if (!imageOnly && !inputOnly) {
+  if (!imageOnly && !inputOnly && !webDisplayOnly) {
     await page.hover("#medical");
     await page.waitForFunction(() => [...document.querySelectorAll("[data-maslingo-textbox]")]
       .some(host => host.shadowRoot?.querySelector(".text")?.textContent.includes("心肌梗死")), { timeout: 90000 });
@@ -157,7 +158,7 @@ try {
       && dictionary.entry.senses[dictionary.entry.contextSense - 1]?.meaning.includes("令牌"));
   }
 
-  if (!imageOnly) {
+  if (!imageOnly && !webDisplayOnly) {
     await set({ hoverTranslate: false, selectionTranslate: true, inputAutoReplace: true, translationGlossary: "business" });
     await page.waitForFunction(() => document.getElementById("maslingo-selection-toggle")?.checked === true);
     const sentence = "I will send the revised document tomorrow.";
@@ -179,7 +180,27 @@ try {
     console.log(JSON.stringify({ case: "input replacement", translatedDraft }));
   }
 
-  if (!inputOnly) {
+  if (webDisplayOnly) {
+    const originalHtml = await page.$eval("#medical", node => node.innerHTML);
+    await set({ webAutoTranslate: true, webDisplayMode: "bilingual", hoverTranslate: false, selectionTranslate: false, translationGlossary: "medical" });
+    await page.waitForFunction(() => document.querySelector('#medical + [data-maslingo-textbox]')?.shadowRoot?.querySelector('.text').textContent.includes('心肌梗死'), { timeout: 90000 });
+    const requestCount = await worker.evaluate(() => __liveTrace.ai.length);
+    check("bilingual mode preserves the source and displays the live translation", await page.$eval("#medical", node => node.innerHTML) === originalHtml);
+    await page.screenshot({ path: join(screenshotDir, "live-web-bilingual.png") });
+    await page.select("#maslingo-web-display", "translated");
+    await page.waitForFunction(() => document.querySelector('#medical [data-maslingo-cover]'));
+    check("translation-only mode shows the live Chinese text in place", await page.$eval("#medical", node => node.textContent.includes("心肌梗死")));
+    await page.screenshot({ path: join(screenshotDir, "live-web-translated.png") });
+    await page.select("#maslingo-web-display", "source");
+    await page.waitForFunction(() => !document.querySelector('#medical [data-maslingo-cover]'));
+    check("source-only mode restores the exact original", await page.$eval("#medical", node => node.innerHTML) === originalHtml);
+    await page.screenshot({ path: join(screenshotDir, "live-web-source.png") });
+    await page.select("#maslingo-web-display", "bilingual");
+    await page.waitForFunction(() => document.querySelector('#medical + [data-maslingo-textbox]')?.style.display === 'block');
+    check("display switches reuse the completed live request", await worker.evaluate(() => __liveTrace.ai.length) === requestCount);
+  }
+
+  if (!inputOnly && !webDisplayOnly) {
     await set({ hoverTranslate: false, selectionTranslate: false, translationGlossary: "anime", autoTranslate: !contextImageOnly });
     if (contextImageOnly) {
       await page.click("#manga", { button: "right" });
@@ -220,7 +241,7 @@ try {
     console.log(JSON.stringify({ model, liveRequests: trace.ai.length, ocrText, anchored: diag.anchored, screenshotDir }));
   } else {
     const trace = await worker.evaluate(() => globalThis.__liveTrace);
-    check("input request reached the live DeepSeek API", trace.ai.length > 0 && trace.ai.every(item => item.status === 200));
+    check("text request reached the live DeepSeek API", trace.ai.length > 0 && trace.ai.every(item => item.status === 200));
     check("no browser script errors", errors.length === 0);
     console.log(JSON.stringify({ model, liveRequests: trace.ai.length, screenshotDir }));
   }

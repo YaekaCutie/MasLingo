@@ -928,6 +928,9 @@ globalThis.MAS_panel = (() => {
             <div class="maslingo-rule" id="maslingo-rule-foot"></div>
             <div class="maslingo-foot">
               <button class="maslingo-link maslingo-main-only" id="maslingo-settings">⚙ 设置</button>
+              <select id="maslingo-web-display" class="maslingo-web-display maslingo-main-only" aria-label="网页显示模式" title="网页自动翻译显示方式">
+                <option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option>
+              </select>
               <span class="maslingo-version maslingo-main-only" id="maslingo-version"></span>
               <button class="maslingo-link maslingo-ai-only" id="maslingo-ai-cancel">取消</button>
               <button class="maslingo-save maslingo-ai-only" id="maslingo-ai-save">保存</button>
@@ -1490,13 +1493,14 @@ globalThis.MAS_panel = (() => {
     fillGlossaries();
 
     const cfg = await readStore([
-      "autoTranslate", "webAutoTranslate", "hoverTranslate", "selectionTranslate",
+      "autoTranslate", "webAutoTranslate", "webDisplayMode", "hoverTranslate", "selectionTranslate",
       "translationProvider", "translationMode", "translationEndpoint", "panelPosition", "panelCollapsed",
       "translationModel", "translationModelProvider", "translationApiKey",
       "translationStrength", "translationGlossary",
     ]);
     root.querySelector("#maslingo-auto").checked = Boolean(cfg.autoTranslate);
     root.querySelector("#maslingo-web-auto").checked = Boolean(cfg.webAutoTranslate);
+    root.querySelector("#maslingo-web-display").value = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
     root.querySelector("#maslingo-text").checked = Boolean(cfg.hoverTranslate);
     selectionPreference = cfg.selectionTranslate !== false;
     root.querySelector("#maslingo-provider").value = globalThis.MAS_providers.resolveProviderId(cfg);
@@ -1548,6 +1552,11 @@ globalThis.MAS_panel = (() => {
       status(event.target.checked
         ? (selectedProvider()?.id === "none" ? "网页翻译已开启，请先选择翻译来源" : "按阅读位置翻译网页正文，可随时关闭")
         : "网页自动翻译已关闭");
+    });
+    root.querySelector("#maslingo-web-display").addEventListener("change", event => {
+      const value = globalThis.MAS_webDisplayMode(event.target.value);
+      writeStore({ webDisplayMode: value });
+      status(`网页自动显示：${event.target.selectedOptions[0].textContent}`);
     });
     root.querySelector("#maslingo-selection-toggle").addEventListener("change", (event) => {
       if (event.target.disabled) return;
@@ -1633,6 +1642,9 @@ globalThis.MAS_panel = (() => {
         }
         if (changes.webAutoTranslate) {
           root.querySelector("#maslingo-web-auto").checked = Boolean(changes.webAutoTranslate.newValue);
+        }
+        if (changes.webDisplayMode) {
+          root.querySelector("#maslingo-web-display").value = globalThis.MAS_webDisplayMode(changes.webDisplayMode.newValue);
         }
         if (changes.selectionTranslate) {
           selectionPreference = changes.selectionTranslate.newValue !== false;

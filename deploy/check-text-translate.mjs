@@ -9,7 +9,7 @@
 //   node deploy/check-text-translate.mjs
 
 import http from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const screenshotDir = resolve(process.env.MAS_SCREENSHOT_DIR || join(tmpdir(), "maslingo-text-qa"));
+mkdirSync(screenshotDir, { recursive: true });
 const failures = [];
 const check = (label, condition, detail = "") => {
   console.log(`  ${condition ? "ok  " : "FAIL"}  ${label}${condition || !detail ? "" : ` — ${detail}`}`);
@@ -91,8 +93,7 @@ try {
   const worker = await target.worker();
 
   await worker.evaluate((url) => {
-    globalThis.MAS_providers.list.push({
-      id: "echo-text",
+    Object.assign(globalThis.MAS_providers.byId("deepseek"), {
       label: "Echo Text",
       group: "AI 大模型",
       adapter: (request) => ({
@@ -114,7 +115,8 @@ try {
       },
     });
     return chrome.storage.local.set({
-      translationProvider: "echo-text",
+      translationProvider: "deepseek",
+      translationApiKey: "test-key",
       translationMode: "openai-compatible",
       targetLanguage: "简体中文",
       autoTranslate: false,
@@ -259,6 +261,8 @@ try {
   check("还原原文：段落文字恢复", (await paragraphText()) === paragraphs[1]);
 
   console.log("\n同语言与短文本");
+  await page.mouse.move(5, 5);
+  await new Promise(done => setTimeout(done, 600));
   const beforeChinese = received.length;
   await page.hover("#zh");
   await new Promise((done) => setTimeout(done, 600));
@@ -296,8 +300,43 @@ try {
   const finalCard = await waitForVisible(`译:${paragraphs[0]}`);
   check("重新开启后悬停仍能显示结果", Boolean(finalCard));
   check("页面无脚本错误", errors.length === 0, errors.slice(0, 2).join(" | "));
-  await page.screenshot({ path: join(repoRoot, "deploy", "screenshots", "text-translate.png") });
-  console.log("      截图：deploy/screenshots/text-translate.png");
+  await page.screenshot({ path: join(screenshotDir, "text-translate.png") });
+
+  console.log("\n网页显示：双语 / 译文 / 原文");
+  await page.evaluate(() => { document.getElementById("maslingo-panel").style.display = ""; document.getElementById("maslingo-ai-cancel").click(); });
+  await worker.evaluate(() => chrome.storage.local.set({ hoverTranslate: false, webAutoTranslate: true }));
+  await page.waitForFunction(() => document.querySelector('#p0 + [data-maslingo-textbox]')?.shadowRoot?.querySelector('.text').textContent.startsWith('译:'));
+  await new Promise(done => setTimeout(done, 350));
+  const countParagraph = () => received.filter(item => item.texts?.includes(paragraphs[0])).length;
+  const beforeDisplay = countParagraph();
+  await page.select("#maslingo-web-display", "translated");
+  await page.waitForFunction(() => document.querySelector('#p0 [data-maslingo-cover]'));
+  check("悬浮窗切换到纯译文", await page.$eval("#p0", node => node.textContent) === `译:${paragraphs[0]}`);
+  await page.screenshot({ path: join(screenshotDir, "web-translated.png") });
+  await page.select("#maslingo-web-display", "source");
+  await page.waitForFunction(() => !document.querySelector('#p0 [data-maslingo-cover]'));
+  check("纯原文还原正文并隐藏自动卡片", await page.$eval("#p0", node => node.textContent) === paragraphs[0]
+    && (await readBoxes()).filter(box => box.visible).length === 0);
+  await page.select("#maslingo-web-display", "bilingual");
+  await page.waitForFunction(() => document.querySelector('#p0 + [data-maslingo-textbox]')?.style.display !== 'none');
+  check("三种模式切换不重复请求同一缓存段落", countParagraph() === beforeDisplay);
+  const options = await browser.newPage();
+  await options.goto(`chrome-extension://${new URL(worker.url()).host}/options/options.html`, { waitUntil: "load" });
+  await options.waitForFunction(() => document.getElementById("translationProvider").value === "deepseek");
+  await options.select("#webDisplayMode", "source"); await options.click("#save");
+  await options.waitForFunction(() => !document.getElementById("result").hidden);
+  await page.waitForFunction(() => document.getElementById("maslingo-web-display").value === "source");
+  check("设置页显示模式同步到悬浮窗", (await worker.evaluate(() => chrome.storage.local.get("webDisplayMode"))).webDisplayMode === "source");
+  await options.reload({ waitUntil: "load" });
+  await options.waitForFunction(() => document.getElementById("webDisplayMode").value === "source");
+  check("重载设置页保留显示模式", await options.$eval("#webDisplayMode", node => node.value) === "source");
+  await options.close();
+  await page.setViewport({ width: 390, height: 844 });
+  check("窄屏悬浮窗模式控件可见", await page.$eval("#maslingo-web-display", node => {
+    const box = node.getBoundingClientRect(); return box.width > 0 && box.left >= 0 && box.right <= innerWidth;
+  }));
+  check("显示模式交互无脚本异常", errors.length === 0);
+  console.log(`      截图：${screenshotDir}`);
 } finally {
   await browser.close();
   echo.close();

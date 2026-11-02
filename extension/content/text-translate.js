@@ -32,6 +32,7 @@
   let activeRequests = 0;
   let pointer = { x: 0, y: 0 };
   let language = "简体中文";
+  let displayMode = "bilingual";
   let hoverBlock = null;
   let showTimer = null;
   let hideTimer = null;
@@ -163,6 +164,7 @@
         }
         .text[data-state="loading"] { color: #64748b; }
         .text[data-state="error"] { color: #b42318; }
+        .mode-note { margin: 0 0 8px; color: #64748b; font-size: 11px; }
         .collapsed .body { display: none; }
         .collapsed .head { border-bottom: 0; }
       </style>
@@ -179,7 +181,7 @@
           <button class="toggle" type="button" aria-expanded="true" aria-label="收起译文">▾</button>
           <button class="toggle close" type="button" aria-label="关闭译文" title="关闭译文">×</button>
         </div>
-        <div class="body"><p class="text" role="status" aria-live="polite"></p></div>
+        <div class="body"><p class="mode-note" hidden>已保留复杂原文结构，以下为译文。</p><p class="text" role="status" aria-live="polite"></p></div>
         <div class="foot"><button class="origin" type="button">定位原文</button><button class="retry" type="button" hidden>重试</button></div>
       </div>
     `;
@@ -229,6 +231,7 @@
       select,
       sourceSelect,
       coverButton,
+      modeNote: shadow.querySelector(".mode-note"),
       paragraph: null,
       translation: "",
       paragraphText: "",
@@ -435,14 +438,14 @@
   function canCoverParagraph(element) {
     if (element.matches('a, button, summary, [role="button"]')) return false;
     return ![...element.querySelectorAll("*")].some((child) =>
-      BLOCK_TAGS.has(child.tagName) || SKIP_TAGS.has(child.tagName) ||
+      BLOCK_TAGS.has(child.tagName) || SKIP_TAGS.has(child.tagName.toUpperCase()) ||
       child.matches('[contenteditable], [role="button"], [role="math"]') ||
       /^(block|flow-root|flex|grid|list-item|table-cell|table-caption)$/.test(getComputedStyle(child).display));
   }
 
   function excluded(element) {
     for (let node = element; node; node = parentOf(node)) {
-      if (SKIP_TAGS.has(node.tagName) || node.isContentEditable ||
+      if (SKIP_TAGS.has(node.tagName?.toUpperCase()) || node.isContentEditable ||
           node.matches?.('[hidden], [inert], [aria-hidden="true"], [role="textbox"], [role="math"]') || isOwnUi(node)) return true;
     }
     return false;
@@ -652,8 +655,29 @@
     box.host.style.setProperty("display", "none", "important");
   }
 
+  function applyAutoDisplay(box) {
+    if (!box.automatic) return;
+    box.modeNote.hidden = true;
+    if (displayMode !== "translated" && box.covered) box.toggleCover();
+    if (displayMode === "source" || box.dismissed ||
+        (box.sameLanguage && !box.manualSource && !box.manualTarget)) {
+      hideBox(box, true);
+      return;
+    }
+    if (displayMode === "translated" && box.translated && box.translation) {
+      if (box.canCover && !box.covered) box.toggleCover();
+      if (box.covered) {
+        hideBox(box, true);
+        return;
+      }
+      box.modeNote.hidden = false;
+    }
+    reveal(box);
+  }
+
   function enqueue(box) {
     if (!enabled || box.loading || !box.paragraphText || box.dismissed) return;
+    if (box.automatic && displayMode === "source") return;
     if ((box.translated || box.sameLanguage) && box.key === keyFor(box)) return;
     box.requestId++;
     box.key = keyFor(box);
@@ -683,6 +707,7 @@
         if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage()) continue;
         if (group.length >= 4 || (group.length && chars + box.paragraphText.length > 7000)) continue;
         queue.delete(box);
+        if (box.automatic && displayMode === "source") { box.loading = false; continue; }
         if (!box.paragraph.isConnected || box.dismissed) { box.loading = false; continue; }
         group.push(box);
         chars += box.paragraphText.length;
@@ -707,7 +732,7 @@
             return;
           }
           const text = String(response.translations?.[index] ?? "").trim();
-          if (text) box.setText(text);
+          if (text) { box.setText(text); applyAutoDisplay(box); }
           else box.setError("服务未返回该段译文，请重试");
         });
       }).catch((error) => {
@@ -728,13 +753,14 @@
 
   function showBox(unit) {
     if (!hoverEnabled) return;
-    const box = createBox(unit, autoEnabled && automaticCandidate(unit.element));
+    const box = createBox(unit, autoEnabled && displayMode !== "source" && automaticCandidate(unit.element));
     if (!box.manualSource && !box.manualTarget && globalThis.MAS_providers?.likelySameLanguage?.(unit.text, box.getLanguage())) return;
     box.dismissed = false;
     if (box.sameLanguage && box.key === keyFor(box)) return;
     clearTimeout(hideTimer);
     reveal(box);
     enqueue(box);
+    applyAutoDisplay(box);
   }
 
   function schedulePosition() {
@@ -816,7 +842,7 @@
       observeRoot(root);
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
-          if (node.nodeType === 1 && (SKIP_TAGS.has(node.tagName) || isOwnUi(node) || node.isContentEditable)) return NodeFilter.FILTER_REJECT;
+          if (node.nodeType === 1 && (SKIP_TAGS.has(node.tagName.toUpperCase()) || isOwnUi(node) || node.isContentEditable)) return NodeFilter.FILTER_REJECT;
           return NodeFilter.FILTER_ACCEPT;
         },
       });
@@ -866,12 +892,13 @@
 
   function autoShow(unit) {
     if (!autoEnabled || !automaticCandidate(unit.element) || !readable(unit.element)) return;
+    if (displayMode === "source") return;
     if (globalThis.MAS_providers?.likelySameLanguage?.(unit.text, language)) return;
     const box = createBox(unit, true);
     if (box.dismissed || (box.sameLanguage && box.key === keyFor(box))) return;
-    reveal(box);
     // Failures wait for an explicit retry, rather than looping on mutations.
     if (!box.error) enqueue(box);
+    applyAutoDisplay(box);
   }
 
   function scheduleScan() {
@@ -928,9 +955,11 @@
 
   async function sync(changed = false) {
     const version = ++syncVersion;
-    const cfg = await readStore(["hoverTranslate", "webAutoTranslate", "targetLanguage", "translationProvider", "translationMode"]);
+    const cfg = await readStore(["hoverTranslate", "webAutoTranslate", "webDisplayMode", "targetLanguage", "translationProvider", "translationMode"]);
     if (version !== syncVersion) return;
     language = cfg.targetLanguage || "简体中文";
+    const oldDisplayMode = displayMode;
+    displayMode = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
     const providerId = globalThis.MAS_providers.resolveProviderId(cfg);
     const configured = providerId !== "none";
     const oldAuto = autoEnabled;
@@ -977,6 +1006,13 @@
         for (const box of [...boxes.values()]) if (!box.automatic) discard(box);
       }
       if (changed) retranslateAll();
+      if (oldDisplayMode !== displayMode) {
+        for (const box of boxes.values()) {
+          if (!box.automatic) continue;
+          if (displayMode === "source" && queue.delete(box)) box.loading = false;
+          applyAutoDisplay(box);
+        }
+      }
       scan();
     }
   }
@@ -984,7 +1020,7 @@
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area !== "local") return;
     const configChanged = ["targetLanguage", "translationProvider", "translationMode", "translationStrength", "translationModel", "translationModelProvider", "translationGlossary", "translationApiKey", "translationAppId", "translationEndpoint"].some((key) => changes[key]);
-    if (changes.hoverTranslate || changes.webAutoTranslate || configChanged) sync(configChanged).catch(() => {});
+    if (changes.hoverTranslate || changes.webAutoTranslate || changes.webDisplayMode || configChanged) sync(configChanged).catch(() => {});
   });
 
   globalThis.MAS_text = { installed: true, sync, retranslateAll };
