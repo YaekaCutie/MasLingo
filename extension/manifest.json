@@ -57,7 +57,8 @@
         "content/panel.js",
         "content/content.js",
         "content/text-translate.js",
-        "content/selection-translate.js"
+        "content/selection-translate.js",
+        "content/video-translate.js"
       ],
       "css": [
         "content/styles/glass.css",

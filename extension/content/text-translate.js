@@ -52,7 +52,7 @@
   function isOwnUi(node) {
     const element = node?.nodeType === 1 ? node : node?.parentElement;
     return Boolean(element?.closest?.(
-      "[data-maslingo-textbox], #maslingo-panel, #maslingo-selection-popup, " +
+      "[data-maslingo-textbox], [data-maslingo-video], #maslingo-panel, #maslingo-selection-popup, " +
       "#maslingo-layer, .maslingo-overlay-text-canvas, [data-maslingo-cover], " +
       ".maslingo-adjacent-translation, .maslingo-caption-source",
     )) || Boolean(element?.getRootNode?.()?.host && isOwnUi(element.getRootNode().host));

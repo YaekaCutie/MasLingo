@@ -33,6 +33,7 @@ const testResult = document.getElementById("testResult");
 const autoTranslate = document.getElementById("autoTranslate");
 const webAutoTranslate = document.getElementById("webAutoTranslate");
 const webDisplayMode = document.getElementById("webDisplayMode");
+const videoDisplayMode = document.getElementById("videoDisplayMode");
 const hoverTranslate = document.getElementById("hoverTranslate");
 const selectionTranslate = document.getElementById("selectionTranslate");
 const inputAutoReplace = document.getElementById("inputAutoReplace");
@@ -234,6 +235,7 @@ document.getElementById("save").onclick = async () => {
     autoTranslate: autoTranslate.checked,
     webAutoTranslate: webAutoTranslate.checked,
     webDisplayMode: globalThis.MAS_webDisplayMode(webDisplayMode.value),
+    videoDisplayMode: globalThis.MAS_webDisplayMode(videoDisplayMode.value),
     hoverTranslate: hoverTranslate.checked,
     selectionTranslate: selectionPreference,
     inputAutoReplace: inputReplacePreference,
@@ -299,7 +301,7 @@ async function load() {
     "debugMode", "backendUrl", "translationProvider", "translationMode",
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
+      "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode", "videoDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
       "fontScale", "overlayOpacity",
   ]);
   debugMode.checked = cfg.debugMode !== false;
@@ -308,6 +310,7 @@ async function load() {
   autoTranslate.checked = Boolean(cfg.autoTranslate);
   webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
   webDisplayMode.value = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
+  videoDisplayMode.value = globalThis.MAS_webDisplayMode(cfg.videoDisplayMode);
   hoverTranslate.checked = Boolean(cfg.hoverTranslate);
   selectionPreference = cfg.selectionTranslate !== false;
   inputReplacePreference = cfg.inputAutoReplace !== false;

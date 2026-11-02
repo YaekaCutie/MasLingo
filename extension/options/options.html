@@ -41,6 +41,10 @@
     <section>
       <h2>网页文本翻译</h2>
       <div class="row">
+        <div class="row-text"><label class="label" for="videoDisplayMode">视频字幕显示</label><div class="hint">在视频下方开启字幕翻译，控制条不遮挡画面。无字幕识别需共享当前标签页声音，并在后端启用语音模型；音频仅发送给设置中的后端。</div></div>
+        <select id="videoDisplayMode"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
+      </div>
+      <div class="row">
         <div class="row-text"><label class="label" for="webAutoTranslate">网页自动翻译</label><div class="hint">按阅读位置分批翻译正文、标题、图注、列表和表格。保留原文中的链接、引用和公式，关闭后移除译文。</div></div>
         <label class="switch"><input id="webAutoTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>

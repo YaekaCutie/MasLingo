@@ -928,6 +928,7 @@ globalThis.MAS_panel = (() => {
             <div class="maslingo-rule" id="maslingo-rule-foot"></div>
             <div class="maslingo-foot">
               <button class="maslingo-link maslingo-main-only" id="maslingo-settings">⚙ 设置</button>
+              <button class="maslingo-link maslingo-main-only" id="maslingo-video" title="定位视频字幕控制条">字幕</button>
               <select id="maslingo-web-display" class="maslingo-web-display maslingo-main-only" aria-label="网页显示模式" title="网页自动翻译显示方式">
                 <option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option>
               </select>
@@ -1557,6 +1558,9 @@ globalThis.MAS_panel = (() => {
       const value = globalThis.MAS_webDisplayMode(event.target.value);
       writeStore({ webDisplayMode: value });
       status(`网页自动显示：${event.target.selectedOptions[0].textContent}`);
+    });
+    root.querySelector("#maslingo-video").addEventListener("click", () => {
+      status(globalThis.MAS_video?.open() ? "已定位视频，请在视频下方开启字幕翻译或声音识别" : "此页面未发现视频；嵌入视频请使用视频所在框架的字幕控制条");
     });
     root.querySelector("#maslingo-selection-toggle").addEventListener("change", (event) => {
       if (event.target.disabled) return;
