@@ -97,6 +97,7 @@ try{
   assert.equal(await worker.evaluate(()=>videoCalls.length),count,'mode switches reuse cache');
   await page.$eval('video',v=>v.currentTime=1.2);
   await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.length>0&&!videoRoot().querySelector('.caption').textContent.includes('Hello'),{timeout:90000});
+  assert.equal(await worker.evaluate(()=>videoCalls.length),count,'seeking reuses translations already prefetched');
   await page.$eval('video',v=>v.requestFullscreen());
   await page.waitForFunction(()=>document.fullscreenElement&&getComputedStyle(videoRoot().host).display==='none');
   assert.ok(await page.$eval('video',v=>[...v.textTracks].some(t=>t.label==='MasLingo'&&t.mode==='showing')),'native subtitles render in video fullscreen');
@@ -125,6 +126,24 @@ try{
   assert.equal(await page.evaluate(()=>videoRoot().querySelector('.speech').getAttribute('aria-pressed')),'false');
   await worker.evaluate(async tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>{navigator.mediaDevices.getDisplayMedia=globalThis.originalDisplayMedia;}}),tabId);
   if(!live){
+    const first = 'A slow subtitle must still be shown in full.';
+    const second = 'The next subtitle finishes translating first.';
+    await worker.evaluate(()=>globalThis.videoDelay=1700);
+    await page.$eval('.ytp-caption-window-container',e=>e.textContent='A slow subtitle');
+    await click('.start');
+    await page.$eval('.ytp-caption-window-container',(e,text)=>e.textContent=text,first);
+    for(let i=0;i<20&&!await worker.evaluate(text=>videoCalls.some(batch=>batch.includes(text)),first);i++)await wait(100);
+    assert.equal(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent),'','bilingual does not show a partial untranslated line');
+    assert.equal(await worker.evaluate(()=>videoCalls.some(batch=>batch.includes('A slow subtitle'))),false,'rolling cue prefixes are merged');
+    await worker.evaluate(()=>globalThis.videoDelay=0);
+    await page.$eval('.ytp-caption-window-container',(e,text)=>e.textContent=text,second);
+    for(let i=0;i<20&&!await worker.evaluate(text=>videoCalls.some(batch=>batch.includes(text)),second);i++)await wait(100);
+    await page.$eval('.ytp-caption-window-container',e=>e.textContent='');
+    await page.waitForFunction(text=>videoRoot().querySelector('.caption').textContent===text+'\n译文：'+text,{},first);
+    await page.waitForFunction(text=>videoRoot().querySelector('.caption').textContent===text+'\n译文：'+text,{},second);
+    await click('.start');
+    console.log('PASS late and out-of-order replies display complete bilingual cues in playback order');
+
     await worker.evaluate(()=>globalThis.videoDelay=1000);
     const before=await worker.evaluate(()=>videoCalls.length);
     await page.$eval('.ytp-caption-window-container',e=>e.textContent='A late subtitle must not return after stopping.');
@@ -138,12 +157,16 @@ try{
   if(speech){
     await page.$eval('.ytp-caption-window-container',e=>e.textContent='');
     await select('bilingual');await page.$eval('video',v=>{v.currentTime=0;return v.play();});
+    const startedAt = Date.now();
     await click('.speech');
     await page.waitForFunction(()=>videoRoot().querySelector('.speech').getAttribute('aria-pressed')==='true',{timeout:30000});
     await page.waitForFunction(()=>/hello|video|everyone|today/i.test(videoRoot().querySelector('.caption').textContent),{timeout:120000});
     await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('\n'),{timeout:90000});
     console.log('PASS real shared-tab audio -> local speech model -> translation -> overlay');
-    console.log(JSON.stringify({caption:await page.evaluate(()=>videoRoot().querySelector('.caption').textContent)}));
+    console.log(JSON.stringify({firstBilingualMs:Date.now()-startedAt,caption:await page.evaluate(()=>videoRoot().querySelector('.caption').textContent)}));
+    await page.waitForFunction(() => /testing video subtitles\b/i.test(videoRoot().querySelector('.caption').textContent),
+      {timeout:20000});
+    console.log('PASS pause-aware capture preserves the following sentence through the word subtitles');
     await page.screenshot({path:join(out,'video-speech.png')});
     await click('.speech');const audioCount=await worker.evaluate(()=>videoAudioRequests);await wait(6000);
     assert.equal(await worker.evaluate(()=>videoAudioRequests),audioCount,'stop prevents further audio uploads');

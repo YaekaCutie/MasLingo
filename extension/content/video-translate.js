@@ -6,6 +6,13 @@
   let audioOwner = null;
   const send = message => chrome.runtime.sendMessage(message);
   const clean = value => String(value || "").replace(/\s+/g, " ").trim().slice(0, 4000);
+  const PAIR_WAIT_MS = 20000;
+  const MAX_WAITING_CUES = 16;
+  const MIN_AUDIO_MS = 1400;
+  const MAX_AUDIO_MS = 5000;
+  const AUDIO_PAUSE_MS = 220;
+  const MIN_SPEECH_RMS = 0.006;
+  const preferenceKeys = ["videoDisplayMode", "translationProvider", "translationMode"];
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
   const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
@@ -61,9 +68,11 @@
       }
     }
     const $ = selector => root.querySelector(selector);
-    const state = { video, host, root, enabled: false, generation: 0, cache: new Map(), inflight: 0,
-      modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "", source: "",
-      stream: null, recorder: null, speech: false, speechBusy: false, speechText: "", speechUntil: 0, timer: null };
+    const state = { video, host, root, enabled: false, generation: 0, translationRevision: 0, cache: new Map(), inflight: 0, prefetching: false,
+      modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "",
+      currentCue: null, waitingCues: [], showing: null, lagged: false,
+      stream: null, recorder: null, audioContext: null, audioMeter: null,
+      speech: false, speechBusy: false, speechText: "", speechUntil: 0, audioQueue: [], timer: null };
     players.set(video, state);
     const status = text => { $(".status").textContent = text; };
     const mode = () => $(".mode").value;
@@ -74,14 +83,23 @@
       if (state.output) for (const cue of [...(state.output.cues || [])]) state.output.removeCue(cue);
       state.lastOutput = "";
     }
-    function reset() {
+    function resetTimeline() {
       state.generation++;
-      state.cache.clear();
+      state.currentCue = null;
+      state.waitingCues.length = 0;
+      state.showing = null;
+      state.lagged = false;
+      state.audioQueue.length = 0;
       state.speechText = "";
-      state.source = "";
       clearOutput();
     }
+    function reset() {
+      state.translationRevision++;
+      state.cache.clear();
+      resetTimeline();
+    }
     function restoreSources() {
+      state.sourceTrack?.removeEventListener("cuechange", tick);
       for (const [track, saved] of state.modes) track.mode = saved;
       state.modes.clear(); state.sourceTrack = null;
       for (const [element, saved] of state.hiddenDom) {
@@ -90,14 +108,21 @@
       }
       state.hiddenDom.clear();
     }
+    function stopCapture() {
+      clearTimeout(state.timer);
+      const stream = state.stream;
+      state.stream = null;
+      if (state.recorder?.state === "recording") state.recorder.stop();
+      state.recorder = null;
+      state.audioContext?.close().catch(() => {});
+      state.audioContext = null;
+      state.audioMeter = null;
+      stream?.getTracks().forEach(track => track.stop());
+      if (audioOwner === state) audioOwner = null;
+    }
     function stopSpeech() {
       state.speech = false;
-      clearTimeout(state.timer);
-      if (state.recorder?.state !== "inactive") { try { state.recorder?.stop(); } catch {} }
-      state.recorder = null;
-      state.stream?.getTracks().forEach(track => track.stop());
-      state.stream = null;
-      if (audioOwner === state) audioOwner = null;
+      stopCapture();
       $(".speech").setAttribute("aria-pressed", "false");
       $(".speech").textContent = "无字幕识别";
     }
@@ -141,42 +166,65 @@
       const chosen = $(".track").value === "auto"
         ? tracks.find(t => t.mode === "showing") || (tracks.includes(state.sourceTrack) ? state.sourceTrack : tracks[0])
         : tracks[Number($(".track").value)];
-      if (chosen !== state.sourceTrack) { restoreSources(); reset(); state.sourceTrack = chosen; }
+      if (chosen !== state.sourceTrack) {
+        restoreSources();
+        reset();
+        state.sourceTrack = chosen;
+        chosen?.addEventListener("cuechange", tick);
+      }
       for (const track of tracks) {
         if (!state.modes.has(track)) state.modes.set(track, track.mode);
         if (track === chosen || track.mode === "showing") track.mode = "hidden";
       }
     }
 
-    function translate(texts) {
-      if (mode() === "source" || state.inflight >= 2) return;
-      const fresh = [...new Set(texts)].filter(text => text && !state.cache.has(text)).slice(0, 8);
+    function translate(texts, prefetch = false) {
+      if (mode() === "source" || state.inflight >= 2 || (prefetch && state.prefetching)) return;
+      const registry = globalThis.MAS_providers;
+      const provider = registry?.byId(registry.resolveProviderId(preferences));
+      // Single-text providers are serialized by the worker. A large batch
+      // would keep even its first translation waiting for later requests.
+      const batchSize = provider?.perRequest ? 1 : 4;
+      const fresh = [...new Set(texts)].filter(text => text && !state.cache.has(text)).slice(0, batchSize);
       if (!fresh.length) return;
-      const generation = state.generation;
+      const revision = state.translationRevision;
       for (const text of fresh) state.cache.set(text, { pending: true });
       state.inflight++;
+      if (prefetch) state.prefetching = true;
       send({ type: "TRANSLATE_TEXT_BLOCKS", texts: fresh, source: "自动识别" }).then(result => {
-        if (generation !== state.generation || !state.enabled) return;
+        if (revision !== state.translationRevision || !state.enabled) return;
         if (!result?.ok) throw new Error(result?.reason || "字幕翻译失败");
-        fresh.forEach((text, i) => state.cache.set(text, { text: result.translations?.[i] || text }));
-        if (state.cache.size > 800) for (const key of [...state.cache.keys()].slice(0, 200)) state.cache.delete(key);
+        fresh.forEach((text, i) => {
+          const translation = clean(result.translations?.[i]);
+          state.cache.set(text, translation ? { text: translation } : { error: "服务未返回该句译文" });
+        });
+        if (state.cache.size > 800) {
+          const protectedTexts = new Set(state.waitingCues.map(cue => cue.text));
+          protectedTexts.add(state.currentCue?.text);
+          for (const [text, entry] of state.cache) {
+            if (state.cache.size <= 600) break;
+            if (!entry.pending && !protectedTexts.has(text)) state.cache.delete(text);
+          }
+        }
       }).catch(error => {
-        if (generation !== state.generation) return;
+        if (revision !== state.translationRevision) return;
         fresh.forEach(text => state.cache.set(text, { error: error.message }));
-        status(`翻译失败：${error.message}；停止后重开可重试`);
-      }).finally(() => { state.inflight--; });
+      }).finally(() => {
+        state.inflight--;
+        if (prefetch) state.prefetching = false;
+      });
     }
 
-    function sourceText() {
-      if (state.speech) return performance.now() < state.speechUntil ? state.speechText : "";
+    function readCaptions(now) {
+      if (state.speech) return { text: now < state.speechUntil ? state.speechText : "", upcoming: [] };
       const track = state.sourceTrack;
       if (track) {
         const cues = [...(track.cues || [])];
         const active = cues.filter(c => c.startTime <= video.currentTime && c.endTime > video.currentTime);
-        const current = clean(active.map(plainCue).join(" "));
-        // Prefetch the near future; seeking simply changes the requested window.
-        translate([current, ...cues.filter(c => c.startTime > video.currentTime && c.startTime < video.currentTime + 25).slice(0, 10).map(plainCue)]);
-        return current;
+        return {
+          text: clean(active.map(plainCue).join(" ")),
+          upcoming: cues.filter(c => c.startTime > video.currentTime && c.startTime < video.currentTime + 30).slice(0, 10).map(plainCue),
+        };
       }
       const scope = video.closest("#movie_player, .bpx-player-container, .bilibili-player") || video.parentElement;
       const elements = [...(scope?.querySelectorAll(domSelectors) || [])];
@@ -184,7 +232,75 @@
         if (!state.hiddenDom.has(element)) state.hiddenDom.set(element, { value: element.style.getPropertyValue("visibility"), priority: element.style.getPropertyPriority("visibility") });
         element.style.setProperty("visibility", "hidden", "important");
       }
-      return clean(elements.map(e => e.textContent).join(" "));
+      return { text: clean(elements.map(e => e.textContent).join(" ")), upcoming: [], rolling: true };
+    }
+
+    function observeCue(text, rolling, now) {
+      const previous = state.currentCue;
+      if (text === (previous?.text || "")) return;
+      // Some players build a cue word by word. Give a growing prefix a short
+      // window to settle before asking for its translation.
+      if (text && rolling && previous && now < previous.readyAt &&
+          !state.cache.has(previous.text) && text.startsWith(previous.text)) {
+        previous.text = text;
+        previous.readyAt = Math.min(previous.at + 450, now + 180);
+        return;
+      }
+      if (previous) previous.readyAt = Math.min(previous.readyAt, now);
+      state.currentCue = text ? { text, at: now, readyAt: now + (rolling ? 180 : 0) } : null;
+      if (!state.currentCue) return;
+      state.waitingCues.push(state.currentCue);
+      if (state.waitingCues.length > MAX_WAITING_CUES) {
+        state.waitingCues.shift();
+        state.lagged = true;
+      }
+    }
+
+    function presentCaptions({ text, upcoming, rolling }, now) {
+      if (mode() === "source") {
+        state.currentCue = null;
+        state.waitingCues.length = 0;
+        state.showing = null;
+        render(text);
+        status(text ? "显示原文" : idleStatus());
+        return;
+      }
+      observeCue(text, rolling, now);
+      const nextRequest = state.waitingCues.find(cue => cue.readyAt <= now && !state.cache.has(cue.text));
+      if (nextRequest) translate([nextRequest.text]);
+      else translate(upcoming, true);
+
+      const showing = state.showing;
+      if (!showing || (showing.cue !== state.currentCue && now >= showing.until &&
+          !(video.ended && !state.waitingCues.length))) {
+        const next = state.waitingCues[0];
+        const entry = next && state.cache.get(next.text);
+        if (next && (entry?.text || entry?.error || now - next.at >= PAIR_WAIT_MS)) {
+          state.waitingCues.shift();
+          state.showing = {
+            cue: next, translation: entry?.text,
+            error: entry?.error || (!entry?.text ? "译文等待超时" : ""),
+            until: now + (next === state.currentCue ? 650 : 1400),
+          };
+        } else {
+          state.showing = null;
+        }
+      }
+
+      const ready = state.showing;
+      const output = !ready ? "" : mode() === "translated" ? (ready.translation || "")
+        : [ready.cue.text, ready.translation === ready.cue.text ? "" : ready.translation].filter(Boolean).join("\n");
+      render(output);
+      if (ready?.error) status(`字幕翻译失败：${ready.error}`);
+      else if (state.lagged) status("处理速度跟不上播放，已跳过过期片段");
+      else if (ready && ready.cue !== state.currentCue) status("正在补显示晚到的字幕");
+      else if (state.waitingCues.length) status("正在翻译字幕…");
+      else status(ready ? (state.speech ? "已显示语音字幕" : "字幕已同步") : idleStatus());
+    }
+
+    function idleStatus() {
+      if (state.speech) return state.stream ? "正在识别标签页声音…" : "语音采集已结束";
+      return state.sourceTrack ? "等待当前字幕…" : "未发现字幕，请在播放器开启字幕，或点击无字幕识别";
     }
 
     function render(text) {
@@ -200,7 +316,7 @@
         }
       } else {
         if (state.output) state.output.mode = "disabled";
-        $(".caption").textContent = text;
+        if ($(".caption").textContent !== text) $(".caption").textContent = text;
       }
       state.lastOutput = text;
     }
@@ -217,52 +333,95 @@
       }
       updateTracks();
       if (!state.enabled) return;
-      const text = sourceText();
-      state.source = text;
-      if (!text) { render(""); if (!state.speech) status(state.sourceTrack ? "等待当前字幕…" : "未发现字幕，请在播放器开启字幕，或点击无字幕识别"); return; }
-      translate([text]);
-      const entry = state.cache.get(text);
-      const output = mode() === "source" ? text : mode() === "translated" ? (entry?.text || "") : [text, entry?.text === text ? "" : entry?.text].filter(Boolean).join("\n");
-      render(output);
-      if (!entry?.error) status(state.speech ? "正在识别标签页声音 · 字幕有数秒延迟" : mode() !== "source" && !entry?.text ? "正在翻译字幕…" : "字幕已同步");
+      const now = performance.now();
+      presentCaptions(readCaptions(now), now);
     }
     state.tick = tick;
 
-    async function recordChunk() {
+    async function transcribeNext() {
+      if (!state.speech || state.speechBusy) return;
+      const clip = state.audioQueue.shift();
+      if (!clip) return;
+      state.speechBusy = true;
+      try {
+        const audio = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result.split(",")[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(clip.blob);
+        });
+        if (clip.generation !== state.generation || !state.speech) return;
+        const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio });
+        if (clip.generation !== state.generation || !state.speech) return;
+        if (!response?.ok) throw new Error(response?.reason || "语音识别失败");
+        if (performance.now() - clip.capturedAt > PAIR_WAIT_MS) {
+          state.lagged = true;
+          return;
+        }
+        const text = clean(response.text);
+        if (text) {
+          state.speechText = text;
+          state.speechUntil = performance.now() + 6000;
+          tick();
+        }
+      } catch (error) {
+        if (clip.generation === state.generation) { stop(); status(error.message); }
+      } finally {
+        state.speechBusy = false;
+        transcribeNext();
+      }
+    }
+
+    function watchForSpeechPause(recorder, startedAt) {
+      const meter = state.audioMeter;
+      const samples = meter && new Float32Array(meter.fftSize);
+      let lastSpeech = 0;
+      function check() {
+        if (recorder.state !== "recording") return;
+        const now = performance.now();
+        if (meter && state.audioContext?.state === "running") {
+          meter.getFloatTimeDomainData(samples);
+          let energy = 0;
+          for (const sample of samples) energy += sample * sample;
+          if (energy / samples.length > MIN_SPEECH_RMS ** 2) lastSpeech = now;
+        }
+        const elapsed = now - startedAt;
+        const pause = lastSpeech && elapsed >= MIN_AUDIO_MS && now - lastSpeech >= AUDIO_PAUSE_MS;
+        if (pause || elapsed >= MAX_AUDIO_MS) recorder.stop();
+        else state.timer = setTimeout(check, 75);
+      }
+      state.timer = setTimeout(check, 75);
+    }
+
+    function recordChunk() {
       if (!state.speech || !state.stream?.active) return;
       if (video.paused || video.seeking || video.ended) { state.timer = setTimeout(recordChunk, 300); return; }
       const generation = state.generation;
+      const startedAt = performance.now();
       const chunks = [];
       const recorder = new MediaRecorder(new MediaStream(state.stream.getAudioTracks()), { mimeType: "audio/webm;codecs=opus" });
       state.recorder = recorder;
       recorder.ondataavailable = event => { if (event.data.size) chunks.push(event.data); };
       recorder.onerror = () => { stop(); status("音频录制失败，请重新开启识别"); };
-      recorder.onstop = async () => {
+      recorder.onstop = () => {
         if (!state.speech) return;
         recordChunk();
-        if (generation !== state.generation || state.speechBusy || video.paused) return;
         const capturedAt = performance.now();
-        state.speechBusy = true;
-        try {
-          const blob = new Blob(chunks, { type: recorder.mimeType });
-          if (!blob.size || blob.size > 2 * 1024 * 1024) return;
-          const audio = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(",")[1]); reader.onerror = reject; reader.readAsDataURL(blob); });
-          const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio });
-          if (generation !== state.generation || !state.speech || video.paused) return;
-          if (!response?.ok) throw new Error(response?.reason || "语音识别失败");
-          if (performance.now() - capturedAt > 15000) { status("识别速度较慢，已跳过过期语音；可换用更小的模型"); return; }
-          state.speechText = clean(response.text);
-          state.speechUntil = performance.now() + 8000;
-          if (!state.speechText) status("未识别到语音，请检查共享声音和视频音量");
-          tick();
-        } catch (error) { if (generation === state.generation) { stop(); status(error.message); } }
-        finally { state.speechBusy = false; }
+        if (generation !== state.generation || capturedAt - startedAt < 500) return;
+        const blob = new Blob(chunks, { type: recorder.mimeType });
+        if (!blob.size || blob.size > 2 * 1024 * 1024) return;
+        state.audioQueue.push({ blob, generation, capturedAt });
+        if (state.audioQueue.length > 2) {
+          state.audioQueue.shift();
+          state.lagged = true;
+        }
+        transcribeNext();
       };
       recorder.start();
-      state.timer = setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, 5000);
+      watchForSpeechPause(recorder, startedAt);
     }
     $(".speech").onclick = async () => {
-      if (state.speech) { stop(); return; }
+      if (state.speech && state.stream) { stop(); return; }
       if (!navigator.mediaDevices?.getDisplayMedia) { status("此页面无法共享声音，请使用 HTTPS 页面和支持标签页音频的浏览器"); return; }
       stop();
       const generation = state.generation;
@@ -277,6 +436,16 @@
         }
         audioOwner?.stop(); audioOwner = state;
         state.stream = stream; state.speech = true; start();
+        // Measure pauses without mixing the captured sound back into playback.
+        // If Web Audio is unavailable the recorder still flushes at its cap.
+        try {
+          state.audioContext = new AudioContext();
+          state.audioMeter = state.audioContext.createAnalyser();
+          state.audioContext.createMediaStreamSource(stream).connect(state.audioMeter);
+          state.audioContext.resume().catch(() => {});
+        } catch {
+          state.audioMeter = null;
+        }
         $(".speech").setAttribute("aria-pressed", "true"); $(".speech").textContent = "停止识别";
         for (const track of stream.getTracks()) track.addEventListener("ended", () => { if (state.speech) { stop(); status("声音共享已停止"); } }, { once: true });
         status("正在识别标签页声音 · 请播放视频");
@@ -284,22 +453,36 @@
       } catch (error) { stop(); status(error.name === "NotAllowedError" ? "未获得声音共享权限，可再次点击开启" : error.message); }
       finally { $(".speech").disabled = false; }
     };
-    video.addEventListener("seeking", reset);
-    video.addEventListener("pause", () => { if (state.speech) reset(); });
-    video.addEventListener("ratechange", reset);
+    function flushRecording() {
+      if (state.recorder?.state !== "recording") return;
+      clearTimeout(state.timer);
+      state.recorder.stop();
+    }
+    function resetPlayback() {
+      resetTimeline();
+      flushRecording();
+    }
+    video.addEventListener("seeking", resetPlayback);
+    video.addEventListener("pause", flushRecording);
+    video.addEventListener("ratechange", resetPlayback);
     video.addEventListener("emptied", stop);
-    video.addEventListener("ended", stop);
+    video.addEventListener("ended", () => {
+      if (!state.speech) return;
+      stopCapture();
+      $(".speech").setAttribute("aria-pressed", "false");
+      $(".speech").textContent = "重新识别";
+    });
   }
 
   function scan(root = document) {
     for (const video of root.querySelectorAll("video")) if (!players.has(video)) attach(video);
     for (const element of root.querySelectorAll("*")) if (element.shadowRoot && !element.matches("[data-maslingo-video], #maslingo-panel")) scan(element.shadowRoot);
   }
-  chrome.storage.local.get(["videoDisplayMode"]).then(cfg => { preferences = cfg; scan(); });
+  chrome.storage.local.get(preferenceKeys).then(cfg => { preferences = cfg; scan(); });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    for (const key of preferenceKeys) if (changes[key]) preferences[key] = changes[key].newValue;
     if (changes.videoDisplayMode) {
-      preferences.videoDisplayMode = changes.videoDisplayMode.newValue;
       for (const state of players.values()) state.root.querySelector(".mode").value = globalThis.MAS_webDisplayMode(preferences.videoDisplayMode);
     }
     if (Object.keys(changes).some(key => key.startsWith("translation") || key === "targetLanguage")) for (const state of players.values()) state.reset();

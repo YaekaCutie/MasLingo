@@ -348,7 +348,7 @@ const BROWSER_GLOBALS = new Set([
   "isNaN", "isFinite", "parseInt", "parseFloat", "encodeURIComponent",
   "decodeURIComponent", "encodeURI", "decodeURI", "importScripts", "Worker",
   "MutationObserver", "IntersectionObserver", "ResizeObserver", "AbortController",
-  "MediaRecorder", "MediaStream", "VTTCue", "Option",
+  "AudioContext", "MediaRecorder", "MediaStream", "VTTCue", "Option",
   "Event", "InputEvent",
 ]);
 const KEYWORDS = new Set([
