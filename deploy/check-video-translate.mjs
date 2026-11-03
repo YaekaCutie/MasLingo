@@ -25,7 +25,14 @@ const audio = speech ? readFileSync(process.env.MAS_VIDEO_WAV) : null;
 const server = http.createServer((req,res)=>{
   if(req.url==='/voice.wav'){res.writeHead(200,{'Content-Type':'audio/wav'});res.end(audio);return;}
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
-  res.end(`<!doctype html><html><head><title>MasLingo Video QA</title><style>body{margin:24px;background:#eee;font:18px system-ui}video{width:720px;max-width:100%;aspect-ratio:16/9;background:#152d40}h1{font-size:24px}</style></head><body><h1>Video subtitle test</h1><div id="movie_player"><video controls></video><div class="ytp-caption-window-container"></div></div></body></html>`);
+  res.end(`<!doctype html><html><head><title>MasLingo Video QA</title><style>
+  body{margin:24px;background:#eee;font:18px system-ui}h1{font-size:24px}
+  #player-shell{position:relative;width:720px;max-width:100%;aspect-ratio:16/9;overflow:hidden;background:#393e50}
+  #player-stack{position:relative;display:flex;flex-direction:column;height:100%}
+  #movie_player{position:relative;display:block;height:100%;min-height:0;overflow:hidden}
+  video{display:block;width:100%;height:100%;background:#152d40}
+  .ytp-caption-window-container{position:absolute;bottom:0;color:white}
+  </style></head><body><h1>Video subtitle test</h1><div id="player-shell"><div id="player-stack"><media-controller id="movie_player"><video controls></video><div class="ytp-caption-window-container"></div></media-controller></div></div></body></html>`);
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 let browser, page;
@@ -70,6 +77,12 @@ try{
     globalThis.videoRoot=()=>document.querySelector('[data-maslingo-video]').shadowRoot;
   },speech);
   await page.waitForSelector('[data-maslingo-video]');await wait(250);
+  assert.ok(await page.evaluate(() => {
+    const shell = document.querySelector('#player-shell');
+    const panel = videoRoot().host;
+    return panel.previousElementSibling === shell &&
+      Math.abs(document.querySelector('video').getBoundingClientRect().height - shell.getBoundingClientRect().height) < 1;
+  }), 'controls are outside the entire player shell and do not shrink the native video');
   assert.ok(await page.evaluate(()=>videoRoot().querySelector('.bar').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'controls must stay outside the video');
   assert.equal(await worker.evaluate(()=>videoCalls.length),0,'no request before explicit start');
   const click=async selector=>(await page.evaluateHandle(s=>videoRoot().querySelector(s),selector)).asElement().click();

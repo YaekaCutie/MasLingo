@@ -703,6 +703,7 @@ try {
     "stopping restores source captions",
   );
   // Automatic reading exposes contextual controls even with hover disabled.
+  await source.bringToFront();
   failTranslation = true;
   await source.evaluate(() =>
     chrome.storage.local.set({ hoverTranslate: false, webAutoTranslate: true }),
@@ -719,7 +720,6 @@ try {
     ),
     "automatic results show no legacy controls even after a translation failure",
   );
-  await source.bringToFront();
   await source.mouse.move(1, 1);
   await source.waitForFunction(() =>
     [...document.querySelectorAll("[data-maslingo-quick-badge]")].filter(

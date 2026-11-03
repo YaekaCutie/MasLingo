@@ -8,7 +8,7 @@
   const clean = value => String(value || "").replace(/\s+/g, " ").trim().slice(0, 4000);
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
-  const playerSelector = "#movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
+  const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
 
   function attach(video) {
     const host = document.createElement("div");
@@ -34,17 +34,23 @@
       <span class="status" role="status"></span></div><div class="caption" aria-live="off"></div>`;
     function placeHost(rect) {
       let anchor = video.closest(playerSelector) || video;
-      // Custom players can nest several out-of-flow layers. Leave those
-      // layers and any clipping wrapper that ends at the video edge.
+      // The player may be inside a fixed-size flex stack that also holds its
+      // poster. Adding a sibling inside that stack can shrink the player.
       for (let parent = anchor.parentElement; parent && parent !== document.body; parent = anchor.parentElement) {
         const positioned = /^(absolute|fixed)$/.test(getComputedStyle(anchor).position);
+        const parentRect = parent.getBoundingClientRect();
+        const anchorRect = anchor.getBoundingClientRect();
+        const sameFrame = ["top", "right", "bottom", "left"].every(
+          edge => Math.abs(parentRect[edge] - anchorRect[edge]) <= 2,
+        );
         const clipped = /^(hidden|clip)$/.test(getComputedStyle(parent).overflowY) &&
-          parent.getBoundingClientRect().bottom <= rect.bottom + 2;
-        if (!positioned && !clipped && !parent.matches(playerSelector)) break;
+          parentRect.bottom <= Math.max(rect.bottom, anchorRect.bottom) + 2;
+        if (!positioned && !sameFrame && !clipped && !parent.matches(playerSelector)) break;
         anchor = parent;
       }
-      if (anchor.nextSibling !== host) anchor.after(host);
-      if (host.style.display === "none") return;
+      let previous = host.previousElementSibling;
+      while (previous?.matches("[data-maslingo-video]")) previous = previous.previousElementSibling;
+      if (previous !== anchor) anchor.after(host);
       const panelRect = host.getBoundingClientRect();
       if (panelRect.left < rect.right && panelRect.right > rect.left) {
         // Also cover player layouts whose video extends past the height they
@@ -54,7 +60,6 @@
         if (margin !== needed) host.style.marginTop = `${needed}px`;
       }
     }
-    placeHost(video.getBoundingClientRect());
     const $ = selector => root.querySelector(selector);
     const state = { video, host, root, enabled: false, generation: 0, cache: new Map(), inflight: 0,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "", source: "",
@@ -204,9 +209,12 @@
       if (!video.isConnected) { stop(); host.remove(); players.delete(video); return; }
       const rect = video.getBoundingClientRect();
       const full = document.fullscreenElement;
-      host.style.display = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video ? 'block' : 'none';
-      host.style.width = `${Math.max(0, rect.width)}px`;
-      placeHost(rect);
+      const showPanel = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video;
+      host.style.display = showPanel ? "block" : "none";
+      if (showPanel) {
+        host.style.width = `${rect.width}px`;
+        placeHost(rect);
+      }
       updateTracks();
       if (!state.enabled) return;
       const text = sourceText();
@@ -304,7 +312,9 @@
   });
   globalThis.MAS_video = { installed: true, open() {
     scan();
-    const video = [...players.keys()].sort((a, b) => Number(a.paused) - Number(b.paused) || b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
+    const video = [...players.keys()]
+      .filter(video => video.isConnected && video.clientWidth >= 200 && video.clientHeight >= 100)
+      .sort((a, b) => Number(a.paused) - Number(b.paused) || b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
     if (!video) return false;
     players.get(video).tick();
     globalThis.MAS_reader?.focus(players.get(video).host);
