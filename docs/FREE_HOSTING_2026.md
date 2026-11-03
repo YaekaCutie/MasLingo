@@ -4,6 +4,8 @@
 > 没卡走 [deploy/alt-self-host-tunnel/](../deploy/alt-self-host-tunnel/README.md)（自己电脑 + Tailscale Funnel）。
 > 下面是逐个官方页面的核对过程与出处，用作这个结论的依据。
 # Free, card-free hosting for a persistent FastAPI + CPU-PyTorch service
+
+> Historical research snapshot: provider offers, prices, eligibility and terms may change. Recheck the linked official sources before choosing a deployment; see [README](../README.md) for current local setup.
 **Date all sources checked: 2026-10-04.** Every claim below is from the vendor page linked next to it. Items I could not confirm on an official page are marked **NOT VERIFIED**.
 
 ## Target workload

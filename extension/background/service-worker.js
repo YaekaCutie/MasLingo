@@ -401,6 +401,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "translationAppId", "targetLanguage", "translationStrength",
           "translationGlossary",
         ]);
+        applyQuickProvider(cfg, message.provider);
         const provider = resolveProvider(cfg);
         if (!provider) {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
@@ -442,6 +443,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message.text,
           message.context,
           message.word === true,
+          {source:message.source,target:message.target,provider:message.provider},
         ));
       } catch (error) {
         sendResponse({ ok: false, reason: String(error?.message || error) });
@@ -1009,6 +1011,17 @@ async function runTranslation(texts, cfg, overrides = {}) {
   return translations;
 }
 
+// Context controls can select registered providers, never arbitrary endpoints.
+function applyQuickProvider(cfg, id) {
+  if(!id || id===globalThis.MAS_providers.resolveProviderId(cfg))return;
+  const provider=globalThis.MAS_providers.byId(id);
+  if(!provider || provider.id==='none')throw new Error('无效的翻译来源');
+  cfg.translationProvider=id;cfg.translationMode=effectiveMode(provider);
+  cfg.translationEndpoint=provider.endpoint || '';
+  cfg.translationModel='';cfg.translationModelProvider=id;
+}
+
+
 /**
  * Answer a selection lookup.
  *
@@ -1020,7 +1033,8 @@ async function runTranslation(texts, cfg, overrides = {}) {
  * sentence. Non-AI providers cannot use this feature, including requests from
  * a page that has not yet received the provider-change event.
  */
-async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
+
+async function lookupSelection(rawText, rawContext, wantsDictionary = false, options = {}) {
   const text = String(rawText || "").replace(/\s+/g, " ").trim().slice(0, 200);
   const context = String(rawContext || "").replace(/\s+/g, " ").trim().slice(0, 600);
   if (!text) throw new Error("没有选中文本");
@@ -1031,6 +1045,7 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
     "translationAppId", "targetLanguage", "translationStrength",
     "translationGlossary",
   ]);
+  applyQuickProvider(cfg, options.provider);
   const provider = resolveProvider(cfg);
   if (!provider) throw new Error("尚未选择翻译来源");
 
@@ -1038,11 +1053,12 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false) {
   if (!registry.isChatProvider(provider)) {
     throw new Error("划词词典仅支持 AI 翻译，请切换到 DeepSeek 等 AI 来源");
   }
-  const targetName = cfg.targetLanguage || "简体中文";
+  const targetName = options.target || cfg.targetLanguage || "简体中文";
   const targetLabel = registry.languageByName(targetName)?.name || targetName;
   const overrides = {
-    source: registry.sourceForLanguage(provider, registry.autoSource),
-    sourceName: "自动识别",
+    source: registry.sourceForLanguage(provider, options.source || registry.autoSource),
+    sourceName: options.source || "自动识别",
+    sourceLocked: Boolean(registry.languageBase(options.source)),
     target: registry.targetForLanguage(provider, targetName),
   };
   const common = providerRequestCommon(provider, cfg, overrides);

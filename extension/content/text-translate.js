@@ -33,6 +33,7 @@
   let pointer = { x: 0, y: 0 };
   let language = "简体中文";
   let displayMode = "bilingual";
+  let defaultProvider = "deepseek";
   let hoverBlock = null;
   let showTimer = null;
   let hideTimer = null;
@@ -51,7 +52,7 @@
 
   function isOwnUi(node) {
     const element = node?.nodeType === 1 ? node : node?.parentElement;
-    return Boolean(element?.closest?.(
+    return Boolean(globalThis.MAS_quick?.isOwn(element)) || Boolean(element?.closest?.(
       "[data-maslingo-textbox], [data-maslingo-video], #maslingo-panel, #maslingo-selection-popup, " +
       "#maslingo-layer, .maslingo-overlay-text-canvas, [data-maslingo-cover], " +
       ".maslingo-adjacent-translation, .maslingo-caption-source",
@@ -227,6 +228,13 @@
     fitSelect(sourceSelect);
     fitSelect(select);
 
+    sourceSelect.dataset.quickLabel = '原文'; select.dataset.quickLabel = '译文';
+    const providerSelect = document.createElement('select'); providerSelect.className='provider';providerSelect.dataset.quickLabel='来源';providerSelect.setAttribute('aria-label','翻译来源');
+    for(const item of globalThis.MAS_providers.list)if(item.id!=='none')providerSelect.append(new Option(item.label,item.id));
+    providerSelect.value=defaultProvider;
+    const displaySelect=document.createElement('select');displaySelect.className='display-mode';displaySelect.setAttribute('aria-label','当前段落显示方式');
+    for(const [value,label] of [['bilingual','双语对照'],['translated','覆盖译文'],['source','只看原文']])displaySelect.append(new Option(label,value));
+    shadow.querySelector('.head').append(providerSelect,displaySelect);
     const box = {
       host,
       card,
@@ -234,6 +242,8 @@
       select,
       sourceSelect,
       coverButton,
+      providerSelect, displaySelect,
+      localDisplayMode: null,
       modeNote: shadow.querySelector(".mode-note"),
       paragraph: null,
       translation: "",
@@ -399,7 +409,17 @@
       invalidate(box);
       enqueue(box);
     });
-    coverButton.addEventListener("click", () => box.toggleCover());
+    function chooseDisplay(mode) {
+      box.localDisplayMode=mode;
+      if(mode!=='translated' && box.covered)box.toggleCover();
+      if(mode==='translated' && box.translated && !box.covered)box.toggleCover();
+      if(box.automatic)applyAutoDisplay(box);
+      displaySelect.value=mode;
+      globalThis.MAS_quick?.refresh(box);
+    }
+    displaySelect.onchange=()=>chooseDisplay(displaySelect.value);
+    providerSelect.onchange=()=>{if(box.covered)box.toggleCover();invalidate(box);enqueue(box);};
+    coverButton.addEventListener("click", () => chooseDisplay(box.covered?'bilingual':'translated'));
     toggle.addEventListener("click", () => box.toggleCollapsed());
     pin.addEventListener("click", () => box.setPinned(!box.pinned));
     retry.addEventListener("click", () => enqueue(box));
@@ -558,6 +578,7 @@
   function discard(box) {
     invalidate(box);
     globalThis.MAS_reader?.remove(box.host.dataset.readerId);
+    globalThis.MAS_quick?.hide(box);
     box.host.remove();
     boxes.delete(box.paragraph);
   }
@@ -639,19 +660,31 @@
   }
 
   function keyFor(box) {
-    return JSON.stringify([revision, box.paragraphText, box.getSource(), box.getLanguage()]);
+    return JSON.stringify([revision, box.paragraphText, box.getSource(), box.getLanguage(), box.providerSelect.value]);
+  }
+
+  function showQuick(box) {
+    box.displaySelect.value=box.localDisplayMode || (box.automatic ? displayMode : 'bilingual');
+    box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
+    const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
+    const anchorRect=()=>{const node=box.coverSpan || box.nodes.at(-1);if(!node?.isConnected)return box.paragraph.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(node);return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();};
+    globalThis.MAS_quick?.show({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
+      rect:anchorRect, badgeRect:anchorRect,
+      controls:[box.sourceSelect,box.select,box.providerSelect,box.displaySelect,box.coverButton],
+      preview:()=> box.automatic ? '' : (box.localDisplayMode || (box.automatic ? displayMode : 'bilingual'))==='source' || box.covered ? '' : box.text.textContent,
+    });
   }
 
   function mountReader(box) {
     globalThis.MAS_reader?.mount(box.host, {
       kind: '网页段落', source: () => box.paragraphText, element: box.paragraph,
-      dismiss() { box.dismissed = true; hideBox(box, true); },
+      dismiss() { if(box.covered)box.toggleCover();box.dismissed = true;hideBox(box, true);globalThis.MAS_quick?.hide(box); },
     });
   }
 
   function reveal(box) {
     box.visible = true;
-    if (!box.automatic && globalThis.MAS_reader) { mountReader(box); return; }
+    if (!box.automatic && globalThis.MAS_reader) { mountReader(box); showQuick(box); return; }
     box.host.style.setProperty("display", "block", "important");
     schedulePosition();
   }
@@ -664,14 +697,15 @@
 
   function applyAutoDisplay(box) {
     if (!box.automatic) return;
+    const mode=box.localDisplayMode || displayMode;
     box.modeNote.hidden = true;
-    if (displayMode !== "translated" && box.covered) box.toggleCover();
-    if (displayMode === "source" || box.dismissed ||
+    if (mode !== "translated" && box.covered) box.toggleCover();
+    if (mode === "source" || box.dismissed ||
         (box.sameLanguage && !box.manualSource && !box.manualTarget)) {
       hideBox(box, true);
       return;
     }
-    if (displayMode === "translated" && box.translated && box.translation) {
+    if (mode === "translated" && box.translated && box.translation) {
       if (box.canCover && !box.covered) box.toggleCover();
       if (box.covered) {
         hideBox(box, true);
@@ -684,7 +718,7 @@
 
   function enqueue(box) {
     if (!enabled || box.loading || !box.paragraphText || box.dismissed) return;
-    if (box.automatic && displayMode === "source") return;
+    if (box.automatic && (box.localDisplayMode || displayMode) === "source") return;
     if ((box.translated || box.sameLanguage) && box.key === keyFor(box)) return;
     box.requestId++;
     box.key = keyFor(box);
@@ -711,10 +745,10 @@
       let chars = 0;
       for (const box of [first, ...queue]) {
         if (group.includes(box) || !queue.has(box)) continue;
-        if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage()) continue;
+        if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage() || box.providerSelect.value !== first.providerSelect.value) continue;
         if (group.length >= 4 || (group.length && chars + box.paragraphText.length > 7000)) continue;
         queue.delete(box);
-        if (box.automatic && displayMode === "source") { box.loading = false; continue; }
+        if (box.automatic && (box.localDisplayMode || displayMode) === "source") { box.loading = false; continue; }
         if (!box.paragraph.isConnected || box.dismissed) { box.loading = false; continue; }
         group.push(box);
         chars += box.paragraphText.length;
@@ -727,6 +761,7 @@
         texts: group.map((box) => box.paragraphText),
         source: first.getSource(),
         target: first.getLanguage(),
+        provider: first.providerSelect.value,
       })).then((response) => {
         requests.forEach(({ box, id, key }, index) => {
           if (!current(box, id, key)) return;
@@ -739,7 +774,7 @@
             return;
           }
           const text = String(response.translations?.[index] ?? "").trim();
-          if (text) { box.setText(text); applyAutoDisplay(box); }
+          if (text) { box.setText(text); applyAutoDisplay(box); if(!box.automatic && box.localDisplayMode==='translated' && !box.covered)box.toggleCover(); }
           else box.setError("服务未返回该段译文，请重试");
         });
       }).catch((error) => {
@@ -800,24 +835,31 @@
   }
 
   function onPointerOver(event) {
-    if (!hoverEnabled || event.buttons || !window.getSelection()?.isCollapsed) return;
+    if ((!hoverEnabled && !autoEnabled) || event.buttons || !window.getSelection()?.isCollapsed) return;
     const target = event.composedPath()[0];
+    if(globalThis.MAS_quick?.isOwn(target))return;
+    const cover=target?.closest?.('[data-maslingo-cover]');
+    if(cover){const box=boxes.get(cover.parentElement);if(box)showQuick(box);return;}
     pointer = { x: event.clientX, y: event.clientY };
     if (ownHost(target)) { clearTimeout(hideTimer); return; }
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="textbox"]')) return;
     const unit = findBlock(target);
     if (!unit || unit.element === hoverBlock) return;
+    if(!hoverEnabled && !boxes.has(unit.element))return;
     for (const box of boxes.values()) if (box.paragraph !== unit.element) hideBox(box);
     hoverBlock = unit.element;
     clearTimeout(showTimer);
     clearTimeout(hideTimer);
     showTimer = setTimeout(() => {
-      if (hoverEnabled && hoverBlock === unit.element && unit.element.isConnected && window.getSelection()?.isCollapsed) showBox(unitFor(unit.element) || unit);
+      if ((hoverEnabled || autoEnabled) && hoverBlock === unit.element && unit.element.isConnected && window.getSelection()?.isCollapsed) {
+        if(hoverEnabled)showBox(unitFor(unit.element) || unit);
+        else {const box=boxes.get(unit.element);if(box)showQuick(box);}
+      }
     }, HOVER_DELAY);
   }
 
   function onPointerOut(event) {
-    if (!hoverEnabled || !hoverBlock) return;
+    if ((!hoverEnabled && !autoEnabled) || !hoverBlock) return;
     const box = boxes.get(hoverBlock);
     const to = event.relatedTarget;
     if (to && (hoverBlock.contains(to) || ownHost(to) === box?.host)) return;
@@ -828,11 +870,11 @@
   }
 
   function onFocus(event) {
-    if (!hoverEnabled) return;
+    if (!hoverEnabled && !autoEnabled) return;
     const target = event.composedPath()[0];
     if (ownHost(target) || target?.matches?.('input, textarea, select, [contenteditable]')) return;
     const unit = findBlock(target);
-    if (unit) showBox(unit);
+    if (unit) {if(hoverEnabled)showBox(unit);else if(boxes.has(unit.element))showQuick(boxes.get(unit.element));}
   }
 
   function observeRoot(root) {
@@ -969,6 +1011,7 @@
     const oldDisplayMode = displayMode;
     displayMode = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
     const providerId = globalThis.MAS_providers.resolveProviderId(cfg);
+    defaultProvider = providerId;
     const configured = providerId !== "none";
     const oldAuto = autoEnabled;
     const oldHover = hoverEnabled;

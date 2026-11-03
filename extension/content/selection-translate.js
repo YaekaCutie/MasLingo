@@ -37,6 +37,7 @@
   let timer = null;
   let seq = 0;
   let targetLanguage = "简体中文";
+  let defaultProvider = "deepseek";
   let inputAutoReplace = true;
   let applyingEdit = false;
   const composing = new WeakSet();
@@ -47,6 +48,7 @@
   function elementInOwnUi(node) {
     const element = node?.nodeType === 1 ? node : node?.parentElement;
     if (!element?.closest) return false;
+    if(globalThis.MAS_quick?.isOwn(element))return true;
     if (element.closest(OWN_UI)) return true;
     // A node inside our shadow root has a parent chain that ends at the shadow
     // boundary; `closest` cannot cross it on its own.
@@ -62,6 +64,8 @@
   }
 
   function closePopup() {
+    globalThis.MAS_quick?.hide(currentJob);
+    restoreSelection(currentJob);
     seq += 1;
     clearTimeout(timer);
     timer = null;
@@ -99,11 +103,78 @@
     body = shadow.querySelector(".body");
     foot = shadow.querySelector(".foot");
     document.documentElement.appendChild(host);
+    addQuickControls(currentJob);
     globalThis.MAS_reader?.mount(host, {
       kind: currentJob?.input ? '输入框译文' : currentJob?.isWord ? '划词词典' : '划词翻译',
       source: currentJob?.text, element: currentJob?.input?.control || currentJob?.element,
       dismiss: closePopup,
     });
+  }
+
+  function restorable(job) {
+    const r=job?.textRange;
+    return r && r.node.isConnected && r.node.data===r.value && !r.node.parentElement?.closest('a,button,code,pre,[contenteditable],math,[role="math"]');
+  }
+  function restoreSelection(job) {
+    const saved=job?.covered;
+    if(!saved)return;
+    const {parent,node,prefix,span,suffix}=saved;
+    // A site's own update wins over a parked selection.
+    if(prefix.parentNode===parent && prefix.nextSibling===span && span.nextSibling===suffix && prefix.data===saved.before && suffix.data===saved.after && span.textContent===saved.translation){
+      parent.replaceChild(node,prefix);span.remove();suffix.remove();
+    }
+    job.covered=null;
+  }
+  function coverSelection(job) {
+    if(job.covered || !job.translation || !restorable(job))return;
+    const {node,start,end,value}=job.textRange,parent=node.parentNode;
+    const prefix=document.createTextNode(value.slice(0,start)),suffix=document.createTextNode(value.slice(end)),span=document.createElement('span');
+    span.dataset.maslingoCover='1';span.textContent=job.translation;
+    parent.replaceChild(prefix,node);prefix.after(span,suffix);
+    job.covered={parent,node,prefix,span,suffix,before:prefix.data,after:suffix.data,translation:job.translation};
+  }
+  function updateQuick(job) {
+    const q=job.controls;if(!q)return;
+    if(job.mode==='translated' && job.translation)coverSelection(job);
+    q.cover.disabled=!job.covered && (!restorable(job) || !job.translation);
+    q.cover.textContent=job.covered?'还原原文':'覆盖原文';q.cover.setAttribute('aria-pressed',String(!!job.covered));
+    q.mode.querySelector('[value=translated]').disabled=!job.covered && !restorable(job);
+    q.mode.value=job.mode;
+    globalThis.MAS_quick?.refresh(job);
+  }
+  function addQuickControls(job) {
+    const registry=globalThis.MAS_providers;
+    function select(className,label,values,value){
+      const node=make('select',className);node.setAttribute('aria-label',label);node.dataset.quickLabel=label;
+      for(const [id,text] of values)node.append(new Option(text,id));
+      if(![...node.options].some(o=>o.value===value))node.append(new Option(value,value));
+      node.value=value;shadow.querySelector('.head').append(node);return node;
+    }
+    const names=registry.languages.map(l=>[l.name,l.name]);
+    const source=select('src','原文',[['自动识别','自动识别'],...names],job.source);
+    const target=select('lang','译文',names,job.target);
+    const provider=select('provider','来源',registry.list.filter(p=>p.id!=='none').map(p=>[p.id,p.label]),job.provider);
+    const mode=select('display-mode','显示',[['bilingual','双语对照'],['translated','覆盖译文'],['source','只看原文']],job.mode);
+    const cover=make('button','cover','覆盖原文');cover.type='button';shadow.querySelector('.head').append(cover);
+    job.controls={source,target,provider,mode,cover};
+    function retranslate(){
+      restoreSelection(job);
+      if(job.input && job.undoInput){job.undoInput();job.undoInput=null;if(job.input.control.value===job.input.value){job.input.control.focus({preventScroll:true});job.input.control.setSelectionRange(job.input.start,job.input.end);}}
+      job.source=source.value;job.target=target.value;job.provider=provider.value;job.translation='';
+      const id=++seq;renderLoading(job);updateQuick(job);requestLookup(job,id);
+    }
+    for(const node of [source,target,provider])node.onchange=retranslate;
+    mode.onchange=()=>{job.mode=mode.value;if(job.mode!=='translated')restoreSelection(job);updateQuick(job);};
+    cover.onclick=()=>{job.mode=job.covered?'bilingual':'translated';if(job.mode==='bilingual')restoreSelection(job);updateQuick(job);};
+    updateQuick(job);
+    const anchor=job.element?.closest('p,h1,h2,h3,h4,h5,h6,blockquote,figcaption,td,th,li,dd,dt') || job.element;
+    const inline=anchor && !anchor.matches('input,textarea,a,button,summary,[contenteditable]') && ['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','FIGCAPTION','TD','TH','LI','DD','DT'].includes(anchor.tagName);
+    job.quickOptions={owner:job,selection:true,element:anchor,inline,observe:shadow,
+      rect:()=>{if(job.covered)return job.covered.span.getBoundingClientRect();if(job.textRange?.node.isConnected && job.textRange.node.data===job.textRange.value){const range=document.createRange();range.setStart(job.textRange.node,job.textRange.start);range.setEnd(job.textRange.node,job.textRange.end);return [...range.getClientRects()].at(-1) || range.getBoundingClientRect();}return job.range?.getBoundingClientRect() || job.element.getBoundingClientRect();},
+      controls:[source,target,provider,mode,cover],
+      preview:()=>job.mode==='source' || job.covered ? '' : job.translation || body?.querySelector('.error-text,.loading,.notice')?.textContent || '翻译中…',
+    };
+    globalThis.MAS_quick?.show(job.quickOptions);
   }
 
   function renderLoading(job) {
@@ -136,6 +207,8 @@
 
   function renderDictionary(job, result) {
     const entry = result.entry || {};
+    job.translation=entry.senses?.[Math.max(0,(entry.contextSense || 1)-1)]?.meaning || "";
+    updateQuick(job);
     meta.textContent = ["词典", result.target || ""].filter(Boolean).join(" · ");
     const wrap = make("div", "entry");
     const wordline = make("div", "wordline");
@@ -182,6 +255,8 @@
   }
 
   function renderText(job, result) {
+    job.translation=result.translation || "";
+    updateQuick(job);
     meta.textContent = ["翻译", result.target || ""].filter(Boolean).join(" · ");
     const wrap = make("div", "plain");
     wrap.append(make("p", "quote", job.text));
@@ -272,6 +347,7 @@
       undo.disabled = true;
     });
     wrap.append(undo);
+    job.undoInput=()=>undo.click();
   }
 
   function renderNotice(job, result = {}) {
@@ -284,7 +360,7 @@
   }
 
   function cacheKey(job) {
-    return `${job.input ? "input" : job.isWord ? "word" : "text"}|${job.text}|${job.context}`;
+    return `${job.input ? "input" : job.isWord ? "word" : "text"}|${job.text}|${job.context}|${job.source}|${job.target}|${job.provider}`;
   }
 
   function remember(key, result) {
@@ -309,17 +385,19 @@
     }
     let result;
     try {
-      if (job.input) {
+      const chat=globalThis.MAS_providers.isChatProvider(globalThis.MAS_providers.byId(job.provider));
+      if (job.input || !chat) {
         const response = await chrome.runtime.sendMessage({
-          type: "TRANSLATE_TEXT_BLOCKS", texts: [job.text], source: "自动识别", target: targetLanguage,
+          type: "TRANSLATE_TEXT_BLOCKS", texts: [job.text], source: job.source, target: job.target, provider: job.provider,
         });
         result = response?.ok ? {
           ok: true, kind: response.skipped?.[0] ? "notice" : "text",
-          translation: response.translations?.[0], target: targetLanguage,
+          translation: response.translations?.[0], target: job.target,
         } : response;
       } else {
         result = await chrome.runtime.sendMessage({
           type: "LOOKUP_WORD", text: job.text, context: job.context, word: job.isWord,
+          source:job.source,target:job.target,provider:job.provider,
         });
       }
     } catch (error) {
@@ -401,7 +479,7 @@
     if (currentJob?.input?.control === control && currentJob.input.value === value &&
       currentJob.input.start === start && currentJob.input.end === end) return;
     const isWord = !input && WORD_PATTERN.test(text) && !/\s/u.test(text);
-    const job = { text, context, isWord, input };
+    const job = { text, context, isWord, input, element:control };
     if (!isWord && globalThis.MAS_providers?.likelySameLanguage?.(text, targetLanguage, context)) {
       openNotice(job, rect, `原文已是${targetLanguage}，无需翻译。`);
       return;
@@ -432,6 +510,8 @@
     const job = {
       text,
       context,
+      range: range.cloneRange(),
+      textRange: range.startContainer===range.endContainer && range.startContainer.nodeType===Node.TEXT_NODE ? {node:range.startContainer,start:range.startOffset,end:range.endOffset,value:range.startContainer.data} : null,
       element: range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement,
       isWord,
     };
@@ -445,6 +525,7 @@
   function open(job, rect, { lookup = true } = {}) {
     closePopup();
     const id = ++seq;
+    job.source=job.source || "自动识别";job.target=job.target || targetLanguage;job.provider=job.provider || defaultProvider;job.mode="bilingual";
     currentJob = job;
     createPopup();
     if (lookup) renderLoading(job);
@@ -468,6 +549,9 @@
     timer = setTimeout(() => inspectControl(control), 90);
   }
 
+  document.addEventListener('pointerover', event => {
+    if(currentJob?.covered?.span.contains(event.composedPath()[0]))globalThis.MAS_quick?.show(currentJob.quickOptions);
+  },true);
   document.addEventListener("mouseup", (event) => {
     if (elementInOwnUi(event.target)) return;
     if (isTextControl(event.target)) {
@@ -515,6 +599,7 @@
     const registry = globalThis.MAS_providers;
     const provider = registry.byId(registry.resolveProviderId(cfg));
     targetLanguage = cfg.targetLanguage || "简体中文";
+    defaultProvider = provider.id;
     inputAutoReplace = cfg.inputAutoReplace !== false;
     enabled = cfg.selectionTranslate !== false && registry.isChatProvider(provider);
     if (!enabled) closePopup();

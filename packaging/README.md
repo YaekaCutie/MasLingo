@@ -1,5 +1,7 @@
 # MasLingo 桌面版打包与安装
 
+> 此文档记录已有 Windows 安装器设计与历史验证，不代表当前源码已重新打包或发布。当前源码入口及阅读侧栏说明见 [项目 README](../README.md)；Windows 真机与安装包验收仍需重新执行。
+
 面向普通 Windows 用户：下载一个 `MasLingo-Setup.exe`，装完即用，不需要 Python、终端、虚拟环境，也不需要每次手动启动后端。
 
 ---
@@ -91,7 +93,7 @@ build/
 
 %LOCALAPPDATA%\MasLingo\                 用户数据（卸载时询问是否保留）
   logs\engine.log
-  settings.json                          含翻译 API Key
+  settings.json                          引擎设置（扩展翻译凭据保存在浏览器扩展存储中）
   engine-stopped.flag
   shutdown.request
 ```

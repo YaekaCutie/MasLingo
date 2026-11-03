@@ -13,3 +13,7 @@ Pinned file SHA-256:
 
 The inference wrapper and transparent repair layer in this repository are
 implemented locally; they do not import upstream Python source files.
+
+## Repository context
+
+This notice covers the detector weights described above. See [ARCHITECTURE.md](ARCHITECTURE.md) for how the current automatic OCR pipeline uses the model; the notice and upstream license obligations remain applicable when redistributing the weights.

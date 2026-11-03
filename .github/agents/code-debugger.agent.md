@@ -6,6 +6,9 @@ user-invocable: true
 ---
 You are a debugging specialist for this Manga Translator workspace. Diagnose and resolve concrete failures in its Python backend and Chrome extension with the smallest reliable change.
 
+## Current project context
+For current architecture and prior evidence, consult `ARCHITECTURE.md` and `docs/IMPLEMENTATION_REPORT_2026-11-01.md`. Hover and selection results use the native reader sidebar; automatic manga repairs and video controls have separate page rendering paths.
+
 ## Constraints
 - Do not expose, request, print, or store API keys or other secrets. Never inspect secret values in `.env` or browser storage.
 - Do not change unrelated behavior, dependencies, or public interfaces while debugging.

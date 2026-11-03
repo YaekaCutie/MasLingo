@@ -1,5 +1,7 @@
 # Chrome 应用商店上架待办
 
+> 这是待核实的历史清单，不是当前商店政策合规结论。当前扩展还使用 `sidePanel` 权限、视频字幕和可选语音识别；提交前须重新核对官方政策、权限说明、隐私告知和真实部署配置。
+
 > 结论先说：**代码还没到能提交的状态**。下面 P0 是"不做就一定被拒或根本提交不了"，P1 是"能过审但大概率被拖审/反复驳回"，P2 是需要你本人准备的素材和账号事项。
 >
 > 依据：Chrome Web Store 官方政策与文档（developer.chrome.com / Chrome Web Store Program Policies），检索于 2026 年。逐条都附了出处链接。
@@ -72,7 +74,7 @@
 - [ ] Google 翻译（仅在用户显式启用 `free-translate` 时）
 - [ ] 用户自己配置的 OpenAI-compatible 接口（域名由用户决定）
 - [ ] 划词翻译：用户选中的文字与附近约 100 字上下文会发给当前翻译来源；关闭「划词翻译」后不发送
-- [ ] 悬停翻译：鼠标停留的网页段落会发给当前翻译来源；移开或关闭开关后不再发送
+- [ ] 悬停翻译：鼠标停留的网页段落会发给当前翻译来源；关闭开关后不再发起新的请求，已发出的请求可能完成
 - [ ] 写明：截图不写入服务器日志、不用于训练、不做广告用途
 - [ ] 加入 Limited Use 声明原文：*"The use of information received from Google APIs will adhere to the Chrome Web Store User Data Policy, including the Limited Use requirements."*
 - [ ] 托管到一个公开 URL（GitHub Pages 免费且够用）

@@ -10,14 +10,15 @@ const cfg = {translationProvider:"custom", translationMode:"openai-compatible",
   translationEndpoint:"https://translator.example/v1/chat/completions", translationModel:"fixture",
   targetLanguage:"简体中文"};
 const requests = [];
+const requestDetails=[];
 let handler, onConnect;
 const scope = {URL, URLSearchParams, TextEncoder, crypto, AbortController, setTimeout, clearTimeout, console,
   chrome:{tabs:{onRemoved:{addListener(){}},onUpdated:{addListener(){}}},runtime:{onMessage:{addListener(fn){handler=fn;}},onConnect:{addListener(fn){onConnect=fn;}}},
-    storage:{local:{get:async()=>cfg}}},
+    storage:{local:{get:async()=>({...cfg})}}},
   fetch:async (_url, init) => {
     const body=JSON.parse(init.body);const content=body.messages[0].content;
     const texts=JSON.parse(content.slice(content.lastIndexOf("输入：")+3).trim());
-    requests.push(texts);
+    requests.push(texts);requestDetails.push({url:_url,prompt:content});
     return {ok:true,status:200,text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(texts.map(t=>`译:${t}`))}}]})};
   }};
 vm.createContext(scope);
@@ -48,4 +49,9 @@ portListener({type:"TRANSLATE_TEXTS",texts:["用事"],requestId:"manual"});
 const manual=await manualResult;
 assert.equal(manual.result.items[0].skipped,false);
 assert.equal(manual.result.items[0].translated,"译:用事");
+const quick=await send({type:'TRANSLATE_TEXT_BLOCKS',texts:['用事'],source:'日本語',target:'English',provider:'openai'});
+assert.equal(quick.ok,true);
+assert.ok(requestDetails.at(-1).url.startsWith('https://api.openai.com/'),'provider override uses the registered endpoint');
+assert.ok(requestDetails.at(-1).prompt.includes('English'),'target override reaches the real adapter prompt');
+assert.equal(cfg.translationProvider,'custom','context change leaves saved defaults intact');
 console.log("Japanese OCR translation passed: kanji-only manga/manual text, explicit source, same-language web text.");

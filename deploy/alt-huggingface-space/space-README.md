@@ -11,14 +11,15 @@ pinned: false
 # MasLingo OCR backend
 
 Shared OCR backend for the [MasLingo](https://github.com/YaekaCutie/MasLingo)
-browser extension. It runs MangaOCR on CPU and exposes a small FastAPI surface:
+browser extension. It runs MangaOCR and the comic text detector on CPU. This template describes an optional remote deployment; verify the current repository configuration and hosting terms before publishing. It exposes a small FastAPI surface:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Liveness plus current OCR concurrency (always exempt from rate limiting) |
 | POST | `/api/recognize-image` | OCR one cropped region |
 | POST | `/api/recognize-page` | Detect text regions in a screenshot, then OCR each |
-| POST | `/api/translate-text` | `none` (echo) / `free-translate` / `openai-compatible` |
+| POST | `/api/translate-text` | Configured backend translation modes |
+| POST | `/api/transcribe-audio` | Optional speech recognition when explicitly enabled and dependencies are installed |
 
 ## Privacy
 

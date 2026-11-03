@@ -88,6 +88,7 @@ const CONTENT_SCRIPTS = [
   "config.js",
   "translation/providers.js",
   "content/reader-bridge.js",
+  "content/quick-toolbar.js",
   "content/overlay.js",
   "content/auto.js",
   "content/panel.js",

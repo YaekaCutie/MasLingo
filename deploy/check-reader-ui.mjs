@@ -150,7 +150,17 @@ async function createPage(kind) {
     if (message.type === "TRANSLATE_TEXT_BLOCKS")
       return {
         ok: true,
-        translations: message.texts.map((t) => "译文：" + t),
+        translations: message.texts.map(
+          (t) =>
+            ({
+              "Proteins perform diverse functions in living organisms.":
+                "蛋白质在生物体中承担多种功能。",
+              protein: "蛋白质",
+              Hello: "你好",
+              "Hello everyone.": "大家好。",
+              "A failed translation can be retried.": "失败的翻译可以重试。",
+            })[t] || t,
+        ),
         skipped: message.texts.map(() => false),
       };
     if (message.type === "LOOKUP_WORD")
@@ -158,6 +168,7 @@ async function createPage(kind) {
         ? {
             ok: true,
             kind: "dictionary",
+            target: message.target,
             entry: {
               word: message.text,
               reading: "protein",
@@ -255,6 +266,7 @@ try {
     "config.js",
     "translation/providers.js",
     "content/reader-bridge.js",
+    "content/quick-toolbar.js",
     "content/text-translate.js",
     "content/selection-translate.js",
     "content/video-translate.js",
@@ -274,7 +286,7 @@ try {
   );
   await source.hover("#source");
   await reader.waitForFunction(() =>
-    document.querySelector("#results").textContent.includes("译文：Proteins"),
+    document.querySelector("#results").textContent.includes("蛋白质在生物体"),
   );
   assert.equal(
     await source.$eval(
@@ -287,7 +299,7 @@ try {
   await wait(600);
   assert.ok(
     await reader.$eval("#results", (e) =>
-      e.textContent.includes("译文：Proteins"),
+      e.textContent.includes("蛋白质在生物体"),
     ),
     "result persists when leaving source",
   );
@@ -331,6 +343,178 @@ try {
     document.querySelector("#results").textContent.includes("蛋白质"),
   );
   await screenshot(reader, "reader-dictionary.png");
+  // Context controls default to a small, out-of-flow trigger.
+  assert.equal(
+    await source.$eval("[data-maslingo-quick]", (e) => e.dataset.expanded),
+    "false",
+  );
+  assert.ok(
+    await source.$eval(
+      "[data-maslingo-quick]",
+      (e) => e.getBoundingClientRect().height <= 24,
+    ),
+  );
+  assert.ok(
+    await source.evaluate(() => {
+      const r = document.createRange();
+      r.selectNodeContents(document.querySelector("#word"));
+      const text = [...r.getClientRects()].at(-1),
+        button = document
+          .querySelector("[data-maslingo-quick]")
+          .getBoundingClientRect();
+      return button.left >= text.right || button.right <= text.left;
+    }),
+    "collapsed selection button avoids unselected text",
+  );
+  await screenshot(source, "selection-collapsed.png");
+  const expandQuick = async () => {
+    await source.bringToFront();
+    if (
+      await source.$eval(
+        "[data-maslingo-quick]",
+        (e) => e.dataset.expanded === "false",
+      )
+    ) {
+      const handle = await source.evaluateHandle(() =>
+        document
+          .querySelector("[data-maslingo-quick]")
+          .shadowRoot.querySelector(".mini"),
+      );
+      await handle.asElement().click();
+    }
+  };
+  // Context controls work on the saved selection, without opening settings.
+  const quickSelect = async (selector, value) => {
+    await expandQuick();
+    await source.evaluate(
+      ({ selector, value }) => {
+        const e = document
+          .querySelector("[data-maslingo-quick]")
+          .shadowRoot.querySelector(selector);
+        e.value = value;
+        e.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      { selector, value },
+    );
+  };
+  const quickClick = async (selector) => {
+    await expandQuick();
+    const h = await source.evaluateHandle(
+      (selector) =>
+        document
+          .querySelector("[data-maslingo-quick]")
+          .shadowRoot.querySelector(selector),
+      selector,
+    );
+    await h.asElement().click();
+  };
+  await source.waitForSelector("[data-maslingo-quick]");
+  const originalWord = await source.$eval("#word", (e) => e.innerHTML);
+  await quickClick(".cover");
+  await source.waitForFunction(
+    () =>
+      document.querySelector("#word [data-maslingo-cover]")?.textContent ===
+      "蛋白质",
+  );
+  await source.evaluate(() => MAS_quick.hide());
+  await source.hover("#word [data-maslingo-cover]");
+  await source.waitForSelector("[data-maslingo-quick]");
+  await quickClick(".cover");
+  assert.equal(
+    await source.$eval("#word", (e) => e.innerHTML),
+    originalWord,
+    "selection restore preserves exact source markup",
+  );
+  await quickSelect(".lang", "English");
+  await reader.waitForFunction(() =>
+    document.querySelector("#results .meta")?.textContent.includes("English"),
+  );
+  assert.ok(
+    calls.some((c) => c.type === "LOOKUP_WORD" && c.target === "English"),
+    "selection target reaches the worker",
+  );
+  await quickSelect(".src", "日本語");
+  await wait(150);
+  assert.ok(
+    calls.some((c) => c.type === "LOOKUP_WORD" && c.source === "日本語"),
+    "selection source reaches the worker",
+  );
+  await quickSelect(".provider", "google-free");
+  await reader.waitForFunction(() =>
+    document.querySelector("#results").textContent.includes("蛋白质"),
+  );
+  assert.ok(
+    calls.some(
+      (c) => c.type === "TRANSLATE_TEXT_BLOCKS" && c.provider === "google-free",
+    ),
+    "selection switches to a non-dictionary provider",
+  );
+  await screenshot(source, "selection-context-toolbar.png");
+  await source.evaluate(() => {
+    MAS_selection.close();
+    getSelection().removeAllRanges();
+  });
+  await source.mouse.move(1, 1);
+  await source.hover("#source");
+  await source.waitForSelector("[data-maslingo-quick]");
+  await quickClick(".cover");
+  await source.waitForFunction(() =>
+    document.querySelector("#source [data-maslingo-cover]"),
+  );
+  await quickClick(".cover");
+  assert.equal(
+    await source.$eval("#source", (e) => e.textContent),
+    "Proteins perform diverse functions in living organisms.",
+  );
+  await quickSelect(".lang", "日本語");
+  await wait(150);
+  assert.ok(
+    calls.some(
+      (c) => c.type === "TRANSLATE_TEXT_BLOCKS" && c.target === "日本語",
+    ),
+    "paragraph target applies immediately",
+  );
+  await screenshot(source, "paragraph-context-toolbar.png");
+  assert.ok(
+    await source.evaluate(
+      () =>
+        !document
+          .querySelector("[data-maslingo-quick]")
+          .shadowRoot.querySelector(".preview")
+          .textContent.startsWith("译文："),
+    ),
+  );
+  const nextTop = await source.$eval(
+    "#word",
+    (e) => e.getBoundingClientRect().top,
+  );
+  await quickClick(".close");
+  assert.equal(
+    await source.$eval("[data-maslingo-quick]", (e) => e.dataset.expanded),
+    "false",
+  );
+  assert.ok(
+    (await source.$eval("#word", (e) => e.getBoundingClientRect().top)) <
+      nextTop,
+    "collapsed trigger reserves no row",
+  );
+  await screenshot(source, "paragraph-collapsed.png");
+  await expandQuick();
+  await source.setViewport({ width: 390, height: 844 });
+  await screenshot(source, "context-toolbar-narrow.png");
+  await quickClick(".close");
+  await screenshot(source, "collapsed-narrow.png");
+  await expandQuick();
+  assert.ok(
+    await source.evaluate(
+      () =>
+        document.querySelector("[data-maslingo-quick]").getBoundingClientRect()
+          .right <= innerWidth,
+    ),
+    "toolbar fits narrow viewport",
+  );
+  await source.setViewport({ width: 960, height: 900 });
+  await quickSelect(".lang", "简体中文");
   // A native retry remains usable and receives its result while focused.
   await source.evaluate(() => getSelection().removeAllRanges());
   failTranslation = true;
@@ -360,7 +544,7 @@ try {
   await reader.waitForFunction(() =>
     document
       .querySelector("#results")
-      .textContent.includes("译文：A failed translation"),
+      .textContent.includes("失败的翻译可以重试。"),
   );
   // Input auto replacement and remote undo still operate on the actual control.
   await source.$eval("#input", (e) => {
@@ -369,7 +553,7 @@ try {
     e.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
   await source.waitForFunction(() =>
-    document.querySelector("#input").value.startsWith("译文：Hello"),
+    document.querySelector("#input").value.startsWith("你好"),
   );
   await reader.waitForFunction(() =>
     [...document.querySelectorAll("#results button")].some((b) =>
@@ -450,7 +634,7 @@ try {
     document
       .querySelector("[data-maslingo-video]")
       .shadowRoot.querySelector(".caption")
-      .textContent.includes("译文：Hello everyone."),
+      .textContent.includes("大家好。"),
   );
   await screenshot(source, "video-below-picture.png");
   await source.evaluate(() =>
@@ -466,6 +650,31 @@ try {
     ),
     "",
     "stopping restores source captions",
+  );
+  // Automatic reading exposes contextual controls even with hover disabled.
+  await source.evaluate(() =>
+    chrome.storage.local.set({ hoverTranslate: false, webAutoTranslate: true }),
+  );
+  await source.waitForFunction(() =>
+    [...document.querySelectorAll("[data-maslingo-textbox]")].some(
+      (e) => e.dataset.mode === "auto",
+    ),
+  );
+  await source.bringToFront();
+  await source.mouse.move(1, 1);
+  await source.hover("#source");
+  await source.waitForSelector("[data-maslingo-quick]");
+  assert.ok(
+    await source.evaluate(
+      () =>
+        !!document
+          .querySelector("[data-maslingo-quick]")
+          .shadowRoot.querySelector(".cover"),
+    ),
+    "auto-only reading has local cover control",
+  );
+  await source.evaluate(() =>
+    chrome.storage.local.set({ hoverTranslate: true, webAutoTranslate: false }),
   );
   const options = await createPage("options");
   await options.setViewport({ width: 1100, height: 1000 });
