@@ -714,6 +714,8 @@
   /** Bing's session tokens, refreshed when they go stale. */
   let bingTokens = null;
   const BING_TOKEN_TTL_MS = 25 * 60 * 1000;
+  const BING_TRANSLATOR_PAGE = "https://cn.bing.com/translator";
+  const BING_ORIGINS = new Set(["https://cn.bing.com", "https://www.bing.com"]);
 
   /**
    * Bing's free web translator.
@@ -731,7 +733,7 @@
       fromLang: source, text, to: target, token: tokens.token, key: tokens.key,
     });
     return {
-      url: `https://cn.bing.com/ttranslatev3?isVertical=1&&IG=${tokens.ig}&IID=translator.5023.1`,
+      url: `${tokens.origin}/ttranslatev3?isVertical=1&IG=${tokens.ig}&IID=translator.5023.1`,
       init: {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -743,13 +745,17 @@
   async function bingSession() {
     const now = Date.now();
     if (bingTokens && now - bingTokens.fetchedAt < BING_TOKEN_TTL_MS) return bingTokens;
-    const response = await fetch("https://cn.bing.com/translator", { credentials: "omit" });
+    const response = await fetch(BING_TRANSLATOR_PAGE, { credentials: "omit" });
     if (!response.ok) throw new Error(`必应翻译页面加载失败（${response.status}）`);
+    // The regional page can redirect to www.bing.com. Send the POST directly
+    // to that origin so a second redirect cannot turn it into a GET.
+    const origin = new URL(response.url).origin;
+    if (!BING_ORIGINS.has(origin)) throw new Error("必应翻译页面被重定向到意外的域名，请检查网络后重试。");
     const html = await response.text();
     const ig = (html.match(/IG:"([0-9A-F]+)"/) || [])[1];
     const helper = html.match(/params_AbusePreventionHelper\s*=\s*\[\s*(\d+)\s*,\s*"([^"]+)"/) || [];
     if (!ig || !helper[2]) throw new Error("必应翻译页面格式已变化，请改用其它翻译来源。");
-    bingTokens = { ig, key: helper[1], token: helper[2], fetchedAt: now };
+    bingTokens = { origin, ig, key: helper[1], token: helper[2], fetchedAt: now };
     return bingTokens;
   }
 
@@ -759,6 +765,7 @@
       // 401/429 come back as an object; drop the cache so the next attempt
       // fetches a fresh pair instead of reusing a rejected one.
       bingTokens = null;
+      if (json == null) throw new Error("必应翻译返回了网页或空响应，翻译会话已重置。请重试。");
       const detail = json?.statusCode || json?.message || "必应翻译返回了意外的格式";
       throw new Error(String(detail).slice(0, 80));
     }
@@ -936,7 +943,7 @@
       source: "ja",
       target: "zh-Hans",
       host: "https://cn.bing.com/*",
-      note: "微软必应翻译的公开网页接口，不需要密钥，国内可直连（实测可用）。非正式 API：会话令牌会自动刷新；如遇限流请稍后再试或换用其它来源。",
+      note: "使用微软必应翻译的公开网页接口，无需密钥。若网页接口限流或不可用，请稍后重试或切换翻译来源。",
     },
     {
       id: "mymemory",

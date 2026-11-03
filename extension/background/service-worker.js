@@ -863,7 +863,10 @@ async function providerFetch(url, init, provider, timeoutMs) {
     }
     throw new Error(`翻译服务返回 ${response.status}${detail ? `：${detail}` : ""}`);
   }
-  if (json === null) throw new Error("翻译服务返回了非 JSON 内容，请检查接口地址是否正确");
+  // Let Bing's parser reset the cached session when the site returns HTML.
+  if (json === null && provider?.id !== "bing-free") {
+    throw new Error("翻译服务返回了非 JSON 内容，请检查接口地址是否正确");
+  }
   return json;
 }
 

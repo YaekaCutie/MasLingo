@@ -126,7 +126,7 @@ try {
     //
     // Both new providers are driven end to end through runTranslation, the
     // same path a page translation takes: 必应's async page-token flow and
-    // MyMemory's plain GET. The two vendor hosts are intercepted so this is
+    // MyMemory's plain GET. The vendor hosts are intercepted so this is
     // deterministic and is about the pipeline — including the `await` on
     // per-request adapters, whose absence let a Promise reach providerFetch as
     // `fetch(undefined)` — not about the vendors' uptime.
@@ -134,6 +134,7 @@ try {
     await cdp.send("Fetch.enable", {
       patterns: [
         { urlPattern: "https://cn.bing.com/*" },
+        { urlPattern: "https://www.bing.com/*" },
         { urlPattern: "https://api.mymemory.translated.net/*" },
       ],
     });
@@ -142,8 +143,25 @@ try {
     const title = titleLead + " " + titleTail;
     const longQuery = "か".repeat(166) + "🧪END";
     const memoryQueries = [];
+    let bingPageLoads = 0;
+    let bingReturnsHtml = false;
     cdp.on("Fetch.requestPaused", (event) => {
       const url = event.request.url;
+      const requestUrl = new URL(url);
+      if (requestUrl.hostname === "cn.bing.com") {
+        cdp.send("Fetch.fulfillRequest", {
+          requestId: event.requestId,
+          responseCode: 302,
+          responseHeaders: [{
+            name: "Location",
+            value: `https://www.bing.com${requestUrl.pathname}${requestUrl.search}`,
+          }],
+        }).catch(() => {});
+        return;
+      }
+      const bingPage = requestUrl.hostname === "www.bing.com" && requestUrl.pathname === "/translator";
+      const bingPost = requestUrl.hostname === "www.bing.com" && requestUrl.pathname === "/ttranslatev3";
+      if (bingPage) bingPageLoads++;
       let memoryText = "FIXTUREOK";
       let memoryStatus = 200;
       if (url.startsWith("https://api.mymemory.translated.net/")) {
@@ -156,11 +174,13 @@ try {
         if (query === "か".repeat(166)) memoryText = "开头";
         if (query === "🧪END") memoryText = "结尾";
       }
-      const payload = url.includes("cn.bing.com/translator")
+      const payload = bingPage
         ? '<!doctype html><script>var _G={IG:"ABC123DEF456"};'
           + 'params_AbusePreventionHelper=[1791710657099,"TOKENVALUE",3600000];</script>'
-        : url.includes("ttranslatev3")
-          ? JSON.stringify([{ translations: [{ text: "FIXTUREOK" }] }])
+        : bingPost
+          ? (event.request.method === "POST" && !bingReturnsHtml
+            ? JSON.stringify([{ translations: [{ text: "FIXTUREOK" }] }])
+            : "<!doctype html><title>Microsoft Bing</title>")
           : JSON.stringify({ responseStatus: memoryStatus, responseData: { translatedText: memoryText, match: 0.85 } });
       cdp.send("Fetch.fulfillRequest", {
         requestId: event.requestId,
@@ -189,7 +209,7 @@ try {
     // proves the request went through the intercepted host and was parsed.
     const bingOk = Array.isArray(keyless["bing-free"]) && keyless["bing-free"][0] === "FIXTUREOK";
     const memoryOk = Array.isArray(keyless["mymemory"]) && keyless["mymemory"][0] === "FIXTUREOK";
-    if (bingOk) pass("bing-free runs through the real pipeline (async page tokens + per-request await)");
+    if (bingOk) pass("bing-free posts directly to the translator page's final domain after redirect");
     else fail(`bing-free through the pipeline: ${JSON.stringify(keyless["bing-free"])}`);
     if (memoryOk) pass("mymemory runs through the real pipeline");
     else fail(`mymemory through the pipeline: ${JSON.stringify(keyless["mymemory"])}`);
@@ -204,7 +224,23 @@ try {
     } else {
       fail(`MyMemory completeness regression: ${JSON.stringify({ repaired, memoryQueries })}`);
     }
-    cdp.send("Fetch.disable").catch(() => {});
+    const translateBing = () => worker.evaluate(async () => {
+      try {
+        const [translation] = await runTranslation(["おはよう"], { translationProvider: "bing-free" });
+        return translation;
+      } catch (error) {
+        return error.message;
+      }
+    });
+    bingReturnsHtml = true;
+    const bingError = await translateBing();
+    bingReturnsHtml = false;
+    if (bingError.includes("网页或空响应") && (await translateBing()) === "FIXTUREOK" && bingPageLoads === 2) {
+      pass("Bing HTML response reports a provider-specific error and reloads the session on retry");
+    } else {
+      fail(`Bing HTML recovery: ${bingError} (page loads: ${bingPageLoads})`);
+    }
+    await cdp.send("Fetch.disable");
 
     // --- content script path ----------------------------------------------
     const page = await browser.newPage();

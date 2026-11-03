@@ -16,7 +16,7 @@ import vm from "node:vm";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = readFileSync(join(repoRoot, "extension", "translation", "providers.js"), "utf8");
 
-const sandbox = { crypto, TextEncoder, URLSearchParams, console, Math, Date, JSON };
+const sandbox = { crypto, TextEncoder, URL, URLSearchParams, console, Math, Date, JSON };
 vm.createContext(sandbox);
 vm.runInContext(source, sandbox);
 const providers = sandbox.MAS_providers;
@@ -151,7 +151,7 @@ const BING_PAGE = '<!doctype html><script>var _G={IG:"ABC123DEF456"};'
 const bingFetchCalls = [];
 sandbox.fetch = async (url) => {
   bingFetchCalls.push(url);
-  return { ok: url === "https://cn.bing.com/translator", status: 200, text: async () => BING_PAGE };
+  return { ok: url === "https://cn.bing.com/translator", url: "https://www.bing.com/translator?mkt=zh-CN", status: 200, text: async () => BING_PAGE };
 };
 const bingBuilt = await providers.byId("bing-free").adapter({
   text: "おはよう", source: "ja", target: "zh-Hans",
@@ -159,6 +159,8 @@ const bingBuilt = await providers.byId("bing-free").adapter({
 check("bing 从翻译页取令牌", bingFetchCalls[0] === "https://cn.bing.com/translator", bingFetchCalls.join(","));
 check("bing 请求带 IG",
   bingBuilt.url.includes("ttranslatev3") && bingBuilt.url.includes("IG=ABC123DEF456"), bingBuilt.url);
+check("bing 直接向翻译页最终域名发送 POST",
+  new URL(bingBuilt.url).origin === "https://www.bing.com" && bingBuilt.init.method === "POST");
 check("bing 表单带 key / token / 目标语言",
   bingBuilt.init.body.includes("key=1791710657099")
     && bingBuilt.init.body.includes("token=TOKENVALUE")
