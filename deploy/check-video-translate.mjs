@@ -73,7 +73,7 @@ try{
     const video=document.querySelector('video');video.src=URL.createObjectURL(new Blob(chunks,{type:'video/webm'}));video.loop=true;
     await new Promise(done=>video.onloadeddata=done);
     globalThis.track=video.addTextTrack('subtitles','English','en');track.mode='showing';
-    track.addCue(new VTTCue(0,0.9,'Hello everyone.'));track.addCue(new VTTCue(1,30,'Please enjoy the video.'));
+    track.addCue(new VTTCue(0,0.62,'Hello everyone.'));track.addCue(new VTTCue(0.7,30,'Please enjoy the video.'));
     globalThis.videoRoot=()=>document.querySelector('[data-maslingo-video]').shadowRoot;
   },speech);
   await page.waitForSelector('[data-maslingo-video]');await wait(250);
@@ -83,14 +83,31 @@ try{
     return panel.previousElementSibling === shell &&
       Math.abs(document.querySelector('video').getBoundingClientRect().height - shell.getBoundingClientRect().height) < 1;
   }), 'controls are outside the entire player shell and do not shrink the native video');
-  assert.ok(await page.evaluate(()=>videoRoot().querySelector('.bar').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'controls must stay outside the video');
+  assert.ok(await page.evaluate(()=>videoRoot().querySelector('.surface').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'the floating window defaults to below the video');
   assert.equal(await worker.evaluate(()=>videoCalls.length),0,'no request before explicit start');
   const click=async selector=>(await page.evaluateHandle(s=>videoRoot().querySelector(s),selector)).asElement().click();
   const select=async value=>page.evaluate(value=>{const e=videoRoot().querySelector('.mode');e.value=value;e.dispatchEvent(new Event('change'));},value);
+  const visibleButtons=()=>page.evaluate(()=>[...videoRoot().querySelectorAll('button')].filter(button=>button.offsetWidth).map(button=>button.className));
+  assert.deepEqual(await visibleButtons(),['gear'],'only the settings button is visible by default');
+  const gear=await page.evaluate(()=>{const r=videoRoot().querySelector('.gear').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};});
+  await page.mouse.move(gear.x,gear.y);await page.mouse.down();
+  await page.mouse.move(gear.x+725,gear.y-130,{steps:12});await page.mouse.up();
+  assert.deepEqual(await visibleButtons(),['gear'],'dragging the gear does not open settings');
+  assert.ok(await page.evaluate(()=>getComputedStyle(videoRoot().host).position==='fixed'&&videoRoot().host.getBoundingClientRect().left>300));
+  await click('.gear');
+  assert.ok((await visibleButtons()).includes('prepare'),'settings opens and exposes subtitle controls');
+  await click('.dock');
+  assert.ok(await page.evaluate(()=>videoRoot().host.previousElementSibling===document.querySelector('#player-shell')));
+  await click('.gear');
+  const tabId=await worker.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url).id,url);
+  assert.deepEqual(await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'READER_VIDEO'},{frameId:0}),tabId),{ok:true});
+  assert.ok((await visibleButtons()).includes('start'),'the reader action opens the same settings');
   await click('.start');
   await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('\n'),{timeout:90000});
   assert.equal(await page.evaluate(()=>track.mode),'hidden');
+  await click('.gear');
   await page.screenshot({path:join(out,'video-bilingual.png')});
+  await click('.gear');
   const count=await worker.evaluate(()=>videoCalls.length);
   await select('source');await wait(250);assert.equal(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent),'Hello everyone.');
   await select('translated');await wait(250);assert.ok(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent.length>0));
@@ -104,20 +121,53 @@ try{
   await page.evaluate(()=>document.exitFullscreen());await wait(200);
   assert.ok(await page.evaluate(()=>getComputedStyle(videoRoot().host).display!=='none'));
   await click('.start');assert.equal(await page.evaluate(()=>track.mode),'showing');assert.equal(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent),'');
+  if(!live){
+    await page.evaluate(()=>{
+      track.addCue(new VTTCue(0.83,1.12,'An overlapping subtitle.'));
+      track.addCue(new VTTCue(60,65,'A cue beyond the normal prefetch window.'));
+    });
+    await worker.evaluate(()=>globalThis.videoDelay=550);
+    await select('bilingual');
+    await click('.prepare');
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('已预翻译 4 条'));
+    assert.ok(await worker.evaluate(()=>['Please enjoy the video. An overlapping subtitle.','A cue beyond the normal prefetch window.'].every(text=>videoCalls.flat().includes(text))));
+    await page.screenshot({path:join(out,'video-settings.png')});
+    const preparedCount=await worker.evaluate(()=>videoCalls.length);
+    await click('.gear');
+    for(const [time,text] of [[0.67,''],[0.74,'Please enjoy the video.'],[0.95,'Please enjoy the video. An overlapping subtitle.'],[1.18,'Please enjoy the video.']]){
+      await page.$eval('video',(video,time)=>video.currentTime=time,time);
+      await page.waitForFunction(text=>videoRoot().querySelector('.caption').textContent===(text?text+'\n译文：'+text:''),{timeout:1500},text);
+    }
+    await page.$eval('video',video=>{video.currentTime=0.72;return video.play();});
+    await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('An overlapping subtitle.'),{timeout:3000});
+    await page.$eval('video',video=>video.pause());
+    assert.equal(await worker.evaluate(()=>videoCalls.length),preparedCount,'prepared overlapping cues and gaps follow the timeline without new translation requests');
+    await worker.evaluate(()=>globalThis.videoDelay=0);
+    await page.evaluate(()=>{
+      track.addCue(new VTTCue(0.62,0.7,'A newly loaded subtitle.'));
+      document.querySelector('video').currentTime=0.67;
+    });
+    await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent==='A newly loaded subtitle.\n译文：A newly loaded subtitle.');
+    await click('.gear');
+    assert.ok(await page.evaluate(()=>videoRoot().querySelector('.prepare-status').textContent.includes('新内容')&&!videoRoot().querySelector('.prepare').disabled));
+    await click('.start');
+    console.log('PASS floating window, compact settings, and pretranslated timed cues');
+  }
   // Web-player captions without native tracks, and exact style restoration.
   await page.evaluate(()=>{track.mode='disabled';document.querySelector('.ytp-caption-window-container').textContent='Hello everyone.';});
   // Native track remains preferred when available; test removal with a new video.
   await page.evaluate(()=>{const old=document.querySelector('video');const next=old.cloneNode(true);old.replaceWith(next);globalThis.videoRoot=()=>[...document.querySelectorAll('[data-maslingo-video]')].at(-1).shadowRoot;});
-  await wait(2300);await select('bilingual');await click('.start');
+  await wait(2300);await select('bilingual');await click('.gear');
+  assert.ok(await page.evaluate(()=>videoRoot().querySelector('.prepare').disabled),'live DOM captions cannot be prepared');
+  await click('.start');
   await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('Hello everyone.'),{timeout:90000});
   assert.equal(await page.$eval('.ytp-caption-window-container',e=>e.style.visibility),'hidden');
   await click('.start');assert.equal(await page.$eval('.ytp-caption-window-container',e=>e.style.visibility),'');
   await page.setViewport({width:390,height:844});await wait(250);
   assert.ok(await page.evaluate(()=>{const r=document.querySelector('[data-maslingo-video]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}));
-  assert.ok(await page.evaluate(()=>videoRoot().querySelector('.bar').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'mobile controls must not cover the video');
+  assert.ok(await page.evaluate(()=>videoRoot().querySelector('.surface').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'mobile controls must not cover the video');
   await page.screenshot({path:join(out,'video-mobile.png')});await page.setViewport({width:1100,height:850});
   console.log('PASS native cues, modes/cache, seeking, source restoration, DOM captions, dynamic videos, mobile controls');
-  const tabId=await worker.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url).id,url);
   await worker.evaluate(async tabId=>chrome.scripting.executeScript({target:{tabId},func:()=>{
     globalThis.originalDisplayMedia=navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getDisplayMedia=async()=>{throw new DOMException('cancelled','NotAllowedError');};

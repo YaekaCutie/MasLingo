@@ -8,6 +8,7 @@
   const clean = value => String(value || "").replace(/\s+/g, " ").trim().slice(0, 4000);
   const PAIR_WAIT_MS = 20000;
   const MAX_WAITING_CUES = 16;
+  const MAX_PREPARED_TEXTS = 2500;
   const MIN_AUDIO_MS = 1400;
   const MAX_AUDIO_MS = 5000;
   const AUDIO_PAUSE_MS = 220;
@@ -17,28 +18,72 @@
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
   const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
 
+  function trackTexts(cues) {
+    // Reproduce the text shown at each boundary, including overlapping cues.
+    const boundaries = [];
+    for (const [index, cue] of Array.from(cues).entries()) {
+      if (cue.endTime <= cue.startTime) continue;
+      const text = plainCue(cue);
+      if (!text) continue;
+      boundaries.push({ time: cue.startTime, index, text }, { time: cue.endTime, index });
+    }
+    boundaries.sort((a, b) => a.time - b.time);
+    const active = new Map();
+    const texts = new Set();
+    for (let i = 0; i < boundaries.length;) {
+      const time = boundaries[i].time;
+      do {
+        const { index, text } = boundaries[i++];
+        if (text) active.set(index, text);
+        else active.delete(index);
+      } while (boundaries[i]?.time === time);
+      const text = clean([...active].sort(([a], [b]) => a - b).map(([, line]) => line).join(" "));
+      if (text) texts.add(text);
+      if (texts.size > MAX_PREPARED_TEXTS) break;
+    }
+    return texts;
+  }
+
   function attach(video) {
     const host = document.createElement("div");
     host.dataset.maslingoVideo = "1";
-    host.style.cssText = "position:relative;display:none;box-sizing:border-box;clear:both;margin:8px 0;max-width:100%";
+    host.style.cssText = "position:relative;display:none;box-sizing:border-box;clear:both;margin:8px 0;max-width:100%;pointer-events:none";
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `<style>
       :host{font:12px/1.5 system-ui;color:#202124}*{box-sizing:border-box}
-      .bar{display:flex;gap:5px;align-items:center;flex-wrap:wrap;padding:6px 8px;background:#fff;border:1px solid #e5e9ef;border-radius:6px;pointer-events:auto}
+      .float{width:max-content;max-width:100%}
+      .surface,.settings{background:#fff;border:1px solid #dce3ee;border-radius:10px;box-shadow:0 2px 8px #1d35541c;pointer-events:auto}
+      .surface{display:flex;align-items:flex-start;gap:6px;width:max-content;max-width:100%;padding:4px;cursor:grab;touch-action:none;user-select:none}
+      .surface:active,.gear:active{cursor:grabbing}
+      .gear{display:grid;place-items:center;flex:none;width:32px;height:32px;padding:0;cursor:grab}
+      .gear[aria-expanded=true]{color:#285de5;background:#edf3ff;border-color:#c6d6fa}
+      .settings{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:360px;max-width:100%;max-height:50vh;overflow:auto;margin-top:5px;padding:8px}
       button,select{font:inherit;color:inherit;background:#f7f7f8;border:1px solid #ddd;border-radius:6px;padding:3px 6px;min-height:27px;cursor:pointer;max-width:100%}
-      button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:wait}
-      .status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:11px}.status:empty{display:none}
+      button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:default}
+      .status,.prepare-status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:11px}
+      .status:empty,.prepare-status:empty{display:none}
       [hidden]{display:none!important}
       button:focus-visible,select:focus-visible{outline:2px solid #285de5;outline-offset:2px}
       button{transition:background .16s}button:hover{background:#f3f6fc}button[aria-pressed=true]:hover{background:#194bc8}
-      .caption{position:static;text-align:left;white-space:pre-line;font:14px/1.7 system-ui;color:#18212f;background:#fff;border-left:2px solid #285de5;padding:10px 14px;pointer-events:auto}
+      .caption{min-width:0;text-align:left;white-space:pre-line;overflow-wrap:anywhere;font:14px/1.65 system-ui;color:#18212f;padding:4px 6px}
       @media(prefers-reduced-motion:reduce){button{transition:none}}
       .caption:empty{display:none}
-    </style><div class="bar"><strong>字幕</strong><button class="start" aria-pressed="false">翻译字幕</button>
+    </style><div class="float"><div class="surface">
+      <div class="caption" aria-live="off"></div>
+      <button class="gear" type="button" aria-label="字幕设置" aria-expanded="false" aria-controls="settings" title="字幕设置，可拖动浮窗">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <path d="m10 3-.5 2.3-1.7 1L5.5 5.6l-2 3.4 1.7 1.6v2.1L3.5 14l2 3.4 2.3-.7 1.7 1L10 20h4l.5-2.3 1.7-1 2.3.7 2-3.4-1.7-1.3v-2.1L20.5 9l-2-3.4-2.3.7-1.7-1L14 3z"/>
+          <circle cx="12" cy="11.5" r="3"/>
+        </svg>
+      </button>
+    </div><div class="settings" id="settings" aria-label="字幕设置" hidden><button class="start" aria-pressed="false">翻译字幕</button>
       <button class="speech" aria-pressed="false" title="共享当前标签页声音，音频发送给设置中的后端；仅文字发给翻译来源">无字幕识别</button>
       <select class="mode" aria-label="字幕显示模式"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
       <select class="track" aria-label="字幕轨"><option value="auto">自动选择字幕</option></select>
-      <span class="status" role="status"></span></div><div class="caption" aria-live="off"></div>`;
+      <button class="prepare" aria-describedby="prepare-status">预翻译字幕轨</button>
+      <button class="dock" hidden>移回视频下方</button>
+      <span class="prepare-status" id="prepare-status" role="status"></span>
+      <span class="status" role="status"></span></div></div>`;
     function placeHost(rect) {
       let anchor = video.closest(playerSelector) || video;
       // The player may be inside a fixed-size flex stack that also holds its
@@ -68,8 +113,77 @@
       }
     }
     const $ = selector => root.querySelector(selector);
+    const surface = $(".surface");
+    const gear = $(".gear");
+    let position = null;
+    let drag = null;
+    let suppressClick = false;
+
+    function placeFloating() {
+      const { width, height } = $(".float").getBoundingClientRect();
+      const left = Math.max(8, Math.min(position.x, document.documentElement.clientWidth - width - 8));
+      const top = Math.max(8, Math.min(position.y, document.documentElement.clientHeight - height - 8));
+      host.style.left = `${left}px`;
+      host.style.top = `${top}px`;
+    }
+    function showSettings(open) {
+      $(".settings").hidden = !open;
+      gear.setAttribute("aria-expanded", String(open));
+      if (position) placeFloating();
+    }
+    surface.addEventListener("pointerdown", event => {
+      if (!event.isPrimary || event.button !== 0) return;
+      const rect = surface.getBoundingClientRect();
+      const capture = event.composedPath().includes(gear) ? gear : surface;
+      suppressClick = false;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, capture };
+      capture.setPointerCapture(event.pointerId);
+    });
+    surface.addEventListener("pointermove", event => {
+      if (drag?.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!suppressClick && Math.hypot(dx, dy) < 5) return;
+      suppressClick = true;
+      position = { x: drag.left + dx, y: drag.top + dy };
+      if (host.parentNode !== document.documentElement) {
+        document.documentElement.append(host);
+        drag.capture.setPointerCapture(event.pointerId);
+        host.style.position = "fixed";
+        host.style.zIndex = "2147483646";
+        host.style.margin = "0";
+        host.style.maxWidth = "calc(100vw - 16px)";
+        $(".dock").hidden = false;
+      }
+      placeFloating();
+    });
+    for (const type of ["pointerup", "pointercancel"]) {
+      surface.addEventListener(type, event => { if (drag?.id === event.pointerId) drag = null; });
+    }
+    gear.onclick = event => {
+      if (suppressClick && event.detail) return;
+      showSettings($(".settings").hidden);
+    };
+    root.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || $(".settings").hidden) return;
+      event.stopPropagation();
+      showSettings(false);
+      gear.focus({ preventScroll: true });
+    });
+    $(".dock").onclick = () => {
+      position = null;
+      host.style.position = "relative";
+      host.style.zIndex = "";
+      host.style.margin = "8px 0";
+      host.style.maxWidth = "100%";
+      host.style.left = host.style.top = "";
+      $(".dock").hidden = true;
+      tick();
+      gear.focus({ preventScroll: true });
+    };
     const state = { video, host, root, enabled: false, generation: 0, translationRevision: 0, cache: new Map(), inflight: 0, prefetching: false,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "",
+      hasTracks: false, preparation: null,
       currentCue: null, waitingCues: [], showing: null, lagged: false,
       stream: null, recorder: null, audioContext: null, audioMeter: null,
       speech: false, speechBusy: false, speechText: "", speechUntil: 0, audioQueue: [], timer: null };
@@ -96,6 +210,8 @@
     function reset() {
       state.translationRevision++;
       state.cache.clear();
+      state.preparation = null;
+      $(".prepare-status").textContent = "";
       resetTimeline();
     }
     function restoreSources() {
@@ -147,6 +263,7 @@
 
     function updateTracks() {
       const tracks = [...video.textTracks].filter(t => t !== state.output && ["subtitles", "captions"].includes(t.kind));
+      state.hasTracks = tracks.length > 0;
       const signature = tracks.map(t => `${t.label}:${t.language}`).join("|");
       if ($(".track").dataset.signature !== signature) {
         $(".track").dataset.signature = signature;
@@ -178,6 +295,76 @@
       }
     }
 
+    const prepareButton = $(".prepare");
+    const prepareStatus = $(".prepare-status");
+    function setPrepareStatus(message) {
+      if (prepareStatus.textContent !== message) prepareStatus.textContent = message;
+    }
+    function finishPreparation(message) {
+      state.preparation.running = false;
+      prepareButton.textContent = "预翻译字幕轨";
+      if (state.preparation.ready) prepareButton.disabled = true;
+      setPrepareStatus(message);
+    }
+    prepareButton.onclick = () => {
+      if (state.preparation?.running) {
+        finishPreparation("已停止预翻译，已译字幕仍可使用。");
+      } else {
+        start();
+        updateTracks();
+        if (!state.sourceTrack) return;
+        state.preparation = { running: true, ready: false, texts: null, deadline: performance.now() + 8000 };
+      }
+      tick();
+    };
+
+    function prepareCaptions(now) {
+      const job = state.preparation;
+      const available = state.hasTracks && !state.speech && mode() !== "source";
+      if (!available && job?.running) finishPreparation("预翻译已停止。");
+      prepareButton.disabled = !available || Boolean(job?.ready);
+      const label = job?.running ? "停止预翻译" : "预翻译字幕轨";
+      if (prepareButton.textContent !== label) prepareButton.textContent = label;
+      if (!job) {
+        setPrepareStatus(!state.hasTracks || state.speech ? "预翻译需要可读取的完整字幕轨。" :
+          mode() === "source" ? "选择双语或纯译文后可预翻译。" : "可暂停视频，等字幕预翻译完成后再播放。");
+      }
+      if (!job?.running) return;
+      if (!job.texts) {
+        const cues = state.sourceTrack?.cues;
+        if (!cues?.length) {
+          if (now >= job.deadline) finishPreparation("未读取到字幕，可加载播放器字幕后重试。");
+          else setPrepareStatus("正在加载字幕轨…");
+          return;
+        }
+        const texts = trackTexts(cues);
+        if (!texts.size || texts.size > MAX_PREPARED_TEXTS) {
+          finishPreparation(texts.size ? `字幕超过 ${MAX_PREPARED_TEXTS} 条，可随播放翻译。` : "字幕轨没有可翻译的文字。");
+          return;
+        }
+        job.texts = texts;
+        for (const text of texts) if (state.cache.get(text)?.error) state.cache.delete(text);
+      }
+      const remaining = [];
+      let completed = 0;
+      for (const text of job.texts) {
+        const entry = state.cache.get(text);
+        if (entry?.text) completed++;
+        else if (entry?.error) {
+          finishPreparation(`预翻译已停止（${completed} / ${job.texts.size}）：${entry.error}`);
+          return;
+        } else if (!entry) remaining.push(text);
+      }
+      if (completed === job.texts.size) {
+        job.ready = true;
+        resetTimeline();
+        finishPreparation(`已预翻译 ${completed} 条字幕，可以播放。`);
+      } else {
+        setPrepareStatus(`正在预翻译 ${completed} / ${job.texts.size}…`);
+        translate(remaining);
+      }
+    }
+
     function translate(texts, prefetch = false) {
       if (mode() === "source" || state.inflight >= 2 || (prefetch && state.prefetching)) return;
       const registry = globalThis.MAS_providers;
@@ -203,7 +390,7 @@
           protectedTexts.add(state.currentCue?.text);
           for (const [text, entry] of state.cache) {
             if (state.cache.size <= 600) break;
-            if (!entry.pending && !protectedTexts.has(text)) state.cache.delete(text);
+            if (!entry.pending && !protectedTexts.has(text) && !state.preparation?.texts?.has(text)) state.cache.delete(text);
           }
         }
       }).catch(error => {
@@ -265,10 +452,27 @@
         status(text ? "显示原文" : idleStatus());
         return;
       }
+      const prepared = state.preparation;
+      if (prepared?.ready && text && !prepared.texts.has(text)) {
+        prepared.ready = false;
+        prepareButton.disabled = false;
+        setPrepareStatus("字幕轨出现了新内容，可以再次预翻译。");
+      }
+      if (prepared?.ready) {
+        // Prepared tracks follow the media clock, including brief cues and gaps.
+        state.currentCue = null;
+        state.waitingCues.length = 0;
+        state.showing = null;
+        const translated = state.cache.get(text)?.text;
+        render(mode() === "translated" ? (translated || "") :
+          [text, translated === text ? "" : translated].filter(Boolean).join("\n"));
+        status(text ? "字幕已同步" : idleStatus());
+        return;
+      }
       observeCue(text, rolling, now);
       const nextRequest = state.waitingCues.find(cue => cue.readyAt <= now && !state.cache.has(cue.text));
       if (nextRequest) translate([nextRequest.text]);
-      else translate(upcoming, true);
+      else if (!state.preparation?.running && !state.preparation?.ready) translate(upcoming, true);
 
       const showing = state.showing;
       if (!showing || (showing.cue !== state.currentCue && now >= showing.until &&
@@ -328,15 +532,18 @@
       const showPanel = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video;
       host.style.display = showPanel ? "block" : "none";
       if (showPanel) {
-        host.style.width = `${rect.width}px`;
-        placeHost(rect);
+        host.style.width = `${Math.min(640, rect.width)}px`;
+        if (position) placeFloating();
+        else placeHost(rect);
       }
       updateTracks();
+      prepareCaptions(performance.now());
       if (!state.enabled) return;
       const now = performance.now();
       presentCaptions(readCaptions(now), now);
     }
     state.tick = tick;
+    state.openSettings = () => { showSettings(true); gear.focus({ preventScroll: true }); };
 
     async function transcribeNext() {
       if (!state.speech || state.speechBusy) return;
@@ -499,9 +706,10 @@
       .filter(video => video.isConnected && video.clientWidth >= 200 && video.clientHeight >= 100)
       .sort((a, b) => Number(a.paused) - Number(b.paused) || b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
     if (!video) return false;
-    players.get(video).tick();
-    globalThis.MAS_reader?.focus(players.get(video).host);
-    players.get(video).root.querySelector(".start").focus({ preventScroll: true });
+    const state = players.get(video);
+    state.tick();
+    state.openSettings();
+    globalThis.MAS_reader?.focus(state.host);
     return true;
   } };
 })();

@@ -675,6 +675,9 @@ try {
     count,
     "video makes no requests before start",
   );
+  await source.$eval("[data-maslingo-video]", (panel) =>
+    panel.shadowRoot.querySelector(".gear").click(),
+  );
   await source.evaluate(() =>
     document
       .querySelector("[data-maslingo-video]")

@@ -298,7 +298,7 @@
         { type: "READER_VIDEO" },
         { frameId: 0 },
       );
-      report(r?.ok ? "已定位视频，下方可开启字幕翻译" : "当前页面未发现视频");
+      report(r?.ok ? "已打开视频字幕设置" : "当前页面未发现视频");
     } catch {
       report("请刷新网页后重试");
     }
