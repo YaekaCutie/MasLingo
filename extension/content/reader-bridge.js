@@ -40,7 +40,7 @@
     if (host.dataset.readerId) return host.dataset.readerId;
     const id = `result-${++sequence}`;
     host.dataset.readerId = id;
-    host.style.setProperty("display", "none", "important");
+    if (options.hideHost !== false) host.style.setProperty("display", "none", "important");
     const entry = {
       host,
       options,

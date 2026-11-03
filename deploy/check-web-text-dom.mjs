@@ -68,13 +68,17 @@ try {
  assert.ok(await page.evaluate(()=>calls.some(c=>c.texts.includes('Wrapper introduction Wrapper conclusion'))),'mixed wrapper own text is translated');
  const before=await page.$eval('#prose',e=>e.getBoundingClientRect().top);
  await hover('#prose');
- assert.equal(await page.$eval('#prose',e=>e.getBoundingClientRect().top),before,'floating card does not move source');
+ assert.equal(await page.$eval('#prose',e=>e.getBoundingClientRect().top),before,'inline result does not move its source');
+ const inlineProse = () => page.$eval('#prose + [data-maslingo-textbox]', host =>
+  getComputedStyle(host).display === 'block' && getComputedStyle(host).position === 'static' &&
+  host.getBoundingClientRect().top >= host.previousElementSibling.getBoundingClientRect().bottom);
+ assert.ok(await inlineProse(),'hover result occupies the same position as an automatic result');
  await page.mouse.move(1,1);await wait(500);
- assert.equal(await page.evaluate(()=>visible().length),0,'hover result does not occupy page space');
+ assert.ok(await inlineProse(),'hover result stays in the document after pointer exit');
+ await hover('#reference');
+ assert.ok(await inlineProse(),'translating another paragraph does not hide the previous result');
  assert.ok(await page.evaluate(()=>readerMessages.some(m=>m.type==='READER_RESULT' && m.source.includes('A protein'))),'hover publishes its source to the reader');
  assert.equal(await page.$eval('#prose',e=>e.innerHTML),originals,'hover keeps exact inline markup');
- await close();
- await hover('#reference');
  assert.ok(await page.evaluate(()=>calls.some(c=>c.texts.includes('AlphaFold 2[1] predicts protein structures.'))),'superscript citation is separated from model number');await close();
  await page.evaluate(()=>{fail=true;document.querySelector('#dynamic').textContent='Failure and retry paragraph';});await wait(300);await page.hover('#dynamic');
  await page.waitForFunction(()=>card()?.querySelector('.text').dataset.state==='error');
@@ -144,10 +148,12 @@ try {
  await page.evaluate(()=>setCfg({translationProvider:'new-provider'}));
  await page.waitForFunction(n=>calls.length>n,{},oldCalls);
  await page.evaluate(()=>{const r=document.createRange();r.selectNodeContents(document.querySelector('#prose'));window.getSelection().addRange(r);});await wait(350);
- assert.equal(await page.evaluate(()=>visible().filter(h=>h.dataset.mode==='hover').length),0,'text selection dismisses transient hover cards');
+ assert.ok(await inlineProse(),'selecting text preserves the inline hover result');
  await page.evaluate(()=>window.getSelection().removeAllRanges());
  await page.setViewport({width:390,height:844});await page.mouse.move(1,1);await hover('#short');
- assert.equal(await page.evaluate(()=>visible().filter(h=>h.dataset.mode==='hover').length),0,'narrow pages remain free of hover overlays');
+ assert.ok(await page.$eval('#short + [data-maslingo-textbox]', host =>
+  getComputedStyle(host).position === 'static' && host.getBoundingClientRect().right <= innerWidth),
+  'narrow pages keep hover results inline');
 
  const bingUrl='https://www.bing.com/search?q=Nature';
  await page.setViewport({width:1000,height:800});

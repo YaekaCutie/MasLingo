@@ -1,5 +1,4 @@
-// Webpage translation: lazy bilingual reading and on-demand hover cards share
-// text extraction, a bounded request queue, and reversible original content.
+// Automatic and hover translation share inline results and reversible originals.
 
 (() => {
   "use strict";
@@ -9,7 +8,6 @@
   const MIN_TEXT_LENGTH = 2;
   const MAX_HOVER_CACHE = 80;
   const HOVER_DELAY = 220;
-  const HIDE_DELAY = 320;
   const bingSearchPage = /(^|\.)bing\.com$/i.test(location.hostname) && /^\/search\/?$/.test(location.pathname);
   const BING_RESULT_SUBTITLE = "#b_results .b_algo :is(h3, h4) a[href]";
   const SKIP_TAGS = new Set([
@@ -28,17 +26,14 @@
   let syncVersion = 0;
   let revision = 0;
   let scanTimer = null;
-  let positionFrame = null;
   let visibilityObserver = null;
   let mutationObserver = null;
   let activeRequests = 0;
-  let pointer = { x: 0, y: 0 };
   let language = "简体中文";
   let displayMode = "bilingual";
   let defaultProvider = "deepseek";
   let hoverBlock = null;
   let showTimer = null;
-  let hideTimer = null;
   const boxes = new Map(); // paragraph element -> box record
   const units = new Map();
   const nearby = new Set();
@@ -160,6 +155,8 @@
         .foot { display: flex; gap: 10px; padding: 0 10px 7px; font-size: 12px; }
         button:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
         [hidden] { display: none !important; }
+        :host([data-context-toolbar]) .head,
+        :host([data-context-toolbar]) .foot { display: none; }
         .body { padding: 10px 12px; }
         .text {
           margin: 0;
@@ -396,7 +393,6 @@
         if (box.covered) box.setPinned(true);
         else box.setPinned(Boolean(box.wasPinnedBeforeCover));
         pin.disabled = box.covered;
-        schedulePosition();
       },
     };
 
@@ -415,11 +411,9 @@
       enqueue(box);
     });
     function chooseDisplay(mode) {
-      box.localDisplayMode=mode;
-      if(mode!=='translated' && box.covered)box.toggleCover();
-      if(mode==='translated' && box.translated && !box.covered)box.toggleCover();
-      if(box.automatic)applyAutoDisplay(box);
-      displaySelect.value=mode;
+      box.localDisplayMode = mode;
+      displaySelect.value = mode;
+      applyDisplay(box);
       globalThis.MAS_quick?.refresh(box);
     }
     displaySelect.onchange=()=>chooseDisplay(displaySelect.value);
@@ -432,29 +426,15 @@
       if (box.covered) box.toggleCover();
       box.setPinned(false);
       box.dismissed = true;
-      hideBox(box, true);
+      hideBox(box);
     });
     origin.addEventListener("click", () => {
       box.paragraph?.scrollIntoView({ block: "center", behavior: "smooth" });
       box.paragraph?.animate?.([{ outline: "2px solid #2563eb" }, { outline: "2px solid transparent" }], { duration: 1400 });
     });
-    // Keep the card alive while one of its controls (especially a native
-    // language select and its popup) has focus; pointer moves alone should not
-    // yank it away mid-choice.
-    host.addEventListener("focusin", () => clearTimeout(hideTimer));
-    host.addEventListener("focusout", () => {
-      hideTimer = setTimeout(() => {
-        if (!host.matches(":focus-within") && hoverBlock !== box.paragraph) hideBox(box);
-      }, HIDE_DELAY);
-    });
     shadow.querySelector(".title").addEventListener("click", (event) => {
       if (event.target.closest("select")) return;
       box.toggleCollapsed();
-    });
-    host.addEventListener("pointerenter", () => clearTimeout(hideTimer));
-    host.addEventListener("pointerleave", (event) => {
-      if (box.paragraph?.contains(event.relatedTarget)) return;
-      hideTimer = setTimeout(() => hideBox(box), HIDE_DELAY);
     });
     return box;
   }
@@ -598,41 +578,35 @@
     const host = box.host;
     host.dataset.mode = box.automatic ? "auto" : "hover";
     const shadow = host.shadowRoot;
-    const hasToolbar = box.automatic && Boolean(globalThis.MAS_quick);
-    shadow.querySelector(".head").hidden = hasToolbar;
-    shadow.querySelector(".foot").hidden = hasToolbar;
+    host.toggleAttribute("data-context-toolbar", Boolean(globalThis.MAS_quick));
     shadow.querySelector(".pin").hidden = box.automatic;
     host.style.cssText = "display:none;box-sizing:border-box;text-align:left;";
     if (bingSearchPage) {
       document.documentElement.appendChild(host);
       return;
     }
-    if (!box.automatic) {
-      document.documentElement.appendChild(host);
-      mountReader(box);
-    } else {
-      globalThis.MAS_reader?.remove(host.dataset.readerId);
-      host.style.margin = "8px 0 14px";
-      host.style.width = "100%";
-      const parentTag = element.parentElement?.tagName;
-      const complex = element.querySelector('p, div, section, ul, ol, table, figure, h1, h2, h3, h4, h5, h6');
-      if (complex || ["TD", "TH", "LI", "DD", "DT", "FIGCAPTION", "CAPTION"].includes(element.tagName) ||
-          ["TABLE", "TBODY", "THEAD", "TFOOT", "TR", "UL", "OL", "DL"].includes(parentTag)) {
-        let anchor = box.nodes.at(-1);
-        while (anchor?.parentNode && anchor.parentNode !== element) anchor = anchor.parentNode;
-        if (anchor?.parentNode === element) anchor.after(host);
-        else element.appendChild(host);
-        box.canCover = false;
-        box.coverButton.disabled = true;
-      } else element.after(host);
-    }
+    host.style.margin = "8px 0 14px";
+    host.style.width = "100%";
+    const parentTag = element.parentElement?.tagName;
+    const complex = element.querySelector('p, div, section, ul, ol, table, figure, h1, h2, h3, h4, h5, h6');
+    if (complex || ["TD", "TH", "LI", "DD", "DT", "FIGCAPTION", "CAPTION"].includes(element.tagName) ||
+        ["TABLE", "TBODY", "THEAD", "TFOOT", "TR", "UL", "OL", "DL"].includes(parentTag)) {
+      let anchor = box.nodes.at(-1);
+      while (anchor?.parentNode && anchor.parentNode !== element) anchor = anchor.parentNode;
+      if (anchor?.parentNode === element) anchor.after(host);
+      else element.appendChild(host);
+      box.canCover = false;
+      box.coverButton.disabled = true;
+    } else element.after(host);
+    if (box.automatic) globalThis.MAS_reader?.remove(host.dataset.readerId);
+    else mountReader(box);
     box.refit();
     host.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         if (box.covered) box.toggleCover();
         box.setPinned(false);
         box.dismissed = true;
-        hideBox(box, true);
+        hideBox(box);
         event.stopPropagation();
       }
     });
@@ -651,9 +625,8 @@
       if (box.automatic !== automatic) {
         globalThis.MAS_quick?.hide(box);
         box.automatic = automatic;
-        const visible = box.visible;
         mount(box);
-        if (visible) reveal(box);
+        applyDisplay(box);
       }
       return box;
     }
@@ -682,71 +655,64 @@
     return JSON.stringify([revision, box.paragraphText, box.getSource(), box.getLanguage(), box.providerSelect.value]);
   }
 
+  function displayModeFor(box) {
+    return box.localDisplayMode || (box.automatic || bingSearchPage ? displayMode : "bilingual");
+  }
+
   function showQuick(box) {
     if (bingSearchPage) return;
-    box.displaySelect.value=box.localDisplayMode || (box.automatic ? displayMode : 'bilingual');
+    box.displaySelect.value = displayModeFor(box);
     box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
     const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
     const anchorRect=()=>{const node=box.coverSpan || box.nodes.at(-1);if(!node?.isConnected)return box.paragraph.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(node);return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();};
-    const controls = [box.sourceSelect, box.select, box.providerSelect, box.displaySelect, box.coverButton];
-    if (box.automatic) controls.push(box.origin, box.retry);
+    const controls = [box.sourceSelect, box.select, box.providerSelect, box.displaySelect, box.coverButton, box.origin, box.retry];
     globalThis.MAS_quick?.show({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
       rect:anchorRect, badgeRect:anchorRect,
       controls,
-      preview:()=> box.automatic ? '' : (box.localDisplayMode || (box.automatic ? displayMode : 'bilingual'))==='source' || box.covered ? '' : box.text.textContent,
     });
   }
 
   function mountReader(box) {
     globalThis.MAS_reader?.mount(box.host, {
-      kind: '网页段落', source: () => box.paragraphText, element: box.paragraph,
-      dismiss() { if(box.covered)box.toggleCover();box.dismissed = true;hideBox(box, true);globalThis.MAS_quick?.hide(box); },
+      kind: '网页段落', source: () => box.paragraphText, element: box.paragraph, hideHost: false,
+      dismiss() { if(box.covered)box.toggleCover();box.dismissed = true;hideBox(box);globalThis.MAS_quick?.hide(box); },
     });
   }
 
-  function reveal(box) {
-    if (bingSearchPage) return;
-    box.visible = true;
-    if (!box.automatic && globalThis.MAS_reader) { mountReader(box); showQuick(box); return; }
-    box.host.style.setProperty("display", "block", "important");
-    schedulePosition();
-  }
-
-  function hideBox(box, force = false) {
-    if (!box || (!force && (box.automatic || box.pinned || box.host.matches(":focus-within")))) return;
+  function hideBox(box) {
     box.visible = false;
     box.host.style.setProperty("display", "none", "important");
   }
 
-  function applyAutoDisplay(box) {
+  function applyDisplay(box) {
     if (bingSearchPage) {
       if (displayMode === "source" && box.covered) box.toggleCover();
       if (displayMode !== "source" && box.translated && !box.covered) box.toggleCover();
       return;
     }
-    if (!box.automatic) return;
-    const mode=box.localDisplayMode || displayMode;
+    const mode = displayModeFor(box);
     box.modeNote.hidden = true;
     if (mode !== "translated" && box.covered) box.toggleCover();
     if (mode === "source" || box.dismissed ||
         (box.sameLanguage && !box.manualSource && !box.manualTarget)) {
-      hideBox(box, true);
+      hideBox(box);
       return;
     }
     if (mode === "translated" && box.translated && box.translation) {
       if (box.canCover && !box.covered) box.toggleCover();
       if (box.covered) {
-        hideBox(box, true);
+        hideBox(box);
         return;
       }
       box.modeNote.hidden = false;
     }
-    reveal(box);
+    box.visible = true;
+    box.host.style.setProperty("display", "block", "important");
   }
 
   function enqueue(box) {
     if (!enabled || box.loading || !box.paragraphText || box.dismissed) return;
-    if ((box.automatic || bingSearchPage) && (box.localDisplayMode || displayMode) === "source") return;
+    if (displayModeFor(box) === "source") return;
     if ((box.translated || box.sameLanguage) && box.key === keyFor(box)) return;
     box.requestId++;
     box.key = keyFor(box);
@@ -776,7 +742,7 @@
         if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage() || box.providerSelect.value !== first.providerSelect.value) continue;
         if (group.length >= 4 || (group.length && chars + box.paragraphText.length > 7000)) continue;
         queue.delete(box);
-        if ((box.automatic || bingSearchPage) && (box.localDisplayMode || displayMode) === "source") { box.loading = false; continue; }
+        if (displayModeFor(box) === "source") { box.loading = false; continue; }
         if (!box.paragraph.isConnected || box.dismissed) { box.loading = false; continue; }
         group.push(box);
         chars += box.paragraphText.length;
@@ -798,11 +764,11 @@
             box.sameLanguage = true;
             box.translation = "";
             if (box.manualSource || box.manualTarget) box.setNotice(`原文已是${box.getLanguage()}，无需翻译。`);
-            else hideBox(box, true);
+            else hideBox(box);
             return;
           }
           const text = String(response.translations?.[index] ?? "").trim();
-          if (text) { box.setText(text); applyAutoDisplay(box); if(!box.automatic && box.localDisplayMode==='translated' && !box.covered)box.toggleCover(); }
+          if (text) { box.setText(text); applyDisplay(box); }
           else box.setError("服务未返回该段译文，请重试");
         });
       }).catch((error) => {
@@ -810,7 +776,6 @@
       }).finally(() => {
         for (const { box, id } of requests) if (box.requestId === id) box.loading = false;
         activeRequests--;
-        schedulePosition();
         pump();
       });
     }
@@ -828,36 +793,10 @@
     if (!box.manualSource && !box.manualTarget && globalThis.MAS_providers?.likelySameLanguage?.(unit.text, box.getLanguage())) return;
     box.dismissed = false;
     if (box.sameLanguage && box.key === keyFor(box)) return;
-    clearTimeout(hideTimer);
-    reveal(box);
+    if (!box.automatic && !bingSearchPage) mountReader(box);
     if (!bingSearchPage || !box.error) enqueue(box);
-    applyAutoDisplay(box);
-    if (box.automatic) showQuick(box);
-  }
-
-  function schedulePosition() {
-    if (positionFrame !== null) return;
-    positionFrame = requestAnimationFrame(() => {
-      positionFrame = null;
-      for (const box of boxes.values()) {
-        if (!box.visible || box.automatic || box.host.dataset.readerId) continue;
-        const rect = box.paragraph.getBoundingClientRect();
-        if (!box.pinned && (rect.bottom < 0 || rect.top > innerHeight)) { hideBox(box, true); continue; }
-        const rightSpace = innerWidth - rect.right - 20;
-        const leftSpace = rect.left - 20;
-        const side = rightSpace >= 320 ? "right" : leftSpace >= 320 ? "left" : "";
-        const available = side === "right" ? rightSpace : leftSpace;
-        box.host.style.setProperty("width", `${side ? Math.min(480, available) : Math.min(560, innerWidth - 24)}px`, "important");
-        const width = box.host.getBoundingClientRect().width;
-        const height = box.host.getBoundingClientRect().height;
-        let top = side ? rect.top : rect.bottom + 8;
-        if (!side && top + height > innerHeight - 12) top = rect.top - height - 8;
-        if (!side && top < 12) top = Math.max(12, Math.min(innerHeight - height - 12, pointer.y + 24));
-        const left = side === "right" ? rect.right + 8 : side === "left" ? rect.left - width - 8 : rect.left;
-        box.host.style.setProperty("left", `${Math.max(12, Math.min(innerWidth - width - 12, left))}px`, "important");
-        box.host.style.setProperty("top", `${Math.max(12, Math.min(innerHeight - height - 12, top))}px`, "important");
-      }
-    });
+    applyDisplay(box);
+    showQuick(box);
   }
 
   function ownHost(target) {
@@ -870,16 +809,13 @@
     if(globalThis.MAS_quick?.isOwn(target))return;
     const cover=target?.closest?.('[data-maslingo-cover]');
     if(cover){const box=boxes.get(cover.parentElement);if(box)showQuick(box);return;}
-    pointer = { x: event.clientX, y: event.clientY };
-    if (ownHost(target)) { clearTimeout(hideTimer); return; }
+    if (ownHost(target)) return;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="textbox"]')) return;
     const unit = findBlock(target);
     if (!unit || unit.element === hoverBlock) return;
     if(!hoverEnabled && !boxes.has(unit.element))return;
-    for (const box of boxes.values()) if (box.paragraph !== unit.element) hideBox(box);
     hoverBlock = unit.element;
     clearTimeout(showTimer);
-    clearTimeout(hideTimer);
     showTimer = setTimeout(() => {
       if ((hoverEnabled || autoEnabled) && hoverBlock === unit.element && unit.element.isConnected && window.getSelection()?.isCollapsed) {
         if(hoverEnabled)showBox(unitFor(unit.element) || unit);
@@ -890,13 +826,10 @@
 
   function onPointerOut(event) {
     if ((!hoverEnabled && !autoEnabled) || !hoverBlock) return;
-    const box = boxes.get(hoverBlock);
     const to = event.relatedTarget;
-    if (to && (hoverBlock.contains(to) || ownHost(to) === box?.host)) return;
+    if (to && hoverBlock.contains(to)) return;
     hoverBlock = null;
     clearTimeout(showTimer);
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => hideBox(box), HIDE_DELAY);
   }
 
   function onFocus(event) {
@@ -943,6 +876,7 @@
     for (const [element, box] of boxes) {
       if (!element.isConnected) { discard(box); continue; }
       if (bingSearchPage && !element.matches(BING_RESULT_SUBTITLE)) { discard(box); continue; }
+      const wasDisplayed = box.visible || box.covered;
       if (box.covered) {
         if (box.coverSpan?.parentNode === element && element.childNodes.length === 1) continue;
         invalidate(box);
@@ -954,7 +888,10 @@
         box.paragraphText = unit.text;
         box.nodes = unit.nodes;
         box.canCover = canCoverParagraph(element) && !element.contains(box.host);
-        if (box.visible && (!box.automatic || nearby.has(element))) enqueue(box);
+        if (wasDisplayed && (!box.automatic || nearby.has(element))) {
+          enqueue(box);
+          applyDisplay(box);
+        }
       }
     }
     for (const element of units.keys()) if (!next.has(element)) {
@@ -978,7 +915,7 @@
     if (box.dismissed || (box.sameLanguage && box.key === keyFor(box))) return;
     // Failures wait for an explicit retry, rather than looping on mutations.
     if (!box.error) enqueue(box);
-    applyAutoDisplay(box);
+    applyDisplay(box);
   }
 
   function scheduleScan() {
@@ -997,23 +934,18 @@
     if (!window.getSelection()?.isCollapsed) {
       hoverBlock = null;
       clearTimeout(showTimer);
-      for (const box of boxes.values()) hideBox(box);
     }
   }
 
   function onEscape(event) {
     if (event.key !== "Escape") return;
     clearTimeout(showTimer);
-    for (const box of boxes.values()) if (!box.automatic && !box.pinned) hideBox(box, true);
     hoverBlock = null;
   }
 
   function removeAll() {
     clearTimeout(showTimer);
-    clearTimeout(hideTimer);
     clearTimeout(scanTimer);
-    if (positionFrame !== null) cancelAnimationFrame(positionFrame);
-    positionFrame = null;
     hoverBlock = null;
     visibilityObserver?.disconnect();
     mutationObserver?.disconnect();
@@ -1027,9 +959,13 @@
   function retranslateAll() {
     revision++;
     for (const box of boxes.values()) {
+      const wasDisplayed = box.visible || box.covered;
       if (!box.manualTarget) box.setLanguage(language);
       invalidate(box);
-      if (box.visible && (!box.automatic || nearby.has(box.paragraph))) enqueue(box);
+      if (wasDisplayed && (!box.automatic || nearby.has(box.paragraph))) {
+        enqueue(box);
+        applyDisplay(box);
+      }
     }
     scheduleScan();
   }
@@ -1065,8 +1001,6 @@
       document.addEventListener("focusin", onFocus, true);
       document.addEventListener("selectionchange", onSelection);
       document.addEventListener("keydown", onEscape);
-      window.addEventListener("resize", schedulePosition, { passive: true });
-      window.addEventListener("scroll", schedulePosition, { passive: true, capture: true });
       scan();
     } else if (!wanted && enabled) {
       enabled = false;
@@ -1075,8 +1009,6 @@
       document.removeEventListener("focusin", onFocus, true);
       document.removeEventListener("selectionchange", onSelection);
       document.removeEventListener("keydown", onEscape);
-      window.removeEventListener("resize", schedulePosition);
-      window.removeEventListener("scroll", schedulePosition, true);
       removeAll();
     } else if (enabled) {
       if (oldAuto && !autoEnabled) {
@@ -1091,8 +1023,8 @@
       if (oldDisplayMode !== displayMode) {
         for (const box of boxes.values()) {
           if (!box.automatic && !bingSearchPage) continue;
-          if (displayMode === "source" && queue.delete(box)) box.loading = false;
-          applyAutoDisplay(box);
+          if (displayModeFor(box) === "source" && queue.delete(box)) box.loading = false;
+          applyDisplay(box);
         }
       }
       scan();

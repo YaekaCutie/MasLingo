@@ -290,13 +290,18 @@ try {
   );
   assert.equal(
     await source.$eval(
-      "[data-maslingo-textbox]",
+      "#source + [data-maslingo-textbox]",
       (e) => getComputedStyle(e).display,
     ),
-    "none",
+    "block",
   );
   await source.mouse.move(1, 1);
   await wait(600);
+  assert.equal(
+    await source.$eval("#source + [data-maslingo-textbox]", (host) => getComputedStyle(host).display),
+    "block",
+    "inline result persists when leaving source",
+  );
   assert.ok(
     await reader.$eval("#results", (e) =>
       e.textContent.includes("蛋白质在生物体"),
