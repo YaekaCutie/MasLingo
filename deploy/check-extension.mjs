@@ -86,6 +86,8 @@ const requireFile = (path, label) => {
 requireFile(manifest.background?.service_worker, "background.service_worker");
 requireFile(manifest.action?.default_popup, "action.default_popup");
 requireFile(manifest.options_page, "options_page");
+requireFile(manifest.side_panel?.default_path, "side_panel.default_path");
+if (!manifest.permissions?.includes("sidePanel")) fail("reader requires the sidePanel permission");
 for (const [size, path] of Object.entries(manifest.icons ?? {})) requireFile(path, `icons.${size}`);
 for (const script of manifest.content_scripts ?? []) {
   for (const file of script.js ?? []) requireFile(file, "content_scripts.js");

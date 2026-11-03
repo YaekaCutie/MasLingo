@@ -89,11 +89,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
-  if (message.type === "START_SELECT") startSelect();
-  if (message.type === "START_AUTO") startAutoRecognition();
+  if (message.type === "START_SELECT") { startSelect(); sendResponse({ok:true}); return; }
+  if (message.type === "START_AUTO") { startAutoRecognition(); sendResponse({ok:true}); return; }
   if (message.type === "RECOGNITION_RESULT") showRecognitionResult(message, activePageMode);
   if (message.type === "TRANSLATION_RESULT") showTranslationResult(message);
-  if (message.type === "PING") return;
+  if (message.type === "PING") { sendResponse({ok:true}); return; }
   if (message.type === "AUTO_STATUS") {
     // The popup polls this while it is open; it must never be slower than the
     // poll interval, so it only reads counters.
@@ -321,6 +321,7 @@ function startRecognition(rect, detectPage = false, mediaRect = null) {
 }
 
 function showBusy(rect, fullPage) {
+  globalThis.MAS_reader?.status(fullPage ? "正在识别整页文字…" : "正在识别所选区域…");
   const panel = document.createElement("div");
   panel.className = fullPage ? "maslingo-overlay maslingo-overlay-page" : "maslingo-overlay";
   if (!fullPage) {

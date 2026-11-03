@@ -33,11 +33,9 @@
   let body = null;
   let meta = null;
   let foot = null;
-  let anchorRect = null;
   let currentJob = null;
   let timer = null;
   let seq = 0;
-  let minimized = false;
   let targetLanguage = "简体中文";
   let inputAutoReplace = true;
   let applyingEdit = false;
@@ -67,54 +65,19 @@
     seq += 1;
     clearTimeout(timer);
     timer = null;
+    globalThis.MAS_reader?.remove(host?.dataset.readerId);
     host?.remove();
     host = null;
     shadow = null;
     body = null;
     meta = null;
     foot = null;
-    anchorRect = null;
     currentJob = null;
-    minimized = false;
-  }
-
-  function cardWidth() {
-    return Math.max(220, Math.min(380, window.innerWidth - 24));
-  }
-
-  /**
-   * Keep the card beside the selection and inside the viewport.
-   *
-   * It prefers the space below the selected line, flips above when that is too
-   * tight, and finally clamps to the viewport with the card's own max-height and
-   * scrolling handling anything taller than the window.
-   */
-  function placeCard() {
-    if (!host || !anchorRect) return;
-    const margin = 12;
-    const gap = 9;
-    const width = host.getBoundingClientRect().width || cardWidth();
-    const left = Math.min(
-      Math.max(anchorRect.left + anchorRect.width / 2 - width / 2, margin),
-      Math.max(margin, window.innerWidth - width - margin),
-    );
-    host.style.left = `${Math.round(left)}px`;
-
-    const height = host.getBoundingClientRect().height;
-    let top = anchorRect.bottom + gap;
-    if (top + height > window.innerHeight - margin) {
-      const above = anchorRect.top - gap - height;
-      top = above >= margin
-        ? above
-        : Math.max(margin, Math.min(anchorRect.top - gap, window.innerHeight - height - margin));
-    }
-    host.style.top = `${Math.round(top)}px`;
   }
 
   function setBody(node) {
     if (!body) return;
     body.replaceChildren(node);
-    requestAnimationFrame(placeCard);
   }
 
   function setFooter(leftText, rightText = "Esc 关闭") {
@@ -129,363 +92,18 @@
   function createPopup() {
     host = document.createElement("div");
     host.id = "maslingo-selection-popup";
-    host.style.position = "fixed";
-    host.style.left = "12px";
-    host.style.top = "12px";
-    host.style.width = `${cardWidth()}px`;
-    host.style.zIndex = "2147483647";
-    host.style.display = "block";
-    host.style.visibility = "hidden";
-
-    shadow = host.attachShadow({ mode: "open" });
-    shadow.innerHTML = `
-      <style>
-        :host { all: initial; }
-        *, *::before, *::after { box-sizing: border-box; }
-        .card {
-          width: 100%;
-          max-height: min(72vh, 560px);
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          border: 1px solid rgba(15, 23, 42, .14);
-          border-radius: 12px;
-          background: #ffffff;
-          box-shadow: 0 14px 34px rgba(15, 23, 42, .18), 0 2px 7px rgba(15, 23, 42, .07);
-          color: #1c1e21;
-          font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-          font-size: 13px;
-          line-height: 1.5;
-          text-align: left;
-          direction: ltr;
-        }
-        .head {
-          flex: 0 0 auto;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 9px 12px;
-          border-bottom: 1px solid rgba(15, 23, 42, .07);
-          background: #fafaf9;
-        }
-        .kicker {
-          flex: 0 0 auto;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: .02em;
-          color: #1c1e21;
-        }
-        .meta {
-          flex: 1 1 auto;
-          min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          text-align: right;
-          font-size: 10.5px;
-          color: #8a8f98;
-        }
-        .close {
-          flex: 0 0 auto;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 24px;
-          height: 24px;
-          margin: 0;
-          padding: 0;
-          border: 0;
-          border-radius: 7px;
-          background: transparent;
-          color: #6b7280;
-          font: 18px/1 system-ui, sans-serif;
-          cursor: pointer;
-        }
-        .close:hover { background: rgba(15, 23, 42, .07); color: #1c1e21; }
-        .min {
-          flex: 0 0 auto;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          width: 24px;
-          height: 24px;
-          margin: 0;
-          padding: 0;
-          border: 0;
-          border-radius: 7px;
-          background: transparent;
-          color: #6b7280;
-          font: 17px/1 system-ui, sans-serif;
-          cursor: pointer;
-        }
-        .min:hover { background: rgba(15, 23, 42, .07); color: #1c1e21; }
-        .mini {
-          display: none;
-          width: 38px;
-          height: 38px;
-          align-items: center;
-          justify-content: center;
-          border: 1px solid rgba(15, 23, 42, .16);
-          border-radius: 50%;
-          background: #ffffff;
-          box-shadow: 0 6px 18px rgba(15, 23, 42, .18), 0 1px 4px rgba(15, 23, 42, .08);
-          color: #1c1e21;
-          font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
-          font-size: 14px;
-          font-weight: 650;
-          line-height: 1;
-          cursor: pointer;
-        }
-        :host(.minimized) .card { display: none; }
-        :host(.minimized) .mini { display: inline-flex; }
-        .body {
-          flex: 1 1 auto;
-          min-height: 0;
-          overflow-y: auto;
-          overscroll-behavior: contain;
-          padding: 12px 14px 14px;
-        }
-        .loading {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 4px 0 6px;
-          color: #6b7280;
-          font-size: 12px;
-        }
-        .loading i {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: #9ca3af;
-          animation: pulse 1s ease-in-out infinite;
-        }
-        .loading i:nth-child(2) { animation-delay: .15s; }
-        .loading i:nth-child(3) { animation-delay: .3s; }
-        @keyframes pulse {
-          0%, 100% { opacity: .28; transform: translateY(0); }
-          50% { opacity: 1; transform: translateY(-2px); }
-        }
-        .wordline {
-          display: flex;
-          align-items: baseline;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-bottom: 1px;
-        }
-        .word {
-          font-size: 24px;
-          font-weight: 650;
-          line-height: 1.2;
-          letter-spacing: .01em;
-          overflow-wrap: anywhere;
-        }
-        .reading {
-          font-size: 13px;
-          color: #6b7280;
-          overflow-wrap: anywhere;
-        }
-        .source {
-          margin: 2px 0 10px;
-          font-size: 10.5px;
-          color: #9ca3af;
-          line-height: 1.45;
-        }
-        .senses { display: flex; flex-direction: column; gap: 8px; }
-        .sense {
-          padding: 9px 10px;
-          border: 1px solid rgba(15, 23, 42, .08);
-          border-radius: 9px;
-          background: #ffffff;
-        }
-        .sense.is-context {
-          border-color: rgba(28, 30, 33, .24);
-          background: #f5f3ef;
-          box-shadow: inset 3px 0 0 #1c1e21;
-        }
-        .sense-head {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-wrap: wrap;
-          margin-bottom: 4px;
-        }
-        .num {
-          display: inline-grid;
-          place-items: center;
-          width: 17px;
-          height: 17px;
-          border-radius: 50%;
-          background: #f1f2f4;
-          color: #6b7280;
-          font-size: 10px;
-          font-weight: 600;
-        }
-        .pos {
-          padding: 1px 6px;
-          border-radius: 999px;
-          background: #eef0f3;
-          color: #4b5563;
-          font-size: 10.5px;
-          font-weight: 500;
-          white-space: nowrap;
-        }
-        .is-context .pos { background: #1c1e21; color: #ffffff; }
-        .tag {
-          margin-left: auto;
-          padding: 2px 6px;
-          border-radius: 999px;
-          background: rgba(28, 30, 33, .08);
-          color: #1c1e21;
-          font-size: 10px;
-          font-weight: 600;
-          white-space: nowrap;
-        }
-        .meaning {
-          margin: 0;
-          color: #1f2937;
-          font-size: 13.5px;
-          line-height: 1.55;
-          overflow-wrap: anywhere;
-        }
-        .example {
-          margin-top: 6px;
-          padding-left: 8px;
-          border-left: 2px solid rgba(15, 23, 42, .10);
-        }
-        .ex {
-          margin: 0;
-          color: #4b5563;
-          font-size: 12px;
-          line-height: 1.45;
-          overflow-wrap: anywhere;
-        }
-        .ex-t {
-          margin: 2px 0 0;
-          color: #8a8f98;
-          font-size: 12px;
-          line-height: 1.45;
-          overflow-wrap: anywhere;
-        }
-        .context-note {
-          margin: 8px 0 0;
-          color: #9ca3af;
-          font-size: 10.5px;
-          line-height: 1.45;
-        }
-        .quote {
-          margin: 0 0 8px;
-          padding: 7px 9px;
-          border-radius: 8px;
-          background: #f7f7f6;
-          color: #6b7280;
-          font-size: 12px;
-          line-height: 1.5;
-          max-height: 64px;
-          overflow: auto;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-          unicode-bidi: plaintext;
-        }
-        .translation {
-          margin: 0;
-          color: #1c1e21;
-          font-size: 15px;
-          line-height: 1.65;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-          unicode-bidi: plaintext;
-        }
-        .notice {
-          margin: 9px 0 0;
-          color: #8a8f98;
-          font-size: 10.5px;
-          line-height: 1.5;
-        }
-        .foot {
-          flex: 0 0 auto;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          padding: 7px 12px;
-          border-top: 1px solid rgba(15, 23, 42, .07);
-          background: #fafaf9;
-          color: #9ca3af;
-          font-size: 10.5px;
-        }
-        .foot-left, .foot-right {
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .foot-right { flex: 0 0 auto; }
-        .error-title {
-          margin: 0 0 4px;
-          color: #b42318;
-          font-size: 13px;
-          font-weight: 600;
-        }
-        .error-text {
-          margin: 0;
-          color: #6b7280;
-          font-size: 12px;
-          line-height: 1.5;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-        }
-        .retry {
-          margin-top: 10px;
-          padding: 5px 10px;
-          border: 1px solid rgba(15, 23, 42, .14);
-          border-radius: 7px;
-          background: #ffffff;
-          color: #1c1e21;
-          font-family: inherit;
-          font-size: 12px;
-          line-height: 1.3;
-          cursor: pointer;
-        }
-        .retry:hover { background: #f6f6f5; }
-        .retry:disabled { opacity: .5; cursor: not-allowed; }
-        @media (prefers-reduced-motion: reduce) {
-          .loading i { animation: none; opacity: .7; }
-        }
-      </style>
-      <div class="card" role="dialog" aria-label="划词翻译" aria-live="polite">
-        <div class="head">
-          <span class="kicker">划词翻译</span>
-          <span class="meta"></span>
-          <button class="min" type="button" aria-label="最小化为图标" title="最小化为图标">—</button>
-          <button class="close" type="button" aria-label="关闭">×</button>
-        </div>
-        <div class="body"></div>
-        <div class="foot"></div>
-      </div>
-      <button class="mini" type="button" aria-label="展开划词翻译" title="展开划词翻译">译</button>
-    `;
+    host.style.setProperty('display', 'none', 'important');
+    shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `<div class="card"><div class="head"><span class="title">划词翻译</span><span class="meta"></span></div><div class="body"></div><div class="foot"></div></div>`;
     meta = shadow.querySelector(".meta");
     body = shadow.querySelector(".body");
     foot = shadow.querySelector(".foot");
-    shadow.querySelector(".min").addEventListener("click", () => setMinimized(true));
-    shadow.querySelector(".mini").addEventListener("click", () => setMinimized(false));
-    shadow.querySelector(".close").addEventListener("click", closePopup);
-
-    // Clicking the card must not reach a page-level click handler (manga
-    // readers, in particular, often treat any click as a page turn).
-    for (const type of ["pointerdown", "mousedown", "mouseup", "click", "dblclick"]) {
-      host.addEventListener(type, (event) => event.stopPropagation());
-    }
     document.documentElement.appendChild(host);
-  }
-
-  /** Collapse the card to a small floating icon, or bring it back. */
-  function setMinimized(value) {
-    if (!host) return;
-    minimized = Boolean(value);
-    host.classList.toggle("minimized", minimized);
-    host.style.width = minimized ? "38px" : `${cardWidth()}px`;
-    requestAnimationFrame(placeCard);
+    globalThis.MAS_reader?.mount(host, {
+      kind: currentJob?.input ? '输入框译文' : currentJob?.isWord ? '划词词典' : '划词翻译',
+      source: currentJob?.text, element: currentJob?.input?.control || currentJob?.element,
+      dismiss: closePopup,
+    });
   }
 
   function renderLoading(job) {
@@ -654,7 +272,6 @@
       undo.disabled = true;
     });
     wrap.append(undo);
-    requestAnimationFrame(placeCard);
   }
 
   function renderNotice(job, result = {}) {
@@ -815,6 +432,7 @@
     const job = {
       text,
       context,
+      element: range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement,
       isWord,
     };
     if (!isWord && globalThis.MAS_providers?.likelySameLanguage?.(text, targetLanguage, context)) {
@@ -828,21 +446,8 @@
     closePopup();
     const id = ++seq;
     currentJob = job;
-    anchorRect = {
-      left: rect.left,
-      right: rect.right,
-      top: rect.top,
-      bottom: rect.bottom,
-      width: rect.width,
-      height: rect.height,
-    };
     createPopup();
     if (lookup) renderLoading(job);
-    requestAnimationFrame(() => {
-      if (!host) return;
-      host.style.visibility = "visible";
-      placeCard();
-    });
     if (lookup) requestLookup(job, id);
   }
 
@@ -893,48 +498,8 @@
     if (currentJob?.input?.control === event.target) closePopup();
   }, true);
   document.addEventListener("compositionend", (event) => composing.delete(event.target), true);
-  document.addEventListener("pointerdown", (event) => {
-    if (!host || elementInOwnUi(event.target)) return;
-    closePopup();
-  }, true);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closePopup();
-  }, true);
-
-  window.addEventListener("resize", () => {
-    if (!host) return;
-    const selection = document.getSelection?.();
-    if (selection && selection.rangeCount && !selection.isCollapsed) {
-      const rect = selection.getRangeAt(0).getBoundingClientRect();
-      if (rect.width || rect.height) {
-        anchorRect = { ...rect.toJSON?.() ?? {
-          left: rect.left, right: rect.right, top: rect.top,
-          bottom: rect.bottom, width: rect.width, height: rect.height,
-        } };
-        placeCard();
-        return;
-      }
-    }
-    closePopup();
-  }, { passive: true });
-
-  window.addEventListener("scroll", (event) => {
-    if (!host || elementInOwnUi(event.target)) return;
-    const selection = document.getSelection?.();
-    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-      closePopup();
-      return;
-    }
-    const rect = selection.getRangeAt(0).getBoundingClientRect();
-    if (!rect.width && !rect.height) {
-      closePopup();
-      return;
-    }
-    anchorRect = {
-      left: rect.left, right: rect.right, top: rect.top,
-      bottom: rect.bottom, width: rect.width, height: rect.height,
-    };
-    placeCard();
   }, true);
 
   async function sync() {

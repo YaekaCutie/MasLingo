@@ -24,7 +24,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // MAS_panel undefined.
 const contentScripts = [
   "extension/config.js", "extension/translation/providers.js",
-  "extension/content/glass.js",
+  "extension/content/reader-bridge.js",
   "extension/content/overlay.js", "extension/content/auto.js",
   "extension/content/panel.js", "extension/content/content.js",
 ].map((name) => readFileSync(join(repoRoot, name), "utf8"));
@@ -33,10 +33,10 @@ const contentScripts = [
 // then found it had no positioning at all. Same list and same order as the
 // manifest, since window.css reads tokens defined in glass.css.
 const contentStyles = [
-  "glass", "window", "status", "marker", "page",
+  "marker", "page",
 ].map((name) => readFileSync(join(repoRoot, "extension", "content", "styles", `${name}.css`), "utf8")).join("\n");
 
-const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+const browser = await puppeteer.launch({ headless: true, executablePath:process.env.CHROME_BIN || undefined, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const failures = [];
 const check = (name, condition, detail = "") => {
   if (condition) {
@@ -56,11 +56,12 @@ try {
     // Enough of the extension API for the content scripts to load and for the
     // panel to mount. Status text lives in the panel's strip now, so the panel
     // has to exist for the status assertions below to mean anything.
+    globalThis.readerMessages=[];
     globalThis.chrome = {
       runtime: {
         onMessage: { addListener() {} },
         getManifest: () => ({ version: "0.0.0-test" }),
-        sendMessage: async () => ({ ok: false }),
+        sendMessage: async message => {readerMessages.push(message);return {ok:false};},
       },
       storage: {
         local: { get: async () => ({}), set: async () => {} },
@@ -561,12 +562,6 @@ try {
     // a second row, appear over the artwork.
     out.noToastElement = document.getElementById("maslingo-toast") === null;
     showToast("测试提示", "info");
-    const panel = document.getElementById("maslingo-panel");
-    const line = document.getElementById("maslingo-line");
-    const text = document.getElementById("maslingo-line-text");
-    out.statusText = text ? text.textContent.trim() : null;
-    out.statusInPanel = Boolean(panel && line && panel.contains(line));
-    out.statusSingleLine = text ? getComputedStyle(text).whiteSpace === "nowrap" : false;
     out.legacySurfaces = Boolean(
       document.getElementById("maslingo-status") || document.getElementById("maslingo-status-line"),
     );
@@ -584,14 +579,9 @@ try {
 
   check("旧的居中结果面板函数已移除", overlay.noticeFunctionRemoved);
   check("不再存在第二个提示元素", overlay.noToastElement);
-  check("状态提示写进面板内的消息行",
-    overlay.statusText === "测试提示",
-    JSON.stringify({ text: overlay.statusText }));
-  check("消息行在悬浮窗内部", overlay.statusInPanel === true);
+  await page.waitForFunction(()=>readerMessages.some(m=>m.type==='READER_STATUS'&&m.text==='测试提示'));
+  check("状态送到阅读侧栏，不创建页面面板", overlay.floatingSurfaces.length === 0);
   check("旧的浮层与独立状态行都已移除", overlay.legacySurfaces === false);
-  check("消息行只有一行", overlay.statusSingleLine);
-  check("页面上只剩悬浮窗一个浮层", overlay.floatingSurfaces.length === 1,
-    JSON.stringify(overlay.floatingSurfaces));
   check("关闭翻译时不留下任何面板", overlay.panelsAfterNone === 0, `还有 ${overlay.panelsAfterNone} 个`);
   check("关闭翻译时不留下覆盖画布", overlay.canvasesAfterNone === 0, `还有 ${overlay.canvasesAfterNone} 个`);
 } finally {

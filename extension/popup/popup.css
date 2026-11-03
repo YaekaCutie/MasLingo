@@ -1,160 +1,78 @@
-/* Popup.
- *
- * Same design language as the in-page panel: flat surfaces on one neutral
- * palette, no gradients, no shadows, and colour reserved for status. The popup
- * sits on the browser's own surface, so it stays opaque — acrylic is only for
- * what floats over page content. The teal brand hue that used to live here was
- * the last piece of the product not speaking the panel's language; the panel
- * keeps hue for the four status values and nothing else.
- */
-:root {
-  --bg: #fbfbfa;
-  --text: #1c1e21;            /* the panel's ink */
-  --muted: #3d434e;           /* the panel's secondary ink */
-  --accent: #1c1e21;          /* actions are ink; status owns the colour */
-  --accent-strong: #2e3033;
-  --err: #b3261e;             /* the panel's error text */
-  --ok: #248f52;              /* the panel's success dot */
-  --warn: #c98a12;            /* the panel's working dot */
-  --bad: #d33a3f;             /* the panel's failure dot */
-  --idle-dot: #8e8e93;
-  /* Fills, not lines: the flat half of the design language. */
-  --fill: rgba(120, 120, 128, .13);
-  --fill-strong: rgba(120, 120, 128, .22);
-  --fill-hover: rgba(120, 120, 128, .30);
-  --line: rgba(28, 30, 33, .12);
-  --border: rgba(28, 30, 33, .10);
-  --r-lg: 16px;
-  --r-md: 12px;
-  --r-sm: 10px;
-  --r-xs: 8px;
-}
-
-* { box-sizing: border-box; }
-
 body {
-  width: 300px;
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
-    "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
+  width: 330px;
 }
-
-main { padding: 14px; }
-
-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding: 0 2px; }
-/* A title, like the panel's brand line — it used to be a muted caption. */
-h1 { font-size: 13.5px; margin: 0; font-weight: 600; letter-spacing: .01em; color: var(--text); }
-
-.icon-btn {
-  width: 26px;
-  height: 26px;
-  border: 0;
-  border-radius: var(--r-xs);
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background .15s ease;
+main {
+  padding: 20px;
 }
-.icon-btn:hover { color: var(--text); background: var(--fill); }
-
-/* --- primary feature ------------------------------------------------------ */
-
-.feature {
-  border-radius: var(--r-md);
-  background: var(--fill-strong);
-  padding: 13px;
-  margin-bottom: 10px;
-}
-/* Manual mode is present but not competing: the same shape with no surface at
-   all. Hierarchy comes from fill weight, not from outlined-versus-filled. */
-.feature.muted { background: transparent; padding: 6px 2px 10px; }
-
-.feature-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.feature-title { font-size: 14px; font-weight: 600; }
-.feature.muted .feature-title { font-size: 12px; font-weight: 600; color: var(--muted); }
-
-/* Switch: the same dark "on" track as the panel's. An "on" toggle is a control
-   state, not a status, so it carries luminance rather than hue. */
-.switch { position: relative; display: inline-flex; cursor: pointer; }
-.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-track {
-  width: 42px;
-  height: 24px;
-  border-radius: 999px;
-  background: var(--fill-strong);
-  transition: background .18s ease;
+header {
   display: flex;
   align-items: center;
-  padding: 3px;
+  justify-content: space-between;
+  margin-bottom: 20px;
 }
-.switch-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform .18s cubic-bezier(.3, .7, .4, 1);
+h1 {
+  font-size: 18px;
 }
-.switch input:checked + .switch-track { background: rgba(28, 30, 33, .85); }
-.switch input:checked + .switch-track .switch-thumb { transform: translateX(18px); }
-.switch input:focus-visible + .switch-track {
-  outline: 2px solid rgba(28, 30, 33, .38);
-  outline-offset: 2px;
-}
-
-/* Status: the panel's four values, and the only colour in the popup. */
-.state { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; color: var(--muted); }
-.state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle-dot); flex: 0 0 auto; }
-.state[data-state="scanning"] .state-dot { background: var(--warn); animation: maslingo-pulse 1.6s ease-in-out infinite; }
-.state[data-state="working"] .state-dot { background: var(--warn); animation: maslingo-pulse 1s ease-in-out infinite; }
-.state[data-state="done"] .state-dot { background: var(--ok); }
-.state[data-state="error"] .state-dot { background: var(--bad); }
-.state[data-state="scanning"] #autoStateText,
-.state[data-state="working"] #autoStateText,
-.state[data-state="done"] #autoStateText { color: var(--text); }
-@keyframes maslingo-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-@media (prefers-reduced-motion: reduce) { .state-dot { animation: none !important; } }
-
-.hint { margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--muted); }
-
-/* Controls: filled with a hairline, the panel's recipe. */
-button:not(.icon-btn) {
+.wide {
   width: 100%;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--fill-strong);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.2;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background .15s ease;
 }
-.feature.muted button:not(.icon-btn) { background: var(--fill); }
-button:not(.icon-btn):hover { background: var(--fill-hover); }
-button.ghost { color: var(--muted); background: var(--fill); }
-
-details { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
-summary { cursor: pointer; color: var(--muted); font-size: 11px; padding: 2px 0; }
-summary:hover { color: var(--text); }
-
+.intro {
+  margin: 9px 0 22px;
+}
+.feature {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.feature-title {
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink);
+}
+.feature .hint {
+  margin-top: 7px;
+}
+.feature-head + .hint + .feature-head {
+  margin-top: 18px;
+}
+.state {
+  margin-top: 8px;
+}
+.feature.muted {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+}
+.feature.muted .hint {
+  grid-column: 1/-1;
+  margin: 0;
+}
+details {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
 pre {
   white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 11px;
-  line-height: 1.5;
-  background: var(--fill);
-  border-radius: var(--r-sm);
-  padding: 9px 11px;
-  margin: 8px 0;
-  max-height: 150px;
-  overflow: auto;
+  overflow-wrap: anywhere;
+  font: 12px/1.65 inherit;
+  background: var(--soft);
+  padding: 10px;
+  border-radius: 6px;
 }
-
-.detail-actions { display: flex; gap: 8px; }
-.detail-actions button { margin: 0; font-weight: 500; font-size: 12px; }
+.detail-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.detail-actions button {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+main {
+  animation: enter 0.18s ease-out;
+}

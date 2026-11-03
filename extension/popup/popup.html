@@ -4,18 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>MasLingo</title>
+  <link rel="stylesheet" href="../ui/system.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <main>
     <header>
-      <h1>MasLingo</h1>
-      <button id="settings" class="icon-btn" title="设置" aria-label="设置">⚙</button>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">M</span><h1>MasLingo</h1></div>
+      <button id="settings" class="icon-btn" title="设置" aria-label="设置">设置</button>
     </header>
 
+    <button id="openReader" class="primary wide" disabled>打开阅读侧栏 →</button>
+    <p class="hint intro">译文在侧栏，阅读在眼前。</p>
     <section class="feature">
       <div class="feature-head">
-        <span class="feature-title">漫画自动翻译</span>
+        <label class="feature-title" for="autoTranslate">漫画自动翻译</label>
         <label class="switch">
           <input id="autoTranslate" type="checkbox">
           <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -32,17 +35,12 @@
         <label class="feature-title" for="webAutoTranslate">网页自动翻译</label>
         <label class="switch"><input id="webAutoTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>
-      <p class="hint">按阅读位置翻译正文、标题和图注，可在悬浮窗或设置中切换双语、纯译文和纯原文。</p>
+      <p class="hint">按阅读位置翻译正文、标题和图注，可在侧栏中切换双语、纯译文和纯原文。</p>
       <div class="feature-head">
         <label class="feature-title" for="hoverTranslate">悬停翻译</label>
         <label class="switch"><input id="hoverTranslate" type="checkbox"><span class="switch-track"><span class="switch-thumb"></span></span></label>
       </div>
-      <p class="hint">停留在文字上显示译文，可固定、定位原文或重试。</p>
-    </section>
-
-    <section class="feature muted">
-      <div class="feature-title">视频字幕</div>
-      <p class="hint">视频下方提供字幕翻译与双语／纯译文／纯原文切换，控制条不遮挡画面。无字幕时点击「无字幕识别」，共享当前标签页声音并运行本地语音后端。</p>
+      <p class="hint">停留在文字上，译文进入阅读侧栏。支持定位原文和重试。</p>
     </section>
 
     <section class="feature muted">
@@ -54,7 +52,7 @@
     <details id="details">
       <summary>诊断信息</summary>
       <pre id="autoDiag">自动翻译：未开启</pre>
-      <pre id="status">准备就绪</pre>
+      <pre id="status" role="status" aria-live="polite">准备就绪</pre>
       <div class="detail-actions">
         <button id="health" class="ghost">检查 OCR 后端</button>
         <button id="autoPage" class="ghost">识别整页气泡</button>

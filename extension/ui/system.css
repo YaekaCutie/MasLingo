@@ -1,0 +1,254 @@
+:root {
+  color-scheme: light;
+  --ink: #18212f;
+  --muted: #667085;
+  --line: #e5e9ef;
+  --blue: #285de5;
+  --soft: #f3f6fc;
+  --radius: 6px;
+  font:
+    14px/1.55 "Segoe UI",
+    "Microsoft YaHei",
+    system-ui,
+    sans-serif;
+  color: var(--ink);
+  background: #fff;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button,
+select {
+  cursor: pointer;
+}
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  color: var(--ink);
+  background: #fff;
+}
+button {
+  font-weight: 500;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    transform 0.16s;
+}
+button:hover {
+  background: var(--soft);
+  border-color: #bccbee;
+}
+button:active {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary,
+.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.primary:hover {
+  background: #194bc8;
+}
+a {
+  color: var(--blue);
+  text-underline-offset: 3px;
+}
+button.link {
+  border: 0;
+  color: var(--blue);
+  padding: 4px 0;
+  background: transparent;
+}
+button.icon-btn {
+  padding: 6px;
+  min-width: 32px;
+  background: transparent;
+  border: 0;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: 22px;
+  letter-spacing: -0.5px;
+  font-weight: 650;
+}
+h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+h3 {
+  font-size: 14px;
+}
+.hint,
+.sub,
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.sub {
+  margin-top: 3px;
+}
+.row,
+.feature-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.row-text {
+  min-width: 0;
+}
+.row .hint {
+  margin-top: 3px;
+}
+.row + .row {
+  margin-top: 18px;
+}
+.switch {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  cursor: pointer;
+  align-items: center;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+}
+.switch-track {
+  display: block;
+  width: 36px;
+  height: 21px;
+  border-radius: 20px;
+  background: #c8d0dc;
+  padding: 3px;
+  transition: background 0.18s;
+}
+.switch-thumb {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.18s;
+}
+.switch input:checked + .switch-track {
+  background: var(--blue);
+}
+.switch input:checked + .switch-track .switch-thumb {
+  transform: translateX(15px);
+}
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+.switch input:disabled + .switch-track {
+  opacity: 0.5;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 24px 0;
+}
+[hidden] {
+  display: none !important;
+}
+.brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: var(--blue);
+  color: white;
+  border-radius: 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.state-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #667085;
+  margin-right: 6px;
+}
+.state[data-state="error"] {
+  color: #b42318;
+}
+.state[data-state="working"] .state-dot {
+  background: var(--blue);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.state {
+  font-size: 12px;
+  color: var(--muted);
+}
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

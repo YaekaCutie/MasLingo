@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import puppeteer from "puppeteer";
 
-const scripts = ["overlay.js", "auto.js", "content.js"].map(name =>
+const scripts = ["reader-bridge.js", "overlay.js", "auto.js", "content.js"].map(name =>
   readFileSync(new URL(`../extension/content/${name}`, import.meta.url), "utf8"));
 scripts.unshift(readFileSync(new URL("../extension/translation/providers.js", import.meta.url), "utf8"));
-const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+const browser = await puppeteer.launch({ headless: true, executablePath:process.env.CHROME_BIN || undefined, args: ["--no-sandbox", "--disable-dev-shm-usage"] });
 const errors = [];
 try {
   async function fixture(height = 700, autoStart = true) {
@@ -14,15 +14,18 @@ try {
     page.on("pageerror", error => errors.push(String(error)));
     await page.setViewport({ width: 900, height: 900 });
     await page.setContent('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>MasLingo auto regression</title><body><h1>Automatic manga translation</h1></body>');
-    for (const name of ["glass", "window", "status", "marker", "page"]) {
+    for (const name of ["marker", "page"]) {
       await page.addStyleTag({content:readFileSync(new URL(`../extension/content/styles/${name}.css`, import.meta.url),"utf8")});
     }
     await page.evaluate(height => {
+      if(!crypto.randomUUID)crypto.randomUUID=()=> 'manga-fixture';
+      globalThis.readerMessages=[];globalThis.messageListeners=[];
       globalThis.calls = { ocr: 0, translation: 0, pixels: 0, sizes: [] };
       globalThis.hold = false; globalThis.failOcr = false; globalThis.unsafeRepair = false;
       globalThis.MAS_panel = { mount: async () => {}, status() {} };
       globalThis.chrome = {
-        runtime: { onMessage: { addListener() {} }, sendMessage: async message => {
+        runtime: { onMessage: { addListener(fn) {messageListeners.push(fn);} }, sendMessage: async message => {
+          if(message.type?.startsWith('READER_')){readerMessages.push(message);return {ok:true};}
           if (message.type === "AUTO_OCR") {
             calls.ocr += 1;
             const bitmap = await createImageBitmap(await (await fetch(message.image)).blob());
@@ -143,92 +146,18 @@ try {
   await preserved.waitForSelector(".maslingo-adjacent-translation");
   assert.equal(await preserved.evaluate(() => document.querySelectorAll("canvas.maslingo-result").length),0,
     "Uncertain repair must leave the source image without an erasing canvas");
-  assert.equal(await preserved.evaluate(() => document.querySelector(".maslingo-adjacent-translation").shadowRoot.querySelector(".text").textContent),"你好");
-  await preserved.evaluate(() => {
-    const img=document.getElementById("manga"),box=MAS_overlay.documentRect(img);
-    const card=MAS_overlay.documentRect(document.querySelector(".maslingo-adjacent-translation"));
-    const obstacle=document.createElement("canvas");obstacle.className="maslingo-result caption-obstacle";
-    globalThis.captionObstacle=MAS_overlay.anchor(obstacle,img,{left:(card.left-box.left)/box.width,
-      top:(card.top-box.top)/box.height,width:card.width/box.width,height:card.height/box.height});
-    MAS_overlay.reposition();
-  });
-  await preserved.waitForFunction(() => {
-    const card=document.querySelector(".maslingo-adjacent-translation").getBoundingClientRect();
-    const obstacle=document.querySelector(".caption-obstacle").getBoundingClientRect();
-    return card.right<=obstacle.left || card.left>=obstacle.right || card.bottom<=obstacle.top || card.top>=obstacle.bottom;
-  });
-  assert.ok(await preserved.evaluate(() =>
-    Number(getComputedStyle(document.querySelector(".maslingo-adjacent-translation")).zIndex) >
-    Number(getComputedStyle(document.querySelector(".caption-obstacle")).zIndex)),
-    "Caption controls must remain above neighbouring translation canvases");
-  await preserved.evaluate(() => {MAS_overlay.release(captionObstacle);MAS_overlay.reposition();});
-  await preserved.evaluate(() => new Promise(requestAnimationFrame));
-  const beforeScroll = await preserved.$eval(".maslingo-adjacent-translation",node=>node.getBoundingClientRect().top+scrollY);
-  await preserved.evaluate(() => {document.body.style.paddingBottom="1500px";scrollTo(0,200);MAS_overlay.reposition();});
-  await preserved.waitForFunction(() => !document.querySelector(".maslingo-box"));
-  const afterScroll = await preserved.$eval(".maslingo-adjacent-translation",node=>node.getBoundingClientRect().top+scrollY);
-  assert.ok(Math.abs(beforeScroll-afterScroll)<1,"Caption follows its source in document coordinates");
-  const captionButton = (await preserved.evaluateHandle(() =>
-    document.querySelector(".maslingo-adjacent-translation").shadowRoot.querySelector(".collapse"))).asElement();
-  await captionButton.click();
-  assert.equal(await preserved.$eval(".maslingo-adjacent-translation",node=>node.dataset.collapsed),"true");
-  await captionButton.click();
-  assert.equal(await preserved.$eval(".maslingo-adjacent-translation",node=>node.dataset.collapsed),"false");
-  assert.ok(await preserved.evaluate(() => {
-    const card=document.querySelector(".maslingo-adjacent-translation"),pin=document.querySelector(".maslingo-caption-source");
-    return card.dataset.sourceId===pin.dataset.sourceId && card.shadowRoot.querySelector(".source").title.includes("こんにちは");
-  }),"Caption and source marker share an id and expose the source text");
-  const dragHandle=(await preserved.evaluateHandle(()=>
-    document.querySelector(".maslingo-adjacent-translation").shadowRoot.querySelector(".handle"))).asElement();
-  const dragStart=await preserved.$eval(".maslingo-adjacent-translation",node=>({left:node.getBoundingClientRect().left,top:node.getBoundingClientRect().top}));
-  await preserved.evaluate(()=>{globalThis.readerPointerUps=0;document.body.addEventListener("pointerup",()=>readerPointerUps++);});
-  const handleBox=await dragHandle.boundingBox();
-  await preserved.mouse.move(handleBox.x+5,handleBox.y+5);await preserved.mouse.down();
-  await preserved.mouse.move(handleBox.x+45,handleBox.y+35,{steps:8});await preserved.mouse.up();
-  const dragged=await preserved.$eval(".maslingo-adjacent-translation",node=>({left:node.getBoundingClientRect().left,top:node.getBoundingClientRect().top,moved:node.dataset.moved}));
-  assert.equal(dragged.moved,"true");
-  assert.ok(Math.abs(dragged.left-dragStart.left-40)<2 && Math.abs(dragged.top-dragStart.top-30)<2,
-    "Pointer dragging moves the translation without snapping back to auto placement");
-  assert.equal(await preserved.evaluate(()=>readerPointerUps),0,"Dragging a caption must not trigger the reader's page-turn handler");
-  await preserved.evaluate(()=>MAS_overlay.reposition());await preserved.evaluate(()=>new Promise(requestAnimationFrame));
-  assert.ok(await preserved.evaluate(()=>Number(document.querySelector(".maslingo-caption-source").shadowRoot.querySelector("svg").style.opacity)>0),
-    "A moved caption shows a connector to its numbered source");
-  const movedTop=await preserved.$eval(".maslingo-adjacent-translation",node=>node.getBoundingClientRect().top+scrollY);
-  await preserved.evaluate(()=>{scrollBy(0,40);MAS_overlay.reposition();});
-  await preserved.evaluate(()=>new Promise(requestAnimationFrame));
-  assert.ok(Math.abs(movedTop-await preserved.$eval(".maslingo-adjacent-translation",node=>node.getBoundingClientRect().top+scrollY))<1,
-    "The dragged position follows the image during scrolling");
-  await dragHandle.focus();await preserved.keyboard.press("Home");
-  assert.equal(await preserved.$eval(".maslingo-adjacent-translation",node=>node.dataset.moved),undefined);
-  const sourceButton=(await preserved.evaluateHandle(()=>
-    document.querySelector(".maslingo-adjacent-translation").shadowRoot.querySelector(".source"))).asElement();
-  await sourceButton.click();
-  assert.equal(await preserved.$eval(".maslingo-caption-source",node=>node.dataset.active),"true");
-  await dragHandle.dispose();await sourceButton.dispose();
-  await preserved.evaluate(() => {const img=document.getElementById("manga");img.style.maxWidth="100%";img.style.height="auto";scrollTo(0,0);});
-  await preserved.setViewport({width:390,height:844});
-  await preserved.evaluate(() => MAS_overlay.reposition());
-  await preserved.waitForFunction(() => {
-    const card=document.querySelector(".maslingo-adjacent-translation").getBoundingClientRect();
-    return card.left>=7 && card.right<=innerWidth-7;
-  });
-  const overlap = await preserved.evaluate(() => {
-    const card=document.querySelector(".maslingo-adjacent-translation").getBoundingClientRect();
-    const img=document.getElementById("manga").getBoundingClientRect();
-    const source={left:img.left+img.width*120/500,right:img.left+img.width*210/500,
-      top:img.top+img.height*140/700,bottom:img.top+img.height*290/700};
-    return Math.max(0,Math.min(card.right,source.right)-Math.max(card.left,source.left))*
-      Math.max(0,Math.min(card.bottom,source.bottom)-Math.max(card.top,source.top));
-  });
-  assert.equal(overlap,0,"Narrow layout keeps the caption clear of the original text");
-  await captionButton.dispose();
+  await preserved.waitForFunction(()=>readerMessages.some(m=>m.kind?.startsWith('漫画旁注')));
+  assert.equal(await preserved.$eval('.maslingo-adjacent-translation',e=>getComputedStyle(e).display),'none','unsafe captions never cover artwork');
+  assert.ok(await preserved.evaluate(()=>readerMessages.some(m=>m.source==='こんにちは'&&JSON.stringify(m.tree).includes('你好'))));
+  await preserved.evaluate(()=>{const row=readerMessages.find(m=>m.kind?.startsWith('漫画旁注'));for(const fn of messageListeners)fn({type:'READER_ACTION',document:readerMessages.find(m=>m.type==='READER_REGISTER').document,id:row.id,action:'focus'},{},()=>{});});
+  assert.equal(await preserved.evaluate(()=>[...document.querySelectorAll('#maslingo-layer > div')].filter(e=>e.style.border==='2px solid rgb(40, 93, 229)').length),1,'source action creates a temporary outline');
   await preserved.evaluate(() => {unsafeRepair=false;document.getElementById("manga").src=sample();});
   await preserved.waitForFunction(() => !document.querySelector(".maslingo-adjacent-translation") && calls.pixels===2);
   assert.equal(await preserved.evaluate(()=>document.querySelectorAll(".maslingo-caption-source").length),0,
     "Changing images removes the numbered source marker and connector");
   await preserved.close();
   assert.deepEqual(errors,[]);
-  console.log("Auto lifecycle passed: cancelled startup, stale settings, repair pixels, src swap, stop, retries, long bands, preserve-artwork captions, scrolling, collapse, console.");
+  console.log("Auto lifecycle passed: cancelled startup, stale settings, repair pixels, src swap, stop, retries, long bands, preserve-artwork captions, source focus, no covering captions, console.");
 } finally {
   await browser.close();
 }

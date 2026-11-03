@@ -12,23 +12,32 @@
   function attach(video) {
     const host = document.createElement("div");
     host.dataset.maslingoVideo = "1";
-    host.style.cssText = "position:fixed;z-index:2147483646;pointer-events:none;display:none";
+    host.style.cssText = "position:relative;display:none;box-sizing:border-box;clear:both;margin:8px 0;max-width:100%";
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `<style>
       :host{font:12px/1.5 system-ui;color:#202124}*{box-sizing:border-box}
-      .bar{display:flex;gap:5px;align-items:center;flex-wrap:wrap;padding:6px 8px;background:#fffffff2;border:1px solid #dedee3;border-radius:10px;box-shadow:0 2px 8px #0002;pointer-events:auto}
+      .bar{display:flex;gap:5px;align-items:center;flex-wrap:wrap;padding:6px 8px;background:#fff;border:1px solid #e5e9ef;border-radius:6px;pointer-events:auto}
       button,select{font:inherit;color:inherit;background:#f7f7f8;border:1px solid #ddd;border-radius:6px;padding:3px 6px;min-height:27px;cursor:pointer;max-width:100%}
-      button[aria-pressed=true]{background:#333;color:#fff}button:disabled{opacity:.5;cursor:wait}
+      button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:wait}
       .status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:11px}.status:empty{display:none}
       [hidden]{display:none!important}
-      .caption{position:absolute;top:-42px;transform:translateY(-100%);left:3%;right:3%;text-align:center;white-space:pre-line;font:600 clamp(14px,2vw,23px)/1.5 system-ui;color:white;text-shadow:0 1px 3px black;background:#000b;border-radius:6px;padding:5px 12px;pointer-events:none}
+      button:focus-visible,select:focus-visible{outline:2px solid #285de5;outline-offset:2px}
+      button{transition:background .16s}button:hover{background:#f3f6fc}button[aria-pressed=true]:hover{background:#194bc8}
+      .caption{position:static;text-align:left;white-space:pre-line;font:14px/1.7 system-ui;color:#18212f;background:#fff;border-left:2px solid #285de5;padding:10px 14px;pointer-events:auto}
+      @media(prefers-reduced-motion:reduce){button{transition:none}}
       .caption:empty{display:none}
     </style><div class="bar"><strong>字幕</strong><button class="start" aria-pressed="false">翻译字幕</button>
       <button class="speech" aria-pressed="false" title="共享当前标签页声音，音频发送给设置中的后端；仅文字发给翻译来源">无字幕识别</button>
       <select class="mode" aria-label="字幕显示模式"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
       <select class="track" aria-label="字幕轨"><option value="auto">自动选择字幕</option></select>
       <span class="status" role="status"></span></div><div class="caption" aria-live="off"></div>`;
-    document.documentElement.append(host);
+    function placeHost() {
+      let anchor = video.closest('#movie_player, .html5-video-player, .bpx-player-container, .bilibili-player') || video;
+      // Absolute video elements occupy a player wrapper; reserve space after it.
+      if (anchor === video && ['absolute','fixed'].includes(getComputedStyle(video).position) && video.parentElement !== document.body) anchor = video.parentElement || video;
+      if (anchor.nextSibling !== host) anchor.after(host);
+    }
+    placeHost();
     const $ = selector => root.querySelector(selector);
     const state = { video, host, root, enabled: false, generation: 0, cache: new Map(), inflight: 0,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "", source: "",
@@ -157,7 +166,7 @@
     }
 
     function render(text) {
-      const fullscreen = document.fullscreenElement === video || document.pictureInPictureElement === video;
+      const fullscreen = document.fullscreenElement?.contains(video) || document.pictureInPictureElement === video;
       if (fullscreen) {
         $(".caption").textContent = "";
         if (!state.output) state.output = video.addTextTrack("subtitles", "MasLingo", "");
@@ -178,15 +187,9 @@
       if (!video.isConnected) { stop(); host.remove(); players.delete(video); return; }
       const rect = video.getBoundingClientRect();
       const full = document.fullscreenElement;
-      const parent = full && full !== video && full.contains(video) ? full : document.documentElement;
-      if (host.parentNode !== parent) parent.append(host);
-      host.style.display = rect.width >= 200 && rect.height >= 100 && rect.bottom > 0 && rect.top < innerHeight && (!full || full.contains(video)) ? "block" : "none";
-      host.style.left = `${Math.max(0, rect.left + 8)}px`;
-      // Controls stay below the video, never clamped back over its picture.
-      // Fullscreen only renders captions; exit fullscreen to change settings.
-      host.style.top = `${rect.bottom + 8}px`;
-      $(".bar").hidden = Boolean(full || document.pictureInPictureElement === video);
-      host.style.width = `${Math.max(0, Math.min(rect.width - 16, innerWidth - Math.max(0, rect.left + 8) - 8))}px`;
+      placeHost();
+      host.style.display = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video ? 'block' : 'none';
+      host.style.width = `${Math.max(0, rect.width)}px`;
       updateTracks();
       if (!state.enabled) return;
       const text = sourceText();
@@ -279,11 +282,15 @@
   const scanTimer = setInterval(scan, 2000);
   const tickTimer = setInterval(() => { for (const state of players.values()) state.tick(); }, 150);
   window.addEventListener("pagehide", () => { for (const state of players.values()) state.stop(); });
+  chrome.runtime.onMessage.addListener((message, _sender, reply) => {
+    if (message.type === 'READER_VIDEO') reply({ok: globalThis.MAS_video.open()});
+  });
   globalThis.MAS_video = { installed: true, open() {
     scan();
     const video = [...players.keys()].sort((a, b) => Number(a.paused) - Number(b.paused) || b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
     if (!video) return false;
-    video.scrollIntoView({ block: "center", behavior: "smooth" });
+    players.get(video).tick();
+    globalThis.MAS_reader?.focus(players.get(video).host);
     players.get(video).root.querySelector(".start").focus({ preventScroll: true });
     return true;
   } };

@@ -2,13 +2,14 @@
   "manifest_version": 3,
   "name": "MasLingo",
   "version": "1.1.8",
-  "description": "日文漫画 OCR 翻译：识别画面文字并把译文嵌回原图。默认使用官方托管后端，无需本机环境。",
+  "description": "网页、漫画与视频翻译：双语阅读、划词词典和独立阅读侧栏。",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
     "tabs",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>",
@@ -51,7 +52,7 @@
       "js": [
         "config.js",
         "translation/providers.js",
-        "content/glass.js",
+        "content/reader-bridge.js",
         "content/overlay.js",
         "content/auto.js",
         "content/panel.js",
@@ -61,9 +62,6 @@
         "content/video-translate.js"
       ],
       "css": [
-        "content/styles/glass.css",
-        "content/styles/window.css",
-        "content/styles/status.css",
         "content/styles/marker.css",
         "content/styles/page.css"
       ],
@@ -71,5 +69,9 @@
       "all_frames": true
     }
   ],
-  "options_page": "options/options.html"
+  "options_page": "options/options.html",
+  "minimum_chrome_version": "116",
+  "side_panel": {
+    "default_path": "reader/reader.html"
+  }
 }

@@ -1,5 +1,5 @@
 importScripts("../config.js", "../translation/providers.js");
-importScripts("speech.js");
+importScripts("speech.js", "reader.js");
 
 const IMAGE_MENU_ID = "maslingo-translate-image";
 let imageMenuReady = null;

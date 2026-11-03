@@ -125,7 +125,7 @@ try {
   const options = await browser.newPage();
   const optionErrors = [];
   options.on("pageerror", (error) => optionErrors.push(String(error)));
-  await options.goto(`chrome-extension://${extensionId}/options/options.html`, { waitUntil: "load" });
+  await options.goto(`chrome-extension://${extensionId}/options/options.html#providers`, { waitUntil: "load" });
 
   const optionCount = await options.$$eval("#translationProvider option", (nodes) => nodes.length);
   check("下拉框由注册表生成", optionCount >= 15, `只有 ${optionCount} 项`);
@@ -168,7 +168,7 @@ try {
   const baiduFields = await setProvider("baidu");
   check("百度显示 APP ID", baiduFields.appId);
   check("百度不显示目标语言（用语言代码）", !baiduFields.target);
-  check("翻译 API 不显示术语库", !baiduFields.glossary);
+  check("翻译 API 禁用术语库", await options.$eval("#translationGlossary", e=>e.disabled));
 
   const customFields = await setProvider("custom");
   check("自定义来源可编辑接口地址", customFields.endpoint);
@@ -242,7 +242,7 @@ try {
     stateKind: document.getElementById("autoState").dataset.state,
     hasManual: Boolean(document.getElementById("select")),
     hasSettings: Boolean(document.getElementById("settings")),
-    accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(),
+    accent: getComputedStyle(document.documentElement).getPropertyValue("--blue").trim(),
   }))).catch(() => null);
 
   console.log(`      标题: ${popupState?.title}   自动翻译状态: ${popupState?.state} (${popupState?.stateKind})`);
@@ -253,8 +253,8 @@ try {
   check("设置入口存在", popupState?.hasSettings === true);
   // One palette with the panel: the teal brand hue is gone, and the remaining
   // colour is reserved for status (the state dots).
-  check("强调色与面板统一（中性墨色，无品牌色）",
-    (popupState?.accent || "").toLowerCase() === "#1c1e21", popupState?.accent);
+  check("强调色与阅读侧栏统一",
+    (popupState?.accent || "").toLowerCase() === "#285de5", popupState?.accent);
   check("弹窗没有脚本错误", popupErrors.length === 0, popupErrors.join(" | "));
 
   // --- optional: the real keyless endpoint ---------------------------------

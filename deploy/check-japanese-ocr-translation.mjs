@@ -12,7 +12,7 @@ const cfg = {translationProvider:"custom", translationMode:"openai-compatible",
 const requests = [];
 let handler, onConnect;
 const scope = {URL, URLSearchParams, TextEncoder, crypto, AbortController, setTimeout, clearTimeout, console,
-  chrome:{runtime:{onMessage:{addListener(fn){handler=fn;}},onConnect:{addListener(fn){onConnect=fn;}}},
+  chrome:{tabs:{onRemoved:{addListener(){}},onUpdated:{addListener(){}}},runtime:{onMessage:{addListener(fn){handler=fn;}},onConnect:{addListener(fn){onConnect=fn;}}},
     storage:{local:{get:async()=>cfg}}},
   fetch:async (_url, init) => {
     const body=JSON.parse(init.body);const content=body.messages[0].content;

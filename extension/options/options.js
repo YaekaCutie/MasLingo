@@ -121,6 +121,7 @@ function describeProvider() {
   fieldKey.hidden = !provider.keyRequired;
   fieldTarget.hidden = provider.targetKind !== "name";
   const ai = registry.isChatProvider(provider);
+  document.getElementById("translationStrength").disabled = !ai;
   fieldGlossary.classList.toggle("ai-disabled", !ai);
   translationGlossary.disabled = !ai;
   translationGlossary.setAttribute("aria-describedby", "glossaryHint");
@@ -240,6 +241,7 @@ document.getElementById("save").onclick = async () => {
     selectionTranslate: selectionPreference,
     inputAutoReplace: inputReplacePreference,
     translationGlossary: translationGlossary.value || "general",
+    translationStrength: Number(document.getElementById("translationStrength").value),
     autoConcurrency: Number(autoConcurrency.value) || 1,
     fontScale: Number(fontScale.value) / 100,
     overlayOpacity: Number(overlayOpacity.value) / 100
@@ -302,8 +304,9 @@ async function load() {
     "translationEndpoint", "translationModel", "translationAppId",
       "translationModelProvider", "translationApiKey", "targetLanguage",
       "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode", "videoDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
-      "fontScale", "overlayOpacity",
+      "fontScale", "overlayOpacity", "translationStrength",
   ]);
+  document.getElementById("translationStrength").value = String(registry.normalizeStrength(cfg.translationStrength));
   debugMode.checked = cfg.debugMode !== false;
   backendUrl.value = cfg.backendUrl || "";
 
@@ -346,3 +349,24 @@ backendUrl.addEventListener("input", describeBackend);
 buildProviderOptions();
 buildGlossaryOptions();
 load();
+
+// Keep all fields mounted while switching groups so unsaved edits survive.
+const sectionLinks = [...document.querySelectorAll('.settings-nav a')];
+function selectSection() {
+  const selected = sectionLinks.some(link => link.hash === location.hash) ? location.hash.slice(1) : 'reading';
+  let first = true;
+  for (const section of document.querySelectorAll('[data-settings-group]')) {
+    section.hidden = section.dataset.settingsGroup !== selected;
+    section.classList.toggle('group-start', !section.hidden && first);
+    if (!section.hidden) first = false;
+  }
+  for (const link of sectionLinks) {
+    if (link.hash === '#' + selected) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+}
+for (const link of sectionLinks) link.onclick = event => {
+  event.preventDefault(); history.replaceState(null, '', link.hash); selectSection();
+};
+window.addEventListener('hashchange', selectSection);
+selectSection();

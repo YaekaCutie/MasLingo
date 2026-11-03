@@ -75,10 +75,11 @@
         :host { display: block; text-align: left; color-scheme: light; }
         .card {
           background: #ffffff;
-          border: 1px solid rgba(15, 23, 42, 0.12);
-          border-radius: 10px;
+          border: 0;
+          border-left: 2px solid #285de5;
+          border-radius: 0;
           overflow: hidden;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+          animation: enter .18s ease-out;
           font-family: "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
           font-size: 14px;
           line-height: 1.6;
@@ -89,7 +90,7 @@
           align-items: center;
           gap: 8px;
           padding: 7px 10px;
-          background: #f8fafc;
+          background: #ffffff;
           border-bottom: 1px solid rgba(15, 23, 42, 0.06);
         }
         .title {
@@ -167,6 +168,8 @@
         .mode-note { margin: 0 0 8px; color: #64748b; font-size: 11px; }
         .collapsed .body { display: none; }
         .collapsed .head { border-bottom: 0; }
+        @keyframes enter { from { opacity:0; transform:translateY(4px) } to { opacity:1; transform:none } }
+        @media(prefers-reduced-motion:reduce) { .card { animation:none } }
       </style>
       <div class="card">
         <div class="head">
@@ -554,6 +557,7 @@
 
   function discard(box) {
     invalidate(box);
+    globalThis.MAS_reader?.remove(box.host.dataset.readerId);
     box.host.remove();
     boxes.delete(box.paragraph);
   }
@@ -565,15 +569,10 @@
     host.shadowRoot.querySelector(".pin").hidden = box.automatic;
     host.style.cssText = "display:none;box-sizing:border-box;text-align:left;";
     if (!box.automatic) {
-      // A portal avoids reflow under the pointer and invalid children inside
-      // tables, buttons, links or summary elements.
       document.documentElement.appendChild(host);
-      host.style.setProperty("position", "fixed", "important");
-      host.style.setProperty("z-index", "2147483646", "important");
-      host.style.setProperty("width", "min(560px, calc(100vw - 24px))", "important");
-      host.style.setProperty("max-height", "min(65vh, 560px)", "important");
-      host.style.setProperty("overflow", "auto", "important");
+      mountReader(box);
     } else {
+      globalThis.MAS_reader?.remove(host.dataset.readerId);
       host.style.margin = "8px 0 14px";
       host.style.width = "100%";
       const parentTag = element.parentElement?.tagName;
@@ -643,8 +642,16 @@
     return JSON.stringify([revision, box.paragraphText, box.getSource(), box.getLanguage()]);
   }
 
+  function mountReader(box) {
+    globalThis.MAS_reader?.mount(box.host, {
+      kind: '网页段落', source: () => box.paragraphText, element: box.paragraph,
+      dismiss() { box.dismissed = true; hideBox(box, true); },
+    });
+  }
+
   function reveal(box) {
     box.visible = true;
+    if (!box.automatic && globalThis.MAS_reader) { mountReader(box); return; }
     box.host.style.setProperty("display", "block", "important");
     schedulePosition();
   }
@@ -768,7 +775,7 @@
     positionFrame = requestAnimationFrame(() => {
       positionFrame = null;
       for (const box of boxes.values()) {
-        if (!box.visible || box.automatic) continue;
+        if (!box.visible || box.automatic || box.host.dataset.readerId) continue;
         const rect = box.paragraph.getBoundingClientRect();
         if (!box.pinned && (rect.bottom < 0 || rect.top > innerHeight)) { hideBox(box, true); continue; }
         const rightSpace = innerWidth - rect.right - 20;
@@ -915,6 +922,7 @@
 
   function onSelection() {
     if (!window.getSelection()?.isCollapsed) {
+      hoverBlock = null;
       clearTimeout(showTimer);
       for (const box of boxes.values()) hideBox(box);
     }

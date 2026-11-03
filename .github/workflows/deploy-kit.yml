@@ -70,36 +70,13 @@ jobs:
       - name: Score the background reconstruction
         run: xvfb-run -a node deploy/check-inpaint.mjs
 
-      # Page-level chrome must appear once, in the top frame; auto translate runs
-      # in every frame, and the notice used to be duplicated into each one.
-      - name: The page-level notice appears exactly once
-        run: xvfb-run -a node deploy/check-notice-once.mjs
-
-      # A long status message scrolls; repeating the same message (auto.js says
-      # one per failing picture) must not restart that scroll.
-      - name: The status line marquee runs and survives repeated messages
-        run: xvfb-run -a node deploy/check-status-marquee.mjs
-
-      # Choosing an "AI 大模型" source folds 自动识别 / 框选翻译 away and unfolds
-      # the API Key + 翻译强度 modules; the connectivity probe must forward the
-      # very text it asked about — 必应 once translated the literal "undefined"
-      # and the panel displayed 未定义 as a success.
-      - name: The AI-mode morph and the probe's text forwarding
-        run: xvfb-run -a node deploy/check-ai-panel.mjs
-
-      # 网页文本: paragraphs get a white, collapsible translation card whose
-      # title carries a target-language menu.
-      - name: Webpage paragraph translation cards
-        run: xvfb-run -a node deploy/check-text-translate.mjs
+      # UI moved from floating panels to the native reader. Exercise its real
+      # pages, structured bridge, remote actions and responsive layout.
+      - name: Reader UI, dictionary, input undo and video placement
+        run: xvfb-run -a node deploy/check-reader-ui.mjs
 
       - name: Webpage reading, text coverage and stale responses
         run: xvfb-run -a node deploy/check-web-text-dom.mjs
-
-      # 划词翻译: a selected word gets every dictionary sense with its part of
-      # speech and an example, with the sense used on the page highlighted; a
-      # selected phrase falls back to ordinary translation.
-      - name: Selection translation and dictionary senses
-        run: xvfb-run -a node deploy/check-selection-translate.mjs
 
       # A Chinese line with a Chinese target must not be sent to the provider;
       # the same batch's Japanese lines still translate.

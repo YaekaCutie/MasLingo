@@ -30,7 +30,9 @@ try {
   document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<p id="shadow-p">Open shadow root paragraph</p>';
   globalThis.cfg={translationProvider:'fixture',hoverTranslate:true,webAutoTranslate:false,targetLanguage:'简体中文'};
   globalThis.calls=[];globalThis.listeners=[];globalThis.hold=false;globalThis.pending=[];globalThis.fail=false;
-  globalThis.chrome={storage:{local:{get:async()=>({...cfg})},onChanged:{addListener(fn){listeners.push(fn)}}},runtime:{sendMessage:async message=>{
+  globalThis.readerMessages=[];globalThis.messageListeners=[];
+  globalThis.chrome={storage:{local:{get:async()=>({...cfg})},onChanged:{addListener(fn){listeners.push(fn)}}},runtime:{onMessage:{addListener(fn){messageListeners.push(fn);}},sendMessage:async message=>{
+   if(message.type?.startsWith('READER_')){readerMessages.push(message);return {ok:true};}
    calls.push(message);
    if(hold) return new Promise(resolve=>pending.push({message,resolve}));
    return fail?{ok:false,reason:'network failure'}:{ok:true,translations:message.texts.map(t=>'译：'+t),skipped:message.texts.map(()=>false)};
@@ -38,13 +40,15 @@ try {
   globalThis.setCfg=async changes=>{Object.assign(cfg,changes);for(const fn of listeners)fn(Object.fromEntries(Object.entries(changes).map(([k,v])=>[k,{newValue:v}])),'local');await new Promise(r=>setTimeout(r,250));};
   globalThis.boxes=()=>[...document.querySelectorAll('[data-maslingo-textbox]')];
   globalThis.visible=()=>boxes().filter(h=>h.style.display!=='none');
-  globalThis.card=()=>visible().at(-1)?.shadowRoot;
+  globalThis.card=()=>document.querySelector('[data-reader-id="'+readerMessages.filter(m=>m.type==='READER_RESULT').at(-1)?.id+'"]')?.shadowRoot || boxes().at(-1)?.shadowRoot;
  });
- for(const file of ['config.js','translation/providers.js']) await page.addScriptTag({content:readFileSync(new URL('../extension/'+file,import.meta.url),'utf8')});
+ // setContent has an opaque origin; deterministic UUID only for this fixture.
+ await page.evaluate(()=>{if(!crypto.randomUUID)crypto.randomUUID=()=> 'fixture-document';});
+ for(const file of ['config.js','translation/providers.js','content/reader-bridge.js']) await page.addScriptTag({content:readFileSync(new URL('../extension/'+file,import.meta.url),'utf8')});
  await page.addScriptTag({content:script});await wait(300);
  assert.equal(await page.evaluate(()=>calls.length),0,'hover mode makes no eager requests');
- const hover=async selector=>{await page.hover(selector);await page.waitForFunction(()=>visible().some(h=>h.shadowRoot.querySelector('.text').textContent.startsWith('译：')));};
- const close=async()=>{await page.evaluate(()=>card()?.querySelector('.close').click());await page.mouse.move(1,1);await wait(350);};
+ const hover=async selector=>{await page.hover(selector);await wait(600);await page.waitForFunction(()=>card()?.querySelector('.text').textContent.startsWith('译：'));};
+ const close=async()=>{await page.evaluate(()=>{const host=card()?.host;for(const fn of messageListeners)fn({type:'READER_ACTION',document:readerMessages.find(m=>m.type==='READER_REGISTER').document,id:host?.dataset.readerId,action:'dismiss'},{},()=>{});});await page.mouse.move(1,1);await wait(350);};
  const originals=await page.evaluate(()=>document.querySelector('#prose').innerHTML);
  for(const selector of ['#short','#cell','#head','#button','#link','#contents']){
   await hover(selector);const text=await page.evaluate(()=>card().querySelector('.text').textContent);
@@ -55,13 +59,10 @@ try {
  const before=await page.$eval('#prose',e=>e.getBoundingClientRect().top);
  await hover('#prose');
  assert.equal(await page.$eval('#prose',e=>e.getBoundingClientRect().top),before,'floating card does not move source');
- await page.evaluate(()=>card().querySelector('.pin').click());await page.mouse.move(1,1);await wait(500);
- assert.equal(await page.evaluate(()=>visible().length),1,'pin survives pointer leaving');
- await page.evaluate(()=>card().querySelector('.cover').click());
- assert.ok((await page.$eval('#prose',e=>e.textContent)).startsWith('译：'),'cover shows translation');
- await page.evaluate(()=>card().querySelector('.cover').click());
- assert.equal(await page.$eval('#prose',e=>e.innerHTML),originals,'restore preserves exact inline markup');
- assert.equal(await page.evaluate(()=>document.querySelector('#cite').getAttribute('href')),'#ref');
+ await page.mouse.move(1,1);await wait(500);
+ assert.equal(await page.evaluate(()=>visible().length),0,'hover result does not occupy page space');
+ assert.ok(await page.evaluate(()=>readerMessages.some(m=>m.type==='READER_RESULT' && m.source.includes('A protein'))),'hover publishes its source to the reader');
+ assert.equal(await page.$eval('#prose',e=>e.innerHTML),originals,'hover keeps exact inline markup');
  await close();
  await hover('#reference');
  assert.ok(await page.evaluate(()=>calls.some(c=>c.texts.includes('AlphaFold 2[1] predicts protein structures.'))),'superscript citation is separated from model number');await close();
@@ -126,7 +127,6 @@ try {
  await page.evaluate(()=>{hold=false;for(const p of pending)p.resolve({ok:true,translations:p.message.texts.map(()=> 'STALE')});pending=[];});await wait(350);
  assert.equal(await page.evaluate(()=>boxes().length),0,'late responses cannot resurrect cards');
  await page.evaluate(()=>setCfg({hoverTranslate:true}));await hover('#prose');
- await page.evaluate(()=>card().querySelector('.cover').click());
  await page.$eval('#prose',e=>{e.textContent='Site replaced this paragraph';});
  await page.waitForFunction(()=>calls.some(c=>c.texts.includes('Site replaced this paragraph')));
  assert.equal(await page.$eval('#prose',e=>e.textContent),'Site replaced this paragraph','a site update wins over the parked original');
@@ -137,8 +137,7 @@ try {
  assert.equal(await page.evaluate(()=>visible().filter(h=>h.dataset.mode==='hover').length),0,'text selection dismisses transient hover cards');
  await page.evaluate(()=>window.getSelection().removeAllRanges());
  await page.setViewport({width:390,height:844});await page.mouse.move(1,1);await hover('#short');
- const fits=await page.evaluate(()=>{const r=visible().find(h=>h.dataset.mode==='hover').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;});
- assert.equal(fits,true,'mobile hover card fits viewport');
+ assert.equal(await page.evaluate(()=>visible().filter(h=>h.dataset.mode==='hover').length),0,'narrow pages remain free of hover overlays');
  assert.deepEqual(errors,[],'no production script errors');
- console.log('PASS: text coverage, floating/pinned cards, reversible markup, retry, lazy auto mode, tables, dynamic/shadow content, stale replies, provider changes, selection and mobile viewport');
+ console.log('PASS: text coverage, sidebar results, reversible markup, retry, lazy auto mode, tables, dynamic/shadow content, stale replies, provider changes, selection and mobile viewport');
 }finally{await browser.close();}

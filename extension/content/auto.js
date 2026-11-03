@@ -493,7 +493,7 @@ const MAS_auto = (() => {
         if (paintFailures) report(`${paintFailures} 处文字未能安全修复，已保留原图`, "error", "部分保留原图");
         else if (translationOff) report("已识别文字（未启用翻译）", "info", "翻译未启用");
         else if (skippedCount === fresh.length) report("原文已是目标语言，无需翻译", "info", "无需翻译");
-        else if (adjacentCount) report(`翻译完成，${adjacentCount} 处译文显示在原文旁，原画已保留`, "ok", "翻译成功");
+        else if (adjacentCount) report(`翻译完成，${adjacentCount} 处译文显示在阅读侧栏，原画已保留`, "ok", "翻译成功");
         else report("翻译完成", "ok", "翻译成功");
       }
     } catch (error) {

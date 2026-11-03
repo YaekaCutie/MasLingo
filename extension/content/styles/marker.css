@@ -18,6 +18,8 @@
  */
 
 :root {
+  --maslingo-dot-ok:#285de5;
+  --maslingo-dot-bad:#b42318;
   --maslingo-box-dash: 2px;
   --maslingo-box-hold: .5s;      /* §12 phase 5: the solid edge stays ~500ms */
   --maslingo-box-fade: .42s;     /* §12 phase 6: 350–600ms */
@@ -46,7 +48,7 @@
   box-sizing: border-box;
   /* Rounded on purpose: the region is a soft "here" pointer, not a hard crop
      boundary, and the corners are what say so. */
-  border-radius: 12px;
+  border-radius: 4px;
 }
 
 /* Two stacked borders, cross-faded. `border-style` cannot be interpolated, so a
@@ -123,7 +125,7 @@
 
 #maslingo-layer .maslingo-adjacent-translation {
   position:absolute !important;
-  display:block !important;
+  display:none !important;
   margin:0 !important;
   padding:0 !important;
   border:0 !important;

@@ -87,7 +87,7 @@ async function diagnoseFrame(tabId) {
 const CONTENT_SCRIPTS = [
   "config.js",
   "translation/providers.js",
-  "content/glass.js",
+  "content/reader-bridge.js",
   "content/overlay.js",
   "content/auto.js",
   "content/panel.js",
@@ -101,9 +101,6 @@ const CONTENT_SCRIPTS = [
 // use them. Same list as the manifest, and check-extension.mjs compares the two
 // so a repaired page cannot end up styled differently from a freshly loaded one.
 const CONTENT_STYLES = [
-  "content/styles/glass.css",
-  "content/styles/window.css",
-  "content/styles/status.css",
   "content/styles/marker.css",
   "content/styles/page.css",
 ];
@@ -262,9 +259,19 @@ autoToggle.addEventListener("change", async () => {
 });
 for (const setting of ["webAutoTranslate", "hoverTranslate"]) {
   document.getElementById(setting).addEventListener("change", (event) => {
+    if (setting === 'hoverTranslate' && event.target.checked) openReader().catch(error => reportStartFailure('打开阅读侧栏', error));
     chrome.storage.local.set({ [setting]: event.target.checked });
   });
 }
+
+function openReader() {
+  if (activeTabId === null) return Promise.reject(new Error('尚未找到当前页面'));
+  // Call in the click/change gesture, before storage or injection awaits.
+  return chrome.sidePanel.open({tabId: activeTabId});
+}
+document.getElementById('openReader').onclick = () => {
+  openReader().then(() => window.close()).catch(error => reportStartFailure('打开阅读侧栏', error));
+};
 
 document.getElementById("settings").onclick = () => chrome.runtime.openOptionsPage();
 
@@ -328,6 +335,7 @@ document.getElementById("autoPage").onclick = async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTabId = tab?.id ?? null;
   lastTabUrl = tab?.url || "";
+  document.getElementById("openReader").disabled = activeTabId === null;
   const cfg = await chrome.storage.local.get(["autoTranslate", "webAutoTranslate", "hoverTranslate", "debugMode"]);
   autoToggle.checked = Boolean(cfg.autoTranslate);
   document.getElementById("webAutoTranslate").checked = Boolean(cfg.webAutoTranslate);
