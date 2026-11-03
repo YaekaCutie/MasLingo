@@ -10,6 +10,8 @@
   const MAX_HOVER_CACHE = 80;
   const HOVER_DELAY = 220;
   const HIDE_DELAY = 320;
+  const bingSearchPage = /(^|\.)bing\.com$/i.test(location.hostname) && /^\/search\/?$/.test(location.pathname);
+  const BING_RESULT_SUBTITLE = "#b_results .b_algo :is(h3, h4) a[href]";
   const SKIP_TAGS = new Set([
     "SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "TEXTAREA", "INPUT", "SELECT",
     "OPTION", "CODE", "PRE", "KBD", "SAMP", "SVG", "CANVAS", "VIDEO", "AUDIO",
@@ -459,7 +461,10 @@
   }
 
   function canCoverParagraph(element) {
-    if (element.matches('a, button, summary, [role="button"]')) return false;
+    // A Bing sitelink is itself the replacement target, so its anchor stays
+    // connected while the translated label replaces its children.
+    if (element.matches('button, summary, [role="button"]') ||
+        (element.matches("a") && !(bingSearchPage && element.matches(BING_RESULT_SUBTITLE)))) return false;
     return ![...element.querySelectorAll("*")].some((child) =>
       BLOCK_TAGS.has(child.tagName) || SKIP_TAGS.has(child.tagName.toUpperCase()) ||
       child.matches('[contenteditable], [role="button"], [role="math"]') ||
@@ -480,6 +485,7 @@
   // separate units rather than one enormous table-sized translation.
   function ownerOf(element, styles = new Map()) {
     for (let node = element; node && node !== document.body && node !== document.documentElement; node = parentOf(node)) {
+      if (bingSearchPage && node.matches(BING_RESULT_SUBTITLE)) return node;
       if (BLOCK_TAGS.has(node.tagName)) return node;
       let display = styles.get(node);
       if (!display) {
@@ -539,6 +545,7 @@
   }
 
   function automaticCandidate(element) {
+    if (bingSearchPage) return element.matches(BING_RESULT_SUBTITLE) && canCoverParagraph(element);
     // Reading mode concentrates on the article when one exists. Menus/forms
     // remain available on hover without generating requests during reading.
     const scope = element.getRootNode?.()?.host || element;
@@ -589,6 +596,10 @@
     host.dataset.mode = box.automatic ? "auto" : "hover";
     host.shadowRoot.querySelector(".pin").hidden = box.automatic;
     host.style.cssText = "display:none;box-sizing:border-box;text-align:left;";
+    if (bingSearchPage) {
+      document.documentElement.appendChild(host);
+      return;
+    }
     if (!box.automatic) {
       document.documentElement.appendChild(host);
       mountReader(box);
@@ -664,6 +675,7 @@
   }
 
   function showQuick(box) {
+    if (bingSearchPage) return;
     box.displaySelect.value=box.localDisplayMode || (box.automatic ? displayMode : 'bilingual');
     box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
     const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
@@ -683,6 +695,7 @@
   }
 
   function reveal(box) {
+    if (bingSearchPage) return;
     box.visible = true;
     if (!box.automatic && globalThis.MAS_reader) { mountReader(box); showQuick(box); return; }
     box.host.style.setProperty("display", "block", "important");
@@ -696,6 +709,11 @@
   }
 
   function applyAutoDisplay(box) {
+    if (bingSearchPage) {
+      if (displayMode === "source" && box.covered) box.toggleCover();
+      if (displayMode !== "source" && box.translated && !box.covered) box.toggleCover();
+      return;
+    }
     if (!box.automatic) return;
     const mode=box.localDisplayMode || displayMode;
     box.modeNote.hidden = true;
@@ -718,7 +736,7 @@
 
   function enqueue(box) {
     if (!enabled || box.loading || !box.paragraphText || box.dismissed) return;
-    if (box.automatic && (box.localDisplayMode || displayMode) === "source") return;
+    if ((box.automatic || bingSearchPage) && (box.localDisplayMode || displayMode) === "source") return;
     if ((box.translated || box.sameLanguage) && box.key === keyFor(box)) return;
     box.requestId++;
     box.key = keyFor(box);
@@ -748,7 +766,7 @@
         if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage() || box.providerSelect.value !== first.providerSelect.value) continue;
         if (group.length >= 4 || (group.length && chars + box.paragraphText.length > 7000)) continue;
         queue.delete(box);
-        if (box.automatic && (box.localDisplayMode || displayMode) === "source") { box.loading = false; continue; }
+        if ((box.automatic || bingSearchPage) && (box.localDisplayMode || displayMode) === "source") { box.loading = false; continue; }
         if (!box.paragraph.isConnected || box.dismissed) { box.loading = false; continue; }
         group.push(box);
         chars += box.paragraphText.length;
@@ -795,13 +813,14 @@
 
   function showBox(unit) {
     if (!hoverEnabled) return;
+    if (bingSearchPage && (displayMode === "source" || !automaticCandidate(unit.element))) return;
     const box = createBox(unit, autoEnabled && displayMode !== "source" && automaticCandidate(unit.element));
     if (!box.manualSource && !box.manualTarget && globalThis.MAS_providers?.likelySameLanguage?.(unit.text, box.getLanguage())) return;
     box.dismissed = false;
     if (box.sameLanguage && box.key === keyFor(box)) return;
     clearTimeout(hideTimer);
     reveal(box);
-    enqueue(box);
+    if (!bingSearchPage || !box.error) enqueue(box);
     applyAutoDisplay(box);
   }
 
@@ -912,6 +931,7 @@
     visit(document.body);
     for (const [element, box] of boxes) {
       if (!element.isConnected) { discard(box); continue; }
+      if (bingSearchPage && !element.matches(BING_RESULT_SUBTITLE)) { discard(box); continue; }
       if (box.covered) {
         if (box.coverSpan?.parentNode === element && element.childNodes.length === 1) continue;
         invalidate(box);
@@ -1059,7 +1079,7 @@
       if (changed) retranslateAll();
       if (oldDisplayMode !== displayMode) {
         for (const box of boxes.values()) {
-          if (!box.automatic) continue;
+          if (!box.automatic && !bingSearchPage) continue;
           if (displayMode === "source" && queue.delete(box)) box.loading = false;
           applyAutoDisplay(box);
         }

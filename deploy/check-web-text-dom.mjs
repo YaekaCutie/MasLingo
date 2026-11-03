@@ -9,6 +9,12 @@ const errors=[];page.on('pageerror',e=>errors.push(e.message));
 page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const script=readFileSync(new URL('../extension/content/text-translate.js',import.meta.url),'utf8');
+async function loadScripts() {
+ for(const file of ['config.js','translation/providers.js','content/reader-bridge.js','content/quick-toolbar.js']) {
+  await page.addScriptTag({content:readFileSync(new URL('../extension/'+file,import.meta.url),'utf8')});
+ }
+ await page.addScriptTag({content:script});
+}
 try {
  await page.setViewport({width:1000,height:800});
  await page.setContent(`<!doctype html><meta charset="utf-8"><style>body{font:17px/1.6 sans-serif;margin:30px}article{max-width:650px}td,th{border:1px solid #ccc;padding:8px}p{margin:20px 0}#far{margin-top:1600px}</style>
@@ -26,8 +32,8 @@ try {
  <div style="height:0;overflow:hidden"><p>Clipped hidden article content</p></div>
  <pre>Code should remain unchanged</pre><p id="math">An equation <math><mi>x</mi></math> is retained.</p>
  <div id="shadow"></div><p id="far">Far below the viewport</p></article>`);
+ async function mockTranslation() {
  await page.evaluate(()=>{
-  document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<p id="shadow-p">Open shadow root paragraph</p>';
   globalThis.cfg={translationProvider:'fixture',hoverTranslate:true,webAutoTranslate:false,targetLanguage:'简体中文'};
   globalThis.calls=[];globalThis.listeners=[];globalThis.hold=false;globalThis.pending=[];globalThis.fail=false;
   globalThis.readerMessages=[];globalThis.messageListeners=[];
@@ -42,10 +48,14 @@ try {
   globalThis.visible=()=>boxes().filter(h=>h.style.display!=='none');
   globalThis.card=()=>document.querySelector('[data-reader-id="'+readerMessages.filter(m=>m.type==='READER_RESULT').at(-1)?.id+'"]')?.shadowRoot || boxes().at(-1)?.shadowRoot;
  });
+ }
+ await mockTranslation();
+ await page.$eval('#shadow', element => {
+  element.attachShadow({mode:'open'}).innerHTML='<p id="shadow-p">Open shadow root paragraph</p>';
+ });
  // setContent has an opaque origin; deterministic UUID only for this fixture.
  await page.evaluate(()=>{if(!crypto.randomUUID)crypto.randomUUID=()=> 'fixture-document';});
- for(const file of ['config.js','translation/providers.js','content/reader-bridge.js']) await page.addScriptTag({content:readFileSync(new URL('../extension/'+file,import.meta.url),'utf8')});
- await page.addScriptTag({content:script});await wait(300);
+ await loadScripts();await wait(300);
  assert.equal(await page.evaluate(()=>calls.length),0,'hover mode makes no eager requests');
  const hover=async selector=>{await page.hover(selector);await wait(600);await page.waitForFunction(()=>card()?.querySelector('.text').textContent.startsWith('译：'));};
  const close=async()=>{await page.evaluate(()=>{const host=card()?.host;for(const fn of messageListeners)fn({type:'READER_ACTION',document:readerMessages.find(m=>m.type==='READER_REGISTER').document,id:host?.dataset.readerId,action:'dismiss'},{},()=>{});});await page.mouse.move(1,1);await wait(350);};
@@ -138,6 +148,51 @@ try {
  await page.evaluate(()=>window.getSelection().removeAllRanges());
  await page.setViewport({width:390,height:844});await page.mouse.move(1,1);await hover('#short');
  assert.equal(await page.evaluate(()=>visible().filter(h=>h.dataset.mode==='hover').length),0,'narrow pages remain free of hover overlays');
+
+ const bingUrl='https://www.bing.com/search?q=Nature';
+ await page.setViewport({width:1000,height:800});
+ await page.setRequestInterception(true);
+ page.on('request', request => {
+  if(request.url()==='https://www.bing.com/favicon.ico') return request.respond({status:204});
+  if(request.url()!==bingUrl) return request.abort();
+  return request.respond({contentType:'text/html',body:`<!doctype html><meta charset="utf-8">
+   <header>Search site</header><main><ol id="b_results"><li class="b_algo">
+   <div class="b_tpcn"><span id="brand">Nature</span><cite>https://www.nature.com</cite></div>
+   <h2 id="result-title"><a href="https://www.nature.com">Nature Research Journal</a></h2>
+   <div class="b_caption"><p id="snippet">Peer-reviewed research and discovery.</p></div>
+   <ul class="b_vlist2col"><li><h3><a id="subtitle" href="https://www.nature.com/nature/research-articles"><strong>Research</strong> Articles</a></h3></li></ul>
+   </li></ol></main><aside>Related search suggestions</aside>`});
+ });
+ await page.goto(bingUrl);
+ await mockTranslation();
+ await page.evaluate(()=>{
+  Object.assign(cfg,{webAutoTranslate:true,webDisplayMode:'bilingual'});
+  fail=true;
+  globalThis.originalSubtitle=document.querySelector('#subtitle');
+  globalThis.subtitleClicks=0;
+  originalSubtitle.addEventListener('click', event=>{event.preventDefault();subtitleClicks++;});
+ });
+ await loadScripts();
+ await page.waitForFunction(()=>boxes().some(box=>box.shadowRoot.querySelector('.text').dataset.state==='error'));
+ assert.equal(await page.$eval('#subtitle',element=>element.textContent),'Research Articles');
+ assert.equal(await page.evaluate(()=>visible().length),0,'failed requests never insert visible search cards');
+ await page.evaluate(()=>{fail=false;return setCfg({translationApiKey:'fixture'});});
+ await page.waitForFunction(()=>document.querySelector('#subtitle').textContent==='译：Research Articles');
+ assert.deepEqual(await page.evaluate(()=>[...new Set(calls.flatMap(call=>call.texts))].sort()),
+  ['Research Articles'],'only sitelinks are sent for translation');
+ assert.equal(await page.$eval('#snippet',element=>element.textContent),'Peer-reviewed research and discovery.');
+ await page.hover('#result-title');
+ await wait(300);
+ await page.hover('#subtitle');
+ await wait(300);
+ assert.equal(await page.evaluate(()=>visible().length),0,'successful search results show no cards');
+ assert.equal(await page.$('[data-maslingo-quick]'),null,'search titles and subtitles show no controls on hover');
+ assert.equal(await page.$eval('#result-title',element=>element.textContent),'Nature Research Journal');
+ assert.equal(await page.evaluate(()=>document.querySelector('#subtitle')===originalSubtitle),true);
+ await page.click('#subtitle');
+ assert.equal(await page.evaluate(()=>subtitleClicks),1,'translated sitelinks keep their original click handlers');
+ await page.evaluate(()=>setCfg({webDisplayMode:'source'}));
+ assert.equal(await page.$eval('#subtitle',element=>element.innerHTML),'<strong>Research</strong> Articles');
  assert.deepEqual(errors,[],'no production script errors');
- console.log('PASS: text coverage, sidebar results, reversible markup, retry, lazy auto mode, tables, dynamic/shadow content, stale replies, provider changes, selection and mobile viewport');
+ console.log('PASS: webpage text regression and Bing subtitles, title exclusion, link preservation, result-only rendering and failure handling');
 }finally{await browser.close();}
