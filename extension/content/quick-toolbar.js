@@ -1,61 +1,125 @@
-// One contextual toolbar. Controls proxy the owning translator's real nodes.
+// One expanded toolbar, with lightweight buttons for translated paragraphs.
 (() => {
   if (globalThis.MAS_quick) return;
   let current = null,
     frame = null;
+  const badges = new Map();
+  const badgesByElement = new WeakMap();
+  const visibleBadges = new Set();
+  const ownSelector = "[data-maslingo-quick], [data-maslingo-quick-badge]";
   const own = (node) =>
-    node?.closest?.("[data-maslingo-quick]") ||
-    node?.getRootNode?.()?.host?.matches?.("[data-maslingo-quick]");
+    node?.closest?.(ownSelector) ||
+    node?.getRootNode?.()?.host?.matches?.(ownSelector);
+  const badgeVisibility = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const badge = badgesByElement.get(entry.target);
+      if (!badge) continue;
+      if (entry.isIntersecting) visibleBadges.add(badge);
+      else {
+        visibleBadges.delete(badge);
+        badge.host.style.visibility = "hidden";
+      }
+    }
+    schedule();
+  });
+  new ResizeObserver(schedule).observe(document.documentElement);
+
   function hide(owner) {
+    const badge = badges.get(owner);
+    if (badge) {
+      badgeVisibility.unobserve(badge.options.element);
+      badgesByElement.delete(badge.options.element);
+      visibleBadges.delete(badge);
+      badges.delete(owner);
+      badge.host.remove();
+    }
     if (!current || (owner && current.options.owner !== owner)) return;
     current.observer?.disconnect();
     current.host.remove();
     current = null;
+    schedule();
   }
-  function sourceRects(options) {
-    if (options.rect) return [options.rect()];
-    const range = document.createRange();
-    range.selectNodeContents(options.element);
-    return [...range.getClientRects()].filter((r) => r.width && r.height);
+
+  const miniStyles = `
+    .mini{display:grid;place-items:center;width:24px;height:24px;padding:0;border:1px solid #d6e1f8;border-radius:8px;background:#f1f5ff;color:#285de5;font:650 11px/1 'Segoe UI','Microsoft YaHei',system-ui;box-sizing:border-box;cursor:pointer;animation:mini-in .15s ease-out}
+    .mini:hover{background:#285de5;border-color:#285de5;color:#fff;transform:translateY(-1px)}.mini:active{transform:scale(.94)}
+    .mini:focus-visible{outline:2px solid #285de5;outline-offset:-2px}
+    @keyframes mini-in{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:none}}
+    @media(prefers-reduced-motion:reduce){.mini{animation:none;transition:none}}
+  `;
+  const miniButton = '<button class="mini" type="button" aria-label="展开翻译操作" aria-expanded="false" title="展开翻译操作">译</button>';
+  const miniPosition = "display:block!important;position:fixed!important;z-index:2147483646!important;margin:0!important;width:24px!important;max-width:24px!important;height:24px!important;visibility:hidden;";
+
+  function keepBadge(options) {
+    const previous = badges.get(options.owner);
+    const label = options.label ? `展开「${options.label}」的翻译操作` : "展开翻译操作";
+    if (previous) {
+      previous.options = options;
+      previous.button.setAttribute("aria-label", label);
+      if (current?.options.owner === options.owner) current.sync();
+      schedule();
+      return;
+    }
+    const host = document.createElement("div");
+    host.dataset.maslingoQuickBadge = "1";
+    host.style.cssText = miniPosition;
+    const root = host.attachShadow({ mode: "open" });
+    root.innerHTML = `<style>${miniStyles}</style>${miniButton}`;
+    const button = root.querySelector(".mini");
+    button.setAttribute("aria-label", label);
+    const badge = { host, options, button };
+    button.onclick = () => show(badge.options, true);
+    isolateControls(host);
+    badges.set(options.owner, badge);
+    badgesByElement.set(options.element, badge);
+    document.documentElement.append(host);
+    badgeVisibility.observe(options.element);
+  }
+
+  function placeBadge(host, options) {
+    const block = options.element.getBoundingClientRect();
+    let rect = options.badgeRect?.();
+    if (!rect) {
+      // A selection's button belongs after the reading block, away from the
+      // unselected words that may follow the range on the same line.
+      const range = document.createRange();
+      range.selectNodeContents(options.element);
+      rect = [...range.getClientRects()].filter((r) => r.width && r.height).at(-1) || block;
+    }
+    const size = 24;
+    const gap = 4;
+    let left = rect.right + gap;
+    let top = rect.bottom - size;
+    if (left + size > innerWidth - 4) {
+      if (block.left >= size + gap + 4) left = block.left - size - gap;
+      else {
+        left = innerWidth - size - 4;
+        top = rect.bottom + gap;
+      }
+    }
+    host.style.left = `${Math.max(4, left)}px`;
+    host.style.top = `${Math.max(4, top)}px`;
+    host.style.visibility =
+      rect.bottom > 0 && rect.top < innerHeight && top + size <= innerHeight
+        ? "visible"
+        : "hidden";
   }
   function place() {
     frame = null;
+    for (const badge of visibleBadges) {
+      const { host, options } = badge;
+      if (!options.element.isConnected) hide(options.owner);
+      else if (current?.options.owner === options.owner) host.style.visibility = "hidden";
+      else placeBadge(host, options);
+    }
     if (!current) return;
     const { host, options, expanded } = current;
     if (!options.element?.isConnected) {
       hide();
       return;
     }
-    // A selection may end mid-line. Put its badge at the reading block's
-    // end so the button cannot sit on the following unselected words.
-    const blockRange = document.createRange();
-    blockRange.selectNodeContents(options.element);
-    const rects = expanded
-      ? sourceRects(options)
-      : [...blockRange.getClientRects()].filter((r) => r.width && r.height);
-    const rect =
-      (!expanded && options.badgeRect?.()) ||
-      rects.at(-1) ||
-      options.element.getBoundingClientRect();
     if (!expanded) {
-      const size = 24,
-        gap = 4;
-      let left = rect.right + gap,
-        top = rect.bottom - size;
-      if (left + size > innerWidth - 4) {
-        const block = options.element.getBoundingClientRect();
-        if (block.left >= size + gap + 4) left = block.left - size - gap;
-        else {
-          left = innerWidth - size - 4;
-          top = rect.bottom + gap;
-        }
-      }
-      host.style.left = `${Math.max(4, left)}px`;
-      host.style.top = `${Math.max(4, top)}px`;
-      host.style.visibility =
-        rect.bottom > 0 && rect.top < innerHeight && top + size <= innerHeight
-          ? "visible"
-          : "hidden";
+      placeBadge(host, options);
       return;
     }
     const bar = host.shadowRoot.querySelector(".bar"),
@@ -80,6 +144,13 @@
     if (!current) return;
     const { host, options } = current,
       root = host.shadowRoot;
+    const badge = badges.get(options.owner);
+    if (!value && badge) {
+      hide();
+      placeBadge(badge.host, badge.options);
+      if (focus) badge.button.focus({ preventScroll: true });
+      return;
+    }
     current.expanded = value;
     root.querySelector(".shell").hidden = !value;
     root.querySelector(".mini").hidden = value;
@@ -88,7 +159,9 @@
     host.style.cssText =
       value && options.inline
         ? "display:block!important;position:relative!important;margin:4px 0!important;max-width:100%!important;clear:both;"
-        : `display:block!important;position:fixed!important;z-index:2147483646!important;margin:0!important;${value ? "max-width:calc(100vw - 16px)!important;" : "width:24px!important;max-width:24px!important;height:24px!important;"}visibility:hidden;`;
+        : value
+          ? "display:block!important;position:fixed!important;z-index:2147483646!important;margin:0!important;max-width:calc(100vw - 16px)!important;visibility:hidden;"
+          : miniPosition;
     if (value && options.inline) {
       if (
         ["TD", "TH", "LI", "DD", "DT", "CAPTION"].includes(
@@ -106,15 +179,15 @@
       )?.focus({ preventScroll: true });
   }
   function schedule() {
-    if (frame === null) frame = requestAnimationFrame(place);
+    if (frame === null && (current || visibleBadges.size)) frame = requestAnimationFrame(place);
   }
-  function show(options) {
+  function show(options, expanded = false) {
     if (current?.options.owner === options.owner) {
       current.sync();
       schedule();
       return;
     }
-    if (current?.options.selection && !options.selection) return;
+    if (current?.options.selection && !options.selection && !expanded) return;
     hide();
     const host = document.createElement("div");
     host.dataset.maslingoQuick = "1";
@@ -123,8 +196,7 @@
       :host{all:initial;color-scheme:light;font:12px/1.5 'Segoe UI','Microsoft YaHei',system-ui;color:#223047}
       *{box-sizing:border-box}button,select{font:inherit;color:inherit}
       button,select{cursor:pointer}button{transition:background .15s,color .15s,border-color .15s,transform .15s}
-      .mini{display:grid;place-items:center;width:24px;height:24px;padding:0;border:1px solid #d6e1f8;border-radius:8px;background:#f1f5ff;color:#285de5;font-size:11px;font-weight:650;line-height:1;animation:mini-in .15s ease-out}
-      .mini:hover{background:#285de5;border-color:#285de5;color:#fff;transform:translateY(-1px)}.mini:active{transform:scale(.94)}
+      ${miniStyles}
       .shell{width:max-content;max-width:100%;border:1px solid #dce4f0;border-radius:12px;background:#fff;overflow:hidden;animation:enter .17s ease-out;transform-origin:top left}
       .row{display:flex;align-items:center;max-width:100%;gap:2px;padding-right:4px}
       .bar{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%;overflow-x:auto;padding:5px 6px;scrollbar-width:thin;scrollbar-color:#c7d4ec transparent;overscroll-behavior-x:contain}
@@ -143,9 +215,9 @@
       button.close{width:25px;min-height:25px;margin:0;padding:5px;color:#8493a9;border-radius:7px}button.close:hover{background:#f0f4fa;color:#285de5}svg{display:block;width:12px;height:12px;flex:none;pointer-events:none}
       .preview{margin:1px 7px 7px;padding:6px 9px;border-left:2px solid #c8d8fa;border-radius:0 6px 6px 0;background:#f7f9fd;max-width:620px;max-height:80px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.75;color:#31415a}
       .scroll-hint{padding:0 9px 3px;color:#66758b;font-size:10px;text-align:right}
-      .preview:empty,[hidden]{display:none!important}@keyframes enter{from{opacity:0;transform:translateY(-3px) scale(.985)}to{opacity:1;transform:none}}@keyframes mini-in{from{opacity:0;transform:scale(.88)}to{opacity:1;transform:none}}
+      .preview:empty,[hidden]{display:none!important}@keyframes enter{from{opacity:0;transform:translateY(-3px) scale(.985)}to{opacity:1;transform:none}}
       @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
-    </style><button class="mini" type="button" aria-label="展开翻译操作" aria-expanded="false" title="展开翻译操作">译</button><div class="shell" hidden><div class="row"><div class="bar" role="toolbar" aria-label="当前文字翻译操作"></div></div><div class="scroll-hint" hidden>左右滚动查看更多选项</div><div class="preview" role="status" aria-live="polite"></div></div>`;
+    </style>${miniButton}<div class="shell" hidden><div class="row"><div class="bar" role="toolbar" aria-label="当前文字翻译操作"></div></div><div class="scroll-hint" hidden>左右滚动查看更多选项</div><div class="preview" role="status" aria-live="polite"></div></div>`;
     const bar = root.querySelector(".bar"),
       preview = root.querySelector(".preview");
     const proxies = [];
@@ -257,7 +329,18 @@
       attributes: true,
     });
     current = { host, options, observer, sync: refresh, expanded: false };
-    setExpanded(false);
+    setExpanded(expanded, expanded);
+    isolateControls(host);
+    host.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        if (current?.expanded) setExpanded(false, true);
+        else hide(options.owner);
+      }
+    });
+  }
+
+  function isolateControls(host) {
     // Keep page click-to-turn handlers away from native controls. Preserve a
     // range on button presses; selects keep their native keyboard behaviour.
     for (const type of [
@@ -273,14 +356,6 @@
         if (type === "mousedown" && e.composedPath()[0]?.tagName === "BUTTON")
           e.preventDefault();
       });
-    host.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        if (current?.expanded) setExpanded(false, true);
-        else hide(options.owner);
-      }
-    });
-    refresh();
   }
   document.addEventListener(
     "pointerdown",
@@ -299,6 +374,7 @@
   window.addEventListener("pagehide", () => hide());
   globalThis.MAS_quick = {
     show,
+    keepBadge,
     hide,
     refresh(owner) {
       if (!owner || current?.options.owner === owner) current?.sync();

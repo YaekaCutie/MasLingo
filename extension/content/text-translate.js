@@ -427,6 +427,7 @@
       box.setPinned(false);
       box.dismissed = true;
       hideBox(box);
+      globalThis.MAS_quick?.hide(box);
     });
     origin.addEventListener("click", () => {
       box.paragraph?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -607,6 +608,7 @@
         box.setPinned(false);
         box.dismissed = true;
         hideBox(box);
+        globalThis.MAS_quick?.hide(box);
         event.stopPropagation();
       }
     });
@@ -659,14 +661,15 @@
     return box.localDisplayMode || (box.automatic || bingSearchPage ? displayMode : "bilingual");
   }
 
-  function showQuick(box) {
+  function keepQuickBadge(box) {
     if (bingSearchPage) return;
     box.displaySelect.value = displayModeFor(box);
     box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
     const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
     const anchorRect=()=>{const node=box.coverSpan || box.nodes.at(-1);if(!node?.isConnected)return box.paragraph.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(node);return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();};
     const controls = [box.sourceSelect, box.select, box.providerSelect, box.displaySelect, box.coverButton, box.origin, box.retry];
-    globalThis.MAS_quick?.show({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
+    globalThis.MAS_quick?.keepBadge({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
+      label: box.paragraphText.slice(0, 40),
       rect:anchorRect, badgeRect:anchorRect,
       controls,
     });
@@ -693,8 +696,13 @@
     const mode = displayModeFor(box);
     box.modeNote.hidden = true;
     if (mode !== "translated" && box.covered) box.toggleCover();
-    if (mode === "source" || box.dismissed ||
-        (box.sameLanguage && !box.manualSource && !box.manualTarget)) {
+    if (box.dismissed || (box.sameLanguage && !box.manualSource && !box.manualTarget)) {
+      globalThis.MAS_quick?.hide(box);
+      hideBox(box);
+      return;
+    }
+    keepQuickBadge(box);
+    if (mode === "source") {
       hideBox(box);
       return;
     }
@@ -764,7 +772,7 @@
             box.sameLanguage = true;
             box.translation = "";
             if (box.manualSource || box.manualTarget) box.setNotice(`原文已是${box.getLanguage()}，无需翻译。`);
-            else hideBox(box);
+            applyDisplay(box);
             return;
           }
           const text = String(response.translations?.[index] ?? "").trim();
@@ -796,7 +804,6 @@
     if (!box.automatic && !bingSearchPage) mountReader(box);
     if (!bingSearchPage || !box.error) enqueue(box);
     applyDisplay(box);
-    showQuick(box);
   }
 
   function ownHost(target) {
@@ -804,28 +811,24 @@
   }
 
   function onPointerOver(event) {
-    if ((!hoverEnabled && !autoEnabled) || event.buttons || !window.getSelection()?.isCollapsed) return;
+    if (!hoverEnabled || event.buttons || !window.getSelection()?.isCollapsed) return;
     const target = event.composedPath()[0];
     if(globalThis.MAS_quick?.isOwn(target))return;
-    const cover=target?.closest?.('[data-maslingo-cover]');
-    if(cover){const box=boxes.get(cover.parentElement);if(box)showQuick(box);return;}
     if (ownHost(target)) return;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="textbox"]')) return;
     const unit = findBlock(target);
     if (!unit || unit.element === hoverBlock) return;
-    if(!hoverEnabled && !boxes.has(unit.element))return;
     hoverBlock = unit.element;
     clearTimeout(showTimer);
     showTimer = setTimeout(() => {
-      if ((hoverEnabled || autoEnabled) && hoverBlock === unit.element && unit.element.isConnected && window.getSelection()?.isCollapsed) {
-        if(hoverEnabled)showBox(unitFor(unit.element) || unit);
-        else {const box=boxes.get(unit.element);if(box)showQuick(box);}
+      if (hoverEnabled && hoverBlock === unit.element && unit.element.isConnected && window.getSelection()?.isCollapsed) {
+        showBox(unitFor(unit.element) || unit);
       }
     }, HOVER_DELAY);
   }
 
   function onPointerOut(event) {
-    if ((!hoverEnabled && !autoEnabled) || !hoverBlock) return;
+    if (!hoverBlock) return;
     const to = event.relatedTarget;
     if (to && hoverBlock.contains(to)) return;
     hoverBlock = null;
@@ -833,11 +836,11 @@
   }
 
   function onFocus(event) {
-    if (!hoverEnabled && !autoEnabled) return;
+    if (!hoverEnabled) return;
     const target = event.composedPath()[0];
     if (ownHost(target) || target?.matches?.('input, textarea, select, [contenteditable]')) return;
     const unit = findBlock(target);
-    if (unit) {if(hoverEnabled)showBox(unit);else if(boxes.has(unit.element))showQuick(boxes.get(unit.element));}
+    if (unit) showBox(unit);
   }
 
   function observeRoot(root) {

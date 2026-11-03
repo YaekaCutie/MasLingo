@@ -77,6 +77,9 @@ try {
  assert.ok(await inlineProse(),'hover result stays in the document after pointer exit');
  await hover('#reference');
  assert.ok(await inlineProse(),'translating another paragraph does not hide the previous result');
+ assert.ok(await page.evaluate(() => [...document.querySelectorAll('[data-maslingo-quick-badge]')]
+  .filter(host => getComputedStyle(host).visibility === 'visible').length >= 2),
+  'previous and current hover results both keep a visible button');
  assert.ok(await page.evaluate(()=>readerMessages.some(m=>m.type==='READER_RESULT' && m.source.includes('A protein'))),'hover publishes its source to the reader');
  assert.equal(await page.$eval('#prose',e=>e.innerHTML),originals,'hover keeps exact inline markup');
  assert.ok(await page.evaluate(()=>calls.some(c=>c.texts.includes('AlphaFold 2[1] predicts protein structures.'))),'superscript citation is separated from model number');await close();
@@ -138,6 +141,7 @@ try {
  await page.waitForFunction(()=>pending.some(p=>p.message.texts.includes('Pending before disable')));
  await page.evaluate(()=>setCfg({webAutoTranslate:false,hoverTranslate:false}));
  assert.equal(await page.evaluate(()=>boxes().length),0,'disabling removes translations');
+ assert.equal(await page.$('[data-maslingo-quick-badge]'),null,'disabling removes persistent paragraph buttons');
  await page.evaluate(()=>{hold=false;for(const p of pending)p.resolve({ok:true,translations:p.message.texts.map(()=> 'STALE')});pending=[];});await wait(350);
  assert.equal(await page.evaluate(()=>boxes().length),0,'late responses cannot resurrect cards');
  await page.evaluate(()=>setCfg({hoverTranslate:true}));await hover('#prose');
@@ -192,7 +196,7 @@ try {
  await page.hover('#subtitle');
  await wait(300);
  assert.equal(await page.evaluate(()=>visible().length),0,'successful search results show no cards');
- assert.equal(await page.$('[data-maslingo-quick]'),null,'search titles and subtitles show no controls on hover');
+ assert.equal(await page.$('[data-maslingo-quick], [data-maslingo-quick-badge]'),null,'search titles and subtitles show no controls on hover');
  assert.equal(await page.$eval('#result-title',element=>element.textContent),'Nature Research Journal');
  assert.equal(await page.evaluate(()=>document.querySelector('#subtitle')===originalSubtitle),true);
  await page.click('#subtitle');

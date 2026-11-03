@@ -388,6 +388,19 @@ try {
       await handle.asElement().click();
     }
   };
+  const openParagraphQuick = async (selector) => {
+    await source.bringToFront();
+    const button = await source.waitForFunction((selector) => {
+      const text = document.querySelector(selector).textContent.trim().slice(0, 40);
+      const label = `展开「${text}」的翻译操作`;
+      for (const host of document.querySelectorAll("[data-maslingo-quick-badge]")) {
+        const button = host.shadowRoot.querySelector(".mini");
+        if (button.getAttribute("aria-label") === label && getComputedStyle(host).visibility === "visible") return button;
+      }
+      return null;
+    }, {}, selector);
+    await button.asElement().click();
+  };
   // Context controls work on the saved selection, without opening settings.
   const quickSelect = async (selector, value) => {
     await expandQuick();
@@ -460,8 +473,7 @@ try {
     getSelection().removeAllRanges();
   });
   await source.mouse.move(1, 1);
-  await source.hover("#source");
-  await source.waitForSelector("[data-maslingo-quick]");
+  await openParagraphQuick("#source");
   await quickClick(".cover");
   await source.waitForFunction(() =>
     document.querySelector("#source [data-maslingo-cover]"),
@@ -494,22 +506,19 @@ try {
     (e) => e.getBoundingClientRect().top,
   );
   await quickClick(".close");
-  assert.equal(
-    await source.$eval("[data-maslingo-quick]", (e) => e.dataset.expanded),
-    "false",
-  );
+  assert.equal(await source.$("[data-maslingo-quick]"), null);
   assert.ok(
     (await source.$eval("#word", (e) => e.getBoundingClientRect().top)) <
       nextTop,
     "collapsed trigger reserves no row",
   );
   await screenshot(source, "paragraph-collapsed.png");
-  await expandQuick();
+  await openParagraphQuick("#source");
   await source.setViewport({ width: 390, height: 844 });
   await screenshot(source, "context-toolbar-narrow.png");
   await quickClick(".close");
   await screenshot(source, "collapsed-narrow.png");
-  await expandQuick();
+  await openParagraphQuick("#source");
   assert.ok(
     await source.evaluate(
       () =>
@@ -675,8 +684,15 @@ try {
   );
   await source.bringToFront();
   await source.mouse.move(1, 1);
-  await source.hover("#source");
-  await source.waitForSelector("[data-maslingo-quick]");
+  await source.waitForFunction(() =>
+    [...document.querySelectorAll("[data-maslingo-quick-badge]")].filter(
+      (badge) => getComputedStyle(badge).visibility === "visible",
+    ).length >= 2,
+  );
+  await openParagraphQuick("#word");
+  await source.mouse.click(1, 1);
+  assert.equal(await source.$("[data-maslingo-quick]"), null, "outside click closes only the open toolbar");
+  await openParagraphQuick("#source");
   assert.ok(
     await source.evaluate(
       () =>
@@ -688,7 +704,7 @@ try {
   );
   await expandQuick();
   await quickClick(".close");
-  await expandQuick();
+  await openParagraphQuick("#source");
   assert.ok(
     await source.$eval("[data-maslingo-quick]", (host) => {
       const root = host.shadowRoot;
