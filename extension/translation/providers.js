@@ -794,6 +794,78 @@
       .replace(/&amp;/g, "&")];
   };
 
+  const MYMEMORY_MAX_BYTES = 500;
+  const myMemoryEncoder = new TextEncoder();
+  const sentenceEnd = /[.!?。！？…][”’"'）)\]]*$/u;
+  const englishClause = "(?:who|whom|which|when|where|because|while|although|but)\\b";
+
+  function myMemoryChunkEnd(text, limit) {
+    let bytes = 0;
+    let end = 0;
+    for (const character of text) {
+      bytes += myMemoryEncoder.encode(character).length;
+      if (bytes > limit) break;
+      end += character.length;
+    }
+    if (end === text.length) return end;
+
+    const prefix = text.slice(0, end);
+    for (const pattern of [
+      /(?:[.!?]\s+|[。！？]\s*|\n+)/g,
+      new RegExp(`(?:[,;:]\\s+|[，；：]\\s*|\\s+(?=${englishClause}))`, "gi"),
+      /\s+/g,
+    ]) {
+      const last = [...prefix.matchAll(pattern)].at(-1);
+      if (last && last.index >= end / 3) return last.index + last[0].length;
+    }
+    return end;
+  }
+
+  async function translateMyMemory(request, fetchJson) {
+    const source = firstText(request);
+    const compactTarget = /^(zh|ja)(-|$)/i.test(request.target);
+    const separator = compactTarget ? "" : " ";
+
+    async function translatePart(text) {
+      const built = myMemory({ ...request, text });
+      const payload = await fetchJson(built.url, built.init);
+      return { text: parseMyMemory(payload, 1)[0].trim(), match: payload.responseData.match };
+    }
+
+    let remaining = source;
+    let result = "";
+    let joiner = "";
+    while (remaining.trim()) {
+      const end = myMemoryChunkEnd(remaining, MYMEMORY_MAX_BYTES);
+      const chunk = remaining.slice(0, end);
+      remaining = remaining.slice(end).trimStart();
+      const text = chunk.trim();
+      if (!text) continue;
+
+      let translation = await translatePart(text);
+      // A long, punctuated source sometimes gets an HTTP 200 from the machine
+      // translation engine with the translated sentence cut mid-word.
+      const bytes = myMemoryEncoder.encode(text).length;
+      if (bytes >= 80 && translation.match !== 1 &&
+          sentenceEnd.test(text) && !sentenceEnd.test(translation.text)) {
+        const cut = myMemoryChunkEnd(text, Math.floor(bytes * 0.75));
+        const first = text.slice(0, cut).trimEnd();
+        const second = text.slice(cut).trimStart();
+        const left = await translatePart(first);
+        const right = await translatePart(second);
+        const joinsClause = new RegExp(`^${englishClause}`, "i").test(second);
+        const clauseSeparator = joinsClause && !sentenceEnd.test(left.text)
+          ? (compactTarget ? "，" : ", ")
+          : separator;
+        translation = { text: left.text + clauseSeparator + right.text };
+      }
+
+      result += joiner + translation.text;
+      joiner = chunk.endsWith("\n") ? "\n" : separator;
+    }
+    return result;
+  }
+
   /**
    * The project's own backend, doing the translating itself.
    *
@@ -872,6 +944,7 @@
       group: "翻译 API",
       adapter: myMemory,
       parse: parseMyMemory,
+      translateOne: translateMyMemory,
       perRequest: true,
       source: "ja",
       target: "zh-CN",

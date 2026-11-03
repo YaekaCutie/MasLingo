@@ -137,14 +137,31 @@ try {
         { urlPattern: "https://api.mymemory.translated.net/*" },
       ],
     });
+    const titleLead = "Scientists pay tribute to Marta Shahbazi Alonso and Tamara González Costa";
+    const titleTail = "who died on their way to a developmental-biology meeting.";
+    const title = titleLead + " " + titleTail;
+    const longQuery = "か".repeat(166) + "🧪END";
+    const memoryQueries = [];
     cdp.on("Fetch.requestPaused", (event) => {
       const url = event.request.url;
+      let memoryText = "FIXTUREOK";
+      let memoryStatus = 200;
+      if (url.startsWith("https://api.mymemory.translated.net/")) {
+        const query = new URL(url).searchParams.get("q");
+        memoryQueries.push(query);
+        if (Buffer.byteLength(query, "utf8") > 500) memoryStatus = 413;
+        if (query === title) memoryText = "科学家向两位研究者致敬，他们在前往参加发";
+        if (query === titleLead) memoryText = "科学家向两位研究者致敬";
+        if (query === titleTail) memoryText = "他们在前往发育生物学会议的途中去世。";
+        if (query === "か".repeat(166)) memoryText = "开头";
+        if (query === "🧪END") memoryText = "结尾";
+      }
       const payload = url.includes("cn.bing.com/translator")
         ? '<!doctype html><script>var _G={IG:"ABC123DEF456"};'
           + 'params_AbusePreventionHelper=[1791710657099,"TOKENVALUE",3600000];</script>'
         : url.includes("ttranslatev3")
           ? JSON.stringify([{ translations: [{ text: "FIXTUREOK" }] }])
-          : JSON.stringify({ responseStatus: 200, responseData: { translatedText: "FIXTUREOK" } });
+          : JSON.stringify({ responseStatus: memoryStatus, responseData: { translatedText: memoryText, match: 0.85 } });
       cdp.send("Fetch.fulfillRequest", {
         requestId: event.requestId,
         responseCode: 200,
@@ -176,6 +193,17 @@ try {
     else fail(`bing-free through the pipeline: ${JSON.stringify(keyless["bing-free"])}`);
     if (memoryOk) pass("mymemory runs through the real pipeline");
     else fail(`mymemory through the pipeline: ${JSON.stringify(keyless["mymemory"])}`);
+    const repaired = await worker.evaluate(async (texts) => runTranslation(texts, {
+      translationProvider: "mymemory",
+      targetLanguage: "简体中文",
+    }, { source: "Autodetect" }), [title, longQuery]);
+    if (repaired[0] === "科学家向两位研究者致敬，他们在前往发育生物学会议的途中去世。" &&
+        repaired[1] === "开头结尾" &&
+        memoryQueries.slice(1).join("\n") === [title, titleLead, titleTail, "か".repeat(166), "🧪END"].join("\n")) {
+      pass("MyMemory repairs truncated replies and splits overlong UTF-8 input without losing its tail");
+    } else {
+      fail(`MyMemory completeness regression: ${JSON.stringify({ repaired, memoryQueries })}`);
+    }
     cdp.send("Fetch.disable").catch(() => {});
 
     // --- content script path ----------------------------------------------

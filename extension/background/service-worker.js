@@ -981,16 +981,18 @@ async function runTranslationDetailed(texts, cfg, overrides = {}) {
   // to providerFetch — url undefined, fetch("undefined") failing as a bogus
   // network error.
   if (provider.perRequest) {
-    const out = [];
+    const fetchJson = (url, init) => providerFetch(url, init, provider);
     for (const entry of pending) {
       const text = entry.text;
-      const request = await provider.adapter({ ...common, text, texts: [text] });
-      const json = await providerFetch(request.url, request.init, provider);
-      out.push(...provider.parse(json, 1));
+      const input = { ...common, text, texts: [text] };
+      if (provider.translateOne) {
+        translations[entry.index] = await provider.translateOne(input, fetchJson);
+        continue;
+      }
+      const request = await provider.adapter(input);
+      const json = await fetchJson(request.url, request.init);
+      translations[entry.index] = String(provider.parse(json, 1)[0] ?? "");
     }
-    pending.forEach((entry, index) => {
-      translations[entry.index] = String(out[index] ?? "");
-    });
     return { translations, skipped };
   }
 
