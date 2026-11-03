@@ -199,6 +199,7 @@
     const coverButton = shadow.querySelector(".cover");
     const toggle = shadow.querySelector(".toggle[aria-expanded]");
     const pin = shadow.querySelector(".pin");
+    const origin = shadow.querySelector(".origin");
     const retry = shadow.querySelector(".retry");
     host.setAttribute("role", "region");
     host.setAttribute("aria-label", "MasLingo 网页译文");
@@ -244,6 +245,8 @@
       select,
       sourceSelect,
       coverButton,
+      origin,
+      retry,
       providerSelect, displaySelect,
       localDisplayMode: null,
       modeNote: shadow.querySelector(".mode-note"),
@@ -431,7 +434,7 @@
       box.dismissed = true;
       hideBox(box, true);
     });
-    shadow.querySelector(".origin").addEventListener("click", () => {
+    origin.addEventListener("click", () => {
       box.paragraph?.scrollIntoView({ block: "center", behavior: "smooth" });
       box.paragraph?.animate?.([{ outline: "2px solid #2563eb" }, { outline: "2px solid transparent" }], { duration: 1400 });
     });
@@ -594,7 +597,11 @@
     const element = box.paragraph;
     const host = box.host;
     host.dataset.mode = box.automatic ? "auto" : "hover";
-    host.shadowRoot.querySelector(".pin").hidden = box.automatic;
+    const shadow = host.shadowRoot;
+    const hasToolbar = box.automatic && Boolean(globalThis.MAS_quick);
+    shadow.querySelector(".head").hidden = hasToolbar;
+    shadow.querySelector(".foot").hidden = hasToolbar;
+    shadow.querySelector(".pin").hidden = box.automatic;
     host.style.cssText = "display:none;box-sizing:border-box;text-align:left;";
     if (bingSearchPage) {
       document.documentElement.appendChild(host);
@@ -642,6 +649,7 @@
         box.nodes = nodes;
       }
       if (box.automatic !== automatic) {
+        globalThis.MAS_quick?.hide(box);
         box.automatic = automatic;
         const visible = box.visible;
         mount(box);
@@ -680,9 +688,11 @@
     box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
     const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
     const anchorRect=()=>{const node=box.coverSpan || box.nodes.at(-1);if(!node?.isConnected)return box.paragraph.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(node);return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();};
+    const controls = [box.sourceSelect, box.select, box.providerSelect, box.displaySelect, box.coverButton];
+    if (box.automatic) controls.push(box.origin, box.retry);
     globalThis.MAS_quick?.show({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
       rect:anchorRect, badgeRect:anchorRect,
-      controls:[box.sourceSelect,box.select,box.providerSelect,box.displaySelect,box.coverButton],
+      controls,
       preview:()=> box.automatic ? '' : (box.localDisplayMode || (box.automatic ? displayMode : 'bilingual'))==='source' || box.covered ? '' : box.text.textContent,
     });
   }
@@ -822,6 +832,7 @@
     reveal(box);
     if (!bingSearchPage || !box.error) enqueue(box);
     applyAutoDisplay(box);
+    if (box.automatic) showQuick(box);
   }
 
   function schedulePosition() {

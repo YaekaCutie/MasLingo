@@ -652,13 +652,21 @@ try {
     "stopping restores source captions",
   );
   // Automatic reading exposes contextual controls even with hover disabled.
+  failTranslation = true;
   await source.evaluate(() =>
     chrome.storage.local.set({ hoverTranslate: false, webAutoTranslate: true }),
   );
   await source.waitForFunction(() =>
-    [...document.querySelectorAll("[data-maslingo-textbox]")].some(
-      (e) => e.dataset.mode === "auto",
+    document.querySelector('#source + [data-maslingo-textbox][data-mode="auto"]')
+      ?.shadowRoot.querySelector(".text").dataset.state === "error",
+  );
+  assert.ok(
+    await source.$eval('#source + [data-maslingo-textbox]', (host) =>
+      [".head", ".foot"].every(
+        (selector) => getComputedStyle(host.shadowRoot.querySelector(selector)).display === "none",
+      ),
     ),
+    "automatic results show no legacy controls even after a translation failure",
   );
   await source.bringToFront();
   await source.mouse.move(1, 1);
@@ -672,6 +680,26 @@ try {
           .shadowRoot.querySelector(".cover"),
     ),
     "auto-only reading has local cover control",
+  );
+  await expandQuick();
+  await quickClick(".close");
+  await expandQuick();
+  assert.ok(
+    await source.$eval("[data-maslingo-quick]", (host) => {
+      const root = host.shadowRoot;
+      return host.dataset.expanded === "true" &&
+        root.querySelector('[role="toolbar"] .provider') !== null &&
+        !root.querySelector(".retry").hidden;
+    }),
+    "reopening 译 restores the shared toolbar with the current retry action",
+  );
+  await screenshot(source, "auto-toolbar-reopened.png");
+  failTranslation = false;
+  await quickClick(".retry");
+  await source.waitForFunction(() =>
+    [...document.querySelectorAll('[data-maslingo-textbox][data-mode="auto"]')].some(
+      (host) => host.shadowRoot.querySelector(".text").textContent === "失败的翻译可以重试。",
+    ),
   );
   await source.evaluate(() =>
     chrome.storage.local.set({ hoverTranslate: true, webAutoTranslate: false }),

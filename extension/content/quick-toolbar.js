@@ -133,10 +133,11 @@
       .field-label{font-size:10px;font-weight:500;letter-spacing:.1px}.field-label:empty{display:none}
       .field::after{content:'';position:absolute;right:8px;top:10px;width:4px;height:4px;border-right:1.3px solid #8190a6;border-bottom:1.3px solid #8190a6;transform:rotate(45deg);pointer-events:none}
       .field-provider,.field-display-mode{background:transparent}.field-provider:hover,.field-display-mode:hover{background:#f5f7fb}
-      select{appearance:none;max-width:108px;min-height:26px;min-width:48px;margin:0;padding:3px 17px 3px 2px;border:0;border-radius:5px;background:transparent;color:#263750;outline:0;font-size:11px;text-overflow:ellipsis}
+      select{appearance:none;field-sizing:content;max-width:108px;min-height:26px;min-width:48px;margin:0;padding:3px 17px 3px 2px;border:0;border-radius:5px;background:transparent;color:#263750;outline:0;font-size:11px;text-overflow:ellipsis}
       .direction{flex:none;color:#8d9db4;font-size:12px;line-height:1}.divider{flex:none;width:1px;height:14px;margin:0 2px;background:#e5ebf4}
       button:not(.mini){display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;min-height:27px;padding:4px 8px;border:1px solid transparent;border-radius:7px;background:transparent;font-size:11px;font-weight:500;line-height:1.4}
       button.cover{background:#edf3ff;color:#285de5}button.cover:hover{background:#e1ebff;border-color:#cddbf9}button.cover[aria-pressed=true]{background:#285de5;color:#fff}button.cover:active{transform:scale(.97)}
+      button.origin,button.retry{color:#285de5}button.origin:hover,button.retry:hover{background:#edf3ff;border-color:#dce4f0}
       button:disabled,select:disabled{opacity:.45;cursor:default}button.cover:disabled:hover{background:#edf3ff;border-color:transparent}
       button:focus-visible,.field:has(select:focus-visible){outline:2px solid #285de5;outline-offset:-2px}
       button.close{width:25px;min-height:25px;margin:0;padding:5px;color:#8493a9;border-radius:7px}button.close:hover{background:#f0f4fa;color:#285de5}svg{display:block;width:12px;height:12px;flex:none;pointer-events:none}
