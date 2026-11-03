@@ -8,6 +8,7 @@
   const clean = value => String(value || "").replace(/\s+/g, " ").trim().slice(0, 4000);
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
+  const playerSelector = "#movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
 
   function attach(video) {
     const host = document.createElement("div");
@@ -31,13 +32,29 @@
       <select class="mode" aria-label="字幕显示模式"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
       <select class="track" aria-label="字幕轨"><option value="auto">自动选择字幕</option></select>
       <span class="status" role="status"></span></div><div class="caption" aria-live="off"></div>`;
-    function placeHost() {
-      let anchor = video.closest('#movie_player, .html5-video-player, .bpx-player-container, .bilibili-player') || video;
-      // Absolute video elements occupy a player wrapper; reserve space after it.
-      if (anchor === video && ['absolute','fixed'].includes(getComputedStyle(video).position) && video.parentElement !== document.body) anchor = video.parentElement || video;
+    function placeHost(rect) {
+      let anchor = video.closest(playerSelector) || video;
+      // Custom players can nest several out-of-flow layers. Leave those
+      // layers and any clipping wrapper that ends at the video edge.
+      for (let parent = anchor.parentElement; parent && parent !== document.body; parent = anchor.parentElement) {
+        const positioned = /^(absolute|fixed)$/.test(getComputedStyle(anchor).position);
+        const clipped = /^(hidden|clip)$/.test(getComputedStyle(parent).overflowY) &&
+          parent.getBoundingClientRect().bottom <= rect.bottom + 2;
+        if (!positioned && !clipped && !parent.matches(playerSelector)) break;
+        anchor = parent;
+      }
       if (anchor.nextSibling !== host) anchor.after(host);
+      if (host.style.display === "none") return;
+      const panelRect = host.getBoundingClientRect();
+      if (panelRect.left < rect.right && panelRect.right > rect.left) {
+        // Also cover player layouts whose video extends past the height they
+        // reserve in normal flow. Account for the gap already applied.
+        const margin = parseFloat(host.style.marginTop) || 0;
+        const needed = Math.max(8, Math.ceil(margin + rect.bottom + 8 - panelRect.top));
+        if (margin !== needed) host.style.marginTop = `${needed}px`;
+      }
     }
-    placeHost();
+    placeHost(video.getBoundingClientRect());
     const $ = selector => root.querySelector(selector);
     const state = { video, host, root, enabled: false, generation: 0, cache: new Map(), inflight: 0,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "", source: "",
@@ -187,9 +204,9 @@
       if (!video.isConnected) { stop(); host.remove(); players.delete(video); return; }
       const rect = video.getBoundingClientRect();
       const full = document.fullscreenElement;
-      placeHost();
       host.style.display = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video ? 'block' : 'none';
       host.style.width = `${Math.max(0, rect.width)}px`;
+      placeHost(rect);
       updateTracks();
       if (!state.enabled) return;
       const text = sourceText();

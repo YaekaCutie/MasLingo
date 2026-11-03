@@ -66,6 +66,27 @@ let savedAppIdExists = false;
 // Which provider the stored model id was chosen for (see resolveModel in
 // providers.js) — switching sources must not carry it over.
 let savedModelOwner = "";
+let savedProviderId = "";
+let loadVersion = 0;
+let editVersion = 0;
+const drafts = new Map();
+const providerFields = [
+  "translationProvider", "translationEndpoint", "translationModel",
+  "translationAppId", "translationApiKey", "clearApiKey",
+];
+const settingsKeys = [
+  "debugMode", "backendUrl", "translationProvider", "translationMode",
+  "translationEndpoint", "translationModel", "translationAppId",
+  "translationModelProvider", "translationApiKey", "targetLanguage",
+  "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode",
+  "videoDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace",
+  "autoConcurrency", "fontScale", "overlayOpacity", "translationStrength",
+];
+function markDraft(event) {
+  if (event.target.matches?.("input[id], select[id]")) drafts.set(event.target.id, ++editVersion);
+}
+document.addEventListener("input", markDraft, true);
+document.addEventListener("change", markDraft, true);
 
 // --- 翻译来源选择 -----------------------------------------------------------
 
@@ -206,14 +227,11 @@ inputAutoReplace.addEventListener("change", () => {
 document.getElementById("save").onclick = async () => {
   const provider = selectedProvider();
   if (!provider) return;
-  const endpoint = translationEndpoint.value.trim().replace(/\/+$/, "") ||
-    (provider.endpointEditable ? "" : provider.endpoint || "");
-  try {
-    await ensureEndpointPermission(provider, endpoint);
-  } catch (error) {
-    showResult(error.message, "error");
-    return;
-  }
+  const editing = new Map(drafts);
+  const providerChanged = editing.has("translationProvider");
+  const endpoint = provider.endpointEditable
+    ? (providerChanged && !editing.has("translationEndpoint") ? "" : translationEndpoint.value.trim().replace(/\/+$/, ""))
+    : provider.endpoint || "";
 
   const cfg = {
     debugMode: debugMode.checked,
@@ -223,7 +241,7 @@ document.getElementById("save").onclick = async () => {
     // return the same string, so this looked like a mapping while mapping
     // nothing — and it pinned the "自建后端" provider to a mode that always
     // failed, whatever the user did.
-    translationMode: (provider.id === "google-free" || provider.id === "backend")
+    translationMode: provider.id === "none" ? "none" : (provider.id === "google-free" || provider.id === "backend")
       ? "free-translate"
       : "openai-compatible",
     translationEndpoint: endpoint,
@@ -258,13 +276,33 @@ document.getElementById("save").onclick = async () => {
   if (newKey) cfg.translationApiKey = newKey;
   else if (clearApiKey.checked) cfg.translationApiKey = "";
 
-  await chrome.storage.local.set(cfg);
-  savedApiKeyExists = Boolean(newKey) || (savedApiKeyExists && !clearApiKey.checked);
-  savedAppIdExists = Boolean(cfg.translationAppId) || savedAppIdExists;
-  savedModelOwner = provider.id;
-  translationApiKey.value = "";
-  clearApiKey.checked = false;
-  describeProvider();
+  // Saving one draft must not write old copies of fields edited in the sidebar.
+  const providerDefaults = new Set(["translationMode", "translationEndpoint", "translationModel", "translationModelProvider", "translationAppId"]);
+  for (const key of Object.keys(cfg)) {
+    if (editing.has(key) || key === "translationApiKey") continue;
+    if (providerChanged && providerDefaults.has(key)) continue;
+    if (key === "translationModelProvider" && editing.has("translationModel")) continue;
+    delete cfg[key];
+  }
+  if (!Object.keys(cfg).length) { showResult("没有需要保存的修改。"); return; }
+  const save = document.getElementById("save");
+  save.disabled = true;
+  try {
+    if (providerChanged || editing.has("translationEndpoint")) await ensureEndpointPermission(provider, endpoint);
+    if (!providerChanged && providerFields.some(key => editing.has(key)) && savedProviderId !== provider.id) {
+      throw new Error("翻译来源已在侧栏变更，请先确认完整设置中的来源，再保存接口、模型或密钥。");
+    }
+    await chrome.storage.local.set(cfg);
+  } catch (error) {
+    showResult(error.message, "error");
+    return;
+  } finally {
+    save.disabled = false;
+  }
+  for (const [key, version] of editing) if (drafts.get(key) === version) drafts.delete(key);
+  if (!drafts.has("translationApiKey")) translationApiKey.value = "";
+  if (!drafts.has("clearApiKey")) clearApiKey.checked = false;
+  await load();
   showResult(`已保存。翻译由「${provider.label}」完成。`);
 };
 
@@ -299,44 +337,39 @@ function describeBackend() {
 }
 
 async function load() {
-  const cfg = await chrome.storage.local.get([
-    "debugMode", "backendUrl", "translationProvider", "translationMode",
-    "translationEndpoint", "translationModel", "translationAppId",
-      "translationModelProvider", "translationApiKey", "targetLanguage",
-      "translationGlossary", "autoTranslate", "webAutoTranslate", "webDisplayMode", "videoDisplayMode", "hoverTranslate", "selectionTranslate", "inputAutoReplace", "autoConcurrency",
-      "fontScale", "overlayOpacity", "translationStrength",
-  ]);
-  document.getElementById("translationStrength").value = String(registry.normalizeStrength(cfg.translationStrength));
-  debugMode.checked = cfg.debugMode !== false;
-  backendUrl.value = cfg.backendUrl || "";
-
-  autoTranslate.checked = Boolean(cfg.autoTranslate);
-  webAutoTranslate.checked = Boolean(cfg.webAutoTranslate);
-  webDisplayMode.value = globalThis.MAS_webDisplayMode(cfg.webDisplayMode);
-  videoDisplayMode.value = globalThis.MAS_webDisplayMode(cfg.videoDisplayMode);
-  hoverTranslate.checked = Boolean(cfg.hoverTranslate);
-  selectionPreference = cfg.selectionTranslate !== false;
-  inputReplacePreference = cfg.inputAutoReplace !== false;
-  autoConcurrency.value = String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1)));
-  fontScale.value = String(Math.round((cfg.fontScale ?? 1) * 100));
-  overlayOpacity.value = String(Math.round((cfg.overlayOpacity ?? 1) * 100));
+  const version = ++loadVersion;
+  const cfg = await chrome.storage.local.get(settingsKeys);
+  if (version !== loadVersion) return;
+  const set = (element, value) => {
+    if (!drafts.has(element.id)) element[element.type === "checkbox" ? "checked" : "value"] = value;
+  };
+  set(document.getElementById("translationStrength"), String(registry.normalizeStrength(cfg.translationStrength)));
+  set(debugMode, cfg.debugMode !== false);
+  set(backendUrl, cfg.backendUrl || "");
+  set(autoTranslate, Boolean(cfg.autoTranslate));
+  set(webAutoTranslate, Boolean(cfg.webAutoTranslate));
+  set(webDisplayMode, globalThis.MAS_webDisplayMode(cfg.webDisplayMode));
+  set(videoDisplayMode, globalThis.MAS_webDisplayMode(cfg.videoDisplayMode));
+  set(hoverTranslate, Boolean(cfg.hoverTranslate));
+  if (!drafts.has("selectionTranslate")) selectionPreference = cfg.selectionTranslate !== false;
+  if (!drafts.has("inputAutoReplace")) inputReplacePreference = cfg.inputAutoReplace !== false;
+  set(autoConcurrency, String(Math.min(3, Math.max(1, cfg.autoConcurrency || 1))));
+  set(fontScale, String(Math.round((cfg.fontScale ?? 1) * 100)));
+  set(overlayOpacity, String(Math.round((cfg.overlayOpacity ?? 1) * 100)));
   syncSliderLabels();
 
   document.getElementById("version").textContent = chrome.runtime.getManifest().version;
 
-  const providerId = registry.resolveProviderId(cfg);
-  providerSelect.value = registry.byId(providerId) ? providerId : "none";
-
-  translationEndpoint.value = cfg.translationEndpoint || "";
-  savedModelOwner = cfg.translationModelProvider || "";
-  // A model id chosen for a different source is not shown here: saving it as
-  // this provider's model is exactly the cross-source leak resolveModel blocks.
-  translationModel.value = savedModelOwner && savedModelOwner !== providerSelect.value
-    ? ""
-    : (cfg.translationModel || "");
-  translationAppId.value = cfg.translationAppId || "";
-  targetLanguage.value = cfg.targetLanguage || "";
-  translationGlossary.value = registry.glossaryById?.(cfg.translationGlossary)?.id || "general";
+  savedProviderId = registry.resolveProviderId(cfg);
+  if (!providerFields.some(key => drafts.has(key))) {
+    providerSelect.value = savedProviderId;
+    translationEndpoint.value = cfg.translationEndpoint || "";
+    savedModelOwner = cfg.translationModelProvider || "";
+    translationModel.value = savedModelOwner && savedModelOwner !== savedProviderId ? "" : cfg.translationModel || "";
+    translationAppId.value = cfg.translationAppId || "";
+  }
+  set(targetLanguage, cfg.targetLanguage || "");
+  set(translationGlossary, registry.glossaryById?.(cfg.translationGlossary)?.id || "general");
   savedApiKeyExists = Boolean(cfg.translationApiKey);
   savedAppIdExists = Boolean(cfg.translationAppId);
 
@@ -349,6 +382,9 @@ backendUrl.addEventListener("input", describeBackend);
 buildProviderOptions();
 buildGlossaryOptions();
 load();
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && settingsKeys.some(key => key in changes)) load().catch(() => {});
+});
 
 // Keep all fields mounted while switching groups so unsaved edits survive.
 const sectionLinks = [...document.querySelectorAll('.settings-nav a')];

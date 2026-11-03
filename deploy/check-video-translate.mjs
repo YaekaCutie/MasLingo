@@ -85,10 +85,10 @@ try{
   await page.$eval('video',v=>v.currentTime=1.2);
   await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.length>0&&!videoRoot().querySelector('.caption').textContent.includes('Hello'),{timeout:90000});
   await page.$eval('video',v=>v.requestFullscreen());
-  await page.waitForFunction(()=>document.fullscreenElement&&videoRoot().querySelector('.bar').hidden);
+  await page.waitForFunction(()=>document.fullscreenElement&&getComputedStyle(videoRoot().host).display==='none');
   assert.ok(await page.$eval('video',v=>[...v.textTracks].some(t=>t.label==='MasLingo'&&t.mode==='showing')),'native subtitles render in video fullscreen');
   await page.evaluate(()=>document.exitFullscreen());await wait(200);
-  assert.ok(await page.evaluate(()=>!videoRoot().querySelector('.bar').hidden));
+  assert.ok(await page.evaluate(()=>getComputedStyle(videoRoot().host).display!=='none'));
   await click('.start');assert.equal(await page.evaluate(()=>track.mode),'showing');assert.equal(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent),'');
   // Web-player captions without native tracks, and exact style restoration.
   await page.evaluate(()=>{track.mode='disabled';document.querySelector('.ytp-caption-window-container').textContent='Hello everyone.';});

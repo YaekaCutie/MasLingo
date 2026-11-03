@@ -47,10 +47,16 @@ section {
   margin-top: 16px;
 }
 .section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin: 22px 0 14px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 650;
+}
+#result-count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
 }
 .empty {
   font-size: 13px;

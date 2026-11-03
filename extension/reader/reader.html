@@ -53,6 +53,13 @@
                 ><span class="switch-thumb"></span></span></span
           ></label>
           <label class="row"
+            ><span>输入框翻译后自动替换</span
+            ><span class="switch"
+              ><input id="inputAutoReplace" type="checkbox" /><span
+                class="switch-track"
+                ><span class="switch-thumb"></span></span></span
+          ></label>
+          <label class="row"
             ><span>显示方式</span
             ><select id="webDisplayMode">
               <option value="bilingual">双语对照</option>
@@ -63,14 +70,14 @@
           <button class="primary wide" id="select">框选翻译</button>
           <p id="provider-hint" class="hint"></p>
         </div>
-        <div class="section-head">
-          <h2>当前译文</h2>
+        <details id="current-results">
+          <summary class="section-head">当前译文 <span id="result-count" hidden></span></summary>
           <button class="link" id="clear">清空</button>
-        </div>
-        <p id="empty" class="empty">
-          在网页上停留或选中文字，译文会显示在这里。<br />漫画中需要保留原画的文字，也会集中到此处。
-        </p>
-        <div id="results"></div>
+          <p id="empty" class="empty">
+            在网页上停留或选中文字，译文会显示在这里。<br />漫画中需要保留原画的文字，也会集中到此处。
+          </p>
+          <div id="results"></div>
+        </details>
         <section class="video-section">
           <h2>视频字幕</h2>
           <p class="hint">

@@ -19,7 +19,12 @@ const event = () => ({
     return this.listeners.map((fn) => fn(...args));
   },
 });
-const article = `<!doctype html><meta charset="utf-8"><style>body{font:18px/1.7 system-ui;margin:40px;max-width:700px}p{margin:24px 0}video{width:600px;height:300px;background:#18212f}input{font:inherit;width:500px}</style><article><h1>Reading with MasLingo</h1><p id="source">Proteins perform diverse functions in living organisms.</p><p id="word">The protein structure reveals how molecules interact.</p><input id="input" value="Hello world"><div id="movie_player"><video></video><div class="ytp-caption-window-container">Hello everyone.</div></div><p id="after-video">This paragraph must remain below the video controls.</p></article>`;
+const article = `<!doctype html><meta charset="utf-8"><style>
+body{font:18px/1.7 system-ui;margin:40px;max-width:700px}p{margin:24px 0}
+#player-wrapper{position:relative;width:600px;max-width:100%;height:300px;overflow:hidden}
+#movie_player{position:absolute;inset:0}video{display:block;width:100%;height:100%;background:#18212f}
+.ytp-caption-window-container{position:absolute;bottom:0;color:white}input{font:inherit;width:500px}
+</style><article><h1>Reading with MasLingo</h1><p id="source">Proteins perform diverse functions in living organisms.</p><p id="word">The protein structure reveals how molecules interact.</p><input id="input" value="Hello world"><div id="player-wrapper"><div id="movie_player"><video></video><div class="ytp-caption-window-container">Hello everyone.</div></div></div><p id="after-video">This paragraph must remain below the video controls.</p></article>`;
 const server = http.createServer((req, res) => {
   if (req.url === "/article") {
     res.setHeader("Content-Type", "text/html;charset=utf-8");
@@ -173,14 +178,15 @@ async function createPage(kind) {
               word: message.text,
               reading: "protein",
               senses: [
+                { pos: "名词", meaning: "食物中的蛋白质", example: "Eggs contain protein." },
                 {
-                  partOfSpeech: "名词",
+                  pos: "名词",
                   meaning: "蛋白质",
                   example: "A protein structure.",
                   exampleTranslation: "蛋白质结构。",
                 },
               ],
-              contextSense: 0,
+              contextSense: 2,
             },
           }
         : { ok: true, kind: "text", translation: "这是选中句子的译文。" };
@@ -288,6 +294,10 @@ try {
   await reader.waitForFunction(() =>
     document.querySelector("#results").textContent.includes("蛋白质在生物体"),
   );
+  assert.equal(await reader.$eval("#current-results", (panel) => panel.open), false,
+    "incoming results do not expand the initially collapsed history");
+  assert.equal(await reader.$eval("#result-count", (badge) => badge.textContent), "1");
+  await reader.click("#current-results > summary");
   assert.equal(
     await source.$eval(
       "#source + [data-maslingo-textbox]",
@@ -347,7 +357,32 @@ try {
   await reader.waitForFunction(() =>
     document.querySelector("#results").textContent.includes("蛋白质"),
   );
+  await source.bringToFront();
+  await source.waitForFunction(() => {
+    const popup = document.querySelector("#maslingo-selection-popup");
+    const root = popup?.shadowRoot;
+    return popup && getComputedStyle(popup).visibility === "visible" &&
+      root.querySelectorAll(".sense .pos").length === 2 &&
+      root.querySelector(".sense.is-context .num")?.textContent === "2" &&
+      root.querySelector(".sense.is-context .example");
+  });
+  assert.ok(await source.$eval("#maslingo-selection-popup", (popup) => {
+    const bounds = popup.getBoundingClientRect();
+    const selection = getSelection().getRangeAt(0).getBoundingClientRect();
+    return bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0 &&
+      bounds.bottom <= innerHeight && (bounds.top >= selection.bottom || bounds.bottom <= selection.top);
+  }), "dictionary popup fits the viewport and avoids the selected word");
+  await screenshot(source, "selection-dictionary-popup.png");
+  await source.setViewport({ width: 390, height: 844 });
+  await source.waitForFunction(() => {
+    const popup = document.querySelector("#maslingo-selection-popup");
+    const bounds = popup.getBoundingClientRect();
+    return getComputedStyle(popup).visibility === "visible" && bounds.right <= innerWidth &&
+      bounds.top >= 0 && bounds.bottom <= innerHeight;
+  });
+  await source.setViewport({ width: 960, height: 900 });
   await screenshot(reader, "reader-dictionary.png");
+  await source.bringToFront();
   // Context controls default to a small, out-of-flow trigger.
   assert.equal(
     await source.$eval("[data-maslingo-quick]", (e) => e.dataset.expanded),
@@ -359,8 +394,7 @@ try {
       (e) => e.getBoundingClientRect().height <= 24,
     ),
   );
-  assert.ok(
-    await source.evaluate(() => {
+  await source.waitForFunction(() => {
       const r = document.createRange();
       r.selectNodeContents(document.querySelector("#word"));
       const text = [...r.getClientRects()].at(-1),
@@ -368,9 +402,7 @@ try {
           .querySelector("[data-maslingo-quick]")
           .getBoundingClientRect();
       return button.left >= text.right || button.right <= text.left;
-    }),
-    "collapsed selection button avoids unselected text",
-  );
+  });
   await screenshot(source, "selection-collapsed.png");
   const expandQuick = async () => {
     await source.bringToFront();
@@ -623,6 +655,11 @@ try {
   // Video controls reserve their own space; starting still needs an explicit click.
   await source.waitForSelector("[data-maslingo-video]");
   await wait(200);
+  assert.ok(await source.$eval("[data-maslingo-video]", (panel) => {
+    const wrapper = document.querySelector("#player-wrapper");
+    return panel.previousElementSibling === wrapper &&
+      panel.getBoundingClientRect().top >= wrapper.getBoundingClientRect().bottom;
+  }), "subtitle controls are outside the clipped player and below its picture");
   assert.ok(
     await source.evaluate(
       () =>
@@ -739,6 +776,13 @@ try {
   await screenshot(options, "settings-desktop.png");
   await options.click('a[href="#providers"]');
   await options.select("#translationStrength", "2");
+  await reader.click("#inputAutoReplace");
+  await options.waitForFunction(() => !document.querySelector("#inputAutoReplace").checked);
+  assert.equal(await options.$eval("#translationStrength", (control) => control.value), "2",
+    "sidebar updates leave unrelated options drafts intact");
+  await reader.click("#setup-tab");
+  await reader.select("#targetLanguage", "English");
+  await options.waitForFunction(() => document.querySelector("#targetLanguage").value === "English");
   await screenshot(options, "settings-providers.png");
   await options.click("#save");
   await wait(250);
@@ -748,6 +792,16 @@ try {
     "saving layout settings preserves credentials",
   );
   assert.equal(cfg.translationStrength, 2);
+  assert.equal(cfg.inputAutoReplace, false, "saving a draft does not overwrite the sidebar switch");
+  assert.equal(cfg.targetLanguage, "English", "saving a draft does not overwrite the sidebar language");
+  await options.click('a[href="#reading"]');
+  await options.click("#inputAutoReplace");
+  await options.click("#save");
+  await reader.waitForFunction(() => document.querySelector("#inputAutoReplace").checked);
+  await reader.click("#read-tab");
+  await reader.click("#current-results > summary");
+  assert.equal(await reader.$eval("#current-results", (panel) => panel.open), false);
+  await screenshot(reader, "reader-collapsed-results.png");
   await options.setViewport({ width: 390, height: 844 });
   assert.ok(
     await options.evaluate(

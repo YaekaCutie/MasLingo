@@ -16,10 +16,10 @@
   const MAX_TEXT = 200;
   const CACHE_TTL = 10 * 60 * 1000;
   const CACHE_MAX = 40;
-  // A "word" for dictionary purposes: one unspaced token of up to eight
-  // letters/characters. That covers 猫, 食べる, 朝ごはん and hello while a
-  // selected phrase falls through to ordinary translation.
-  const WORD_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}'’\-・ー]{0,7}$/u;
+  const WORD_PATTERN = /^\p{L}[\p{L}\p{N}\p{M}'’\-・ー]*$/u;
+  const UNSEGMENTED_SCRIPT = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+  const isDictionaryWord = (text) =>
+    WORD_PATTERN.test(text) && text.length <= (UNSEGMENTED_SCRIPT.test(text) ? 8 : 48);
   const OWN_UI = [
     "#maslingo-panel", "#maslingo-selection-popup", "[data-maslingo-textbox='1']",
     "#maslingo-layer", ".maslingo-overlay-text-canvas", "#maslingo-widget",
@@ -35,6 +35,7 @@
   let foot = null;
   let currentJob = null;
   let timer = null;
+  let popupFrame = null;
   let seq = 0;
   let targetLanguage = "简体中文";
   let defaultProvider = "deepseek";
@@ -69,6 +70,8 @@
     seq += 1;
     clearTimeout(timer);
     timer = null;
+    if (popupFrame !== null) cancelAnimationFrame(popupFrame);
+    popupFrame = null;
     globalThis.MAS_reader?.remove(host?.dataset.readerId);
     host?.remove();
     host = null;
@@ -82,6 +85,7 @@
   function setBody(node) {
     if (!body) return;
     body.replaceChildren(node);
+    schedulePopup();
   }
 
   function setFooter(leftText, rightText = "Esc 关闭") {
@@ -96,9 +100,26 @@
   function createPopup() {
     host = document.createElement("div");
     host.id = "maslingo-selection-popup";
-    host.style.setProperty('display', 'none', 'important');
+    host.style.cssText = "position:fixed!important;display:block!important;z-index:2147483647!important;visibility:hidden";
     shadow = host.attachShadow({ mode: 'open' });
-    shadow.innerHTML = `<div class="card"><div class="head"><span class="title">划词翻译</span><span class="meta"></span></div><div class="body"></div><div class="foot"></div></div>`;
+    shadow.innerHTML = `<style>
+      :host{all:initial;width:min(390px,calc(100vw - 16px));font:13px/1.55 'Segoe UI','Microsoft YaHei',system-ui;color:#18212f;color-scheme:light}
+      *{box-sizing:border-box}p{margin:0}button{font:inherit;cursor:pointer}
+      .card{max-height:inherit;display:flex;flex-direction:column;border:1px solid #dce4f0;border-radius:12px;background:#fff;box-shadow:0 8px 24px #18212f26;overflow:hidden}
+      .head,.foot{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f7f9fd;color:#667085;font-size:11px;flex:none}
+      .head{border-bottom:1px solid #e5e9ef}.head select,.head .cover{display:none}.title{font-size:13px;font-weight:650;color:#18212f}
+      .meta{flex:1}.close,.retry{border:1px solid #dce4f0;border-radius:7px;padding:2px 8px;background:#fff;color:#285de5}
+      .close:hover,.retry:hover{background:#edf3ff}.retry{margin-top:8px}.body{padding:10px 12px;overflow:auto;overscroll-behavior:contain;overflow-wrap:anywhere}
+      .foot{justify-content:space-between;border-top:1px solid #e5e9ef}.foot-right{white-space:nowrap}
+      .wordline,.sense-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}.word{font-size:21px;font-weight:650}
+      .reading,.source,.context-note,.quote,.notice,.example{color:#667085;font-size:12px}
+      .source,.context-note,.notice{margin-top:6px}.translation{margin-top:6px;white-space:pre-wrap}
+      .sense{padding:8px 0;margin-top:6px;border-top:1px solid #e5e9ef}.sense.is-context{padding:8px 10px;border-left:2px solid #285de5;border-radius:4px;background:#edf3ff}
+      .sense-head{color:#285de5;font-size:11px}.pos,.tag{background:#edf3ff;border-radius:5px;padding:1px 5px}
+      .sense.is-context .pos{background:#285de5;color:#fff}.tag{background:#dce8ff;font-weight:650}
+      .meaning{font-weight:550}.example{margin-top:4px}.error{color:#b42318}
+    </style><div class="card" role="region" aria-label="划词翻译结果"><div class="head"><span class="title">划词翻译</span><span class="meta"></span><button class="close" type="button" aria-label="关闭划词翻译">×</button></div><div class="body" aria-live="polite"></div><div class="foot"></div></div>`;
+    shadow.querySelector(".close").onclick = closePopup;
     meta = shadow.querySelector(".meta");
     body = shadow.querySelector(".body");
     foot = shadow.querySelector(".foot");
@@ -107,8 +128,42 @@
     globalThis.MAS_reader?.mount(host, {
       kind: currentJob?.input ? '输入框译文' : currentJob?.isWord ? '划词词典' : '划词翻译',
       source: currentJob?.text, element: currentJob?.input?.control || currentJob?.element,
-      dismiss: closePopup,
+      dismiss: closePopup, hideHost: false,
     });
+  }
+
+  function positionPopup() {
+    popupFrame = null;
+    const job = currentJob;
+    if (!host || !job) return;
+    if (job.popupDismissed || job.mode === "source" || !job.element?.isConnected) {
+      host.style.visibility = "hidden";
+      return;
+    }
+    const rect = job.covered?.span.getBoundingClientRect() || job.range?.getBoundingClientRect() || job.element.getBoundingClientRect();
+    if (rect.bottom <= 0 || rect.top >= innerHeight) {
+      host.style.visibility = "hidden";
+      return;
+    }
+    const gap = 8;
+    const toolbar = document.querySelector('[data-maslingo-quick][data-expanded="true"]')?.getBoundingClientRect();
+    let below = rect.bottom + gap;
+    if (toolbar && toolbar.top >= rect.bottom && toolbar.top - below < host.offsetHeight &&
+        toolbar.left < rect.left + host.offsetWidth && toolbar.right > rect.left) {
+      below = toolbar.bottom + gap;
+    }
+    const above = rect.top - gap;
+    const roomBelow = innerHeight - below - gap;
+    const roomAbove = above - gap;
+    const useBelow = roomBelow >= Math.min(host.scrollHeight, 210) || roomBelow >= roomAbove;
+    host.style.maxHeight = `${Math.max(0, Math.min(420, useBelow ? roomBelow : roomAbove))}px`;
+    host.style.top = `${Math.max(gap, useBelow ? below : above - host.offsetHeight)}px`;
+    host.style.left = `${Math.max(gap, Math.min(rect.left, innerWidth - host.offsetWidth - gap))}px`;
+    host.style.visibility = "visible";
+  }
+
+  function schedulePopup() {
+    if (host && popupFrame === null) popupFrame = requestAnimationFrame(positionPopup);
   }
 
   function restorable(job) {
@@ -141,6 +196,7 @@
     q.mode.querySelector('[value=translated]').disabled=!job.covered && !restorable(job);
     q.mode.value=job.mode;
     globalThis.MAS_quick?.refresh(job);
+    schedulePopup();
   }
   function addQuickControls(job) {
     const registry=globalThis.MAS_providers;
@@ -159,6 +215,7 @@
     job.controls={source,target,provider,mode,cover};
     function retranslate(){
       restoreSelection(job);
+      job.popupDismissed = false;
       if(job.input && job.undoInput){job.undoInput();job.undoInput=null;if(job.input.control.value===job.input.value){job.input.control.focus({preventScroll:true});job.input.control.setSelectionRange(job.input.start,job.input.end);}}
       job.source=source.value;job.target=target.value;job.provider=provider.value;job.translation='';
       const id=++seq;renderLoading(job);updateQuick(job);requestLookup(job,id);
@@ -172,7 +229,6 @@
     job.quickOptions={owner:job,selection:true,element:anchor,inline,observe:shadow,
       rect:()=>{if(job.covered)return job.covered.span.getBoundingClientRect();if(job.textRange?.node.isConnected && job.textRange.node.data===job.textRange.value){const range=document.createRange();range.setStart(job.textRange.node,job.textRange.start);range.setEnd(job.textRange.node,job.textRange.end);return [...range.getClientRects()].at(-1) || range.getBoundingClientRect();}return job.range?.getBoundingClientRect() || job.element.getBoundingClientRect();},
       controls:[source,target,provider,mode,cover],
-      preview:()=>job.mode==='source' || job.covered ? '' : job.translation || body?.querySelector('.error-text,.loading,.notice')?.textContent || '翻译中…',
     };
     globalThis.MAS_quick?.show(job.quickOptions);
   }
@@ -229,7 +285,7 @@
       const item = make("div", `sense${isContext ? " is-context" : ""}`);
       const head = make("div", "sense-head");
       head.append(make("span", "num", String(index + 1)));
-      if (sense.pos) head.append(make("span", "pos", sense.pos));
+      head.append(make("span", "pos", sense.pos || "词性未标注"));
       if (isContext) head.append(make("span", "tag", "本文义项"));
       item.append(head);
       item.append(make("p", "meaning", sense.meaning));
@@ -245,7 +301,7 @@
     });
     wrap.append(senses);
     if (!entry.contextSense) {
-      wrap.append(make("p", "context-note", "未能判断本文义项，已列出全部常见义项。"));
+      wrap.append(make("p", "context-note", "未能判断本文义项，可参阅上方释义。"));
     }
     setBody(wrap);
     setFooter(
@@ -478,13 +534,13 @@
       .slice(0, 600);
     if (currentJob?.input?.control === control && currentJob.input.value === value &&
       currentJob.input.start === start && currentJob.input.end === end) return;
-    const isWord = !input && WORD_PATTERN.test(text) && !/\s/u.test(text);
+    const isWord = !input && isDictionaryWord(text);
     const job = { text, context, isWord, input, element:control };
     if (!isWord && globalThis.MAS_providers?.likelySameLanguage?.(text, targetLanguage, context)) {
-      openNotice(job, rect, `原文已是${targetLanguage}，无需翻译。`);
+      openNotice(job, `原文已是${targetLanguage}，无需翻译。`);
       return;
     }
-    open(job, rect);
+    open(job);
   }
 
   function inspectSelection() {
@@ -505,7 +561,7 @@
       closePopup();
       return;
     }
-    const isWord = WORD_PATTERN.test(text) && !/\s/u.test(text);
+    const isWord = isDictionaryWord(text);
     const context = contextForRange(range, text);
     const job = {
       text,
@@ -516,13 +572,13 @@
       isWord,
     };
     if (!isWord && globalThis.MAS_providers?.likelySameLanguage?.(text, targetLanguage, context)) {
-      openNotice(job, rect, `原文已是${targetLanguage}，无需翻译。`);
+      openNotice(job, `原文已是${targetLanguage}，无需翻译。`);
       return;
     }
-    open(job, rect);
+    open(job);
   }
 
-  function open(job, rect, { lookup = true } = {}) {
+  function open(job, { lookup = true } = {}) {
     closePopup();
     const id = ++seq;
     job.source=job.source || "自动识别";job.target=job.target || targetLanguage;job.provider=job.provider || defaultProvider;job.mode="bilingual";
@@ -532,8 +588,8 @@
     if (lookup) requestLookup(job, id);
   }
 
-  function openNotice(job, rect, message) {
-    open(job, rect, { lookup: false });
+  function openNotice(job, message) {
+    open(job, { lookup: false });
     renderNotice(job, { target: targetLanguage, notice: message });
   }
 
@@ -552,6 +608,14 @@
   document.addEventListener('pointerover', event => {
     if(currentJob?.covered?.span.contains(event.composedPath()[0]))globalThis.MAS_quick?.show(currentJob.quickOptions);
   },true);
+  document.addEventListener("pointerdown", (event) => {
+    if (!currentJob || elementInOwnUi(event.composedPath()[0])) return;
+    currentJob.popupDismissed = true;
+    schedulePopup();
+  }, true);
+  window.addEventListener("scroll", schedulePopup, { passive: true, capture: true });
+  window.addEventListener("resize", schedulePopup, { passive: true });
+  new ResizeObserver(schedulePopup).observe(document.documentElement);
   document.addEventListener("mouseup", (event) => {
     if (elementInOwnUi(event.target)) return;
     if (isTextControl(event.target)) {

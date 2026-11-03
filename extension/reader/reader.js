@@ -5,12 +5,14 @@
     windowId = null,
     port = null,
     version = 0,
+    settingsVersion = 0,
     lastState = null;
   const controls = [
     "webAutoTranslate",
     "hoverTranslate",
     "autoTranslate",
     "selectionTranslate",
+    "inputAutoReplace",
   ];
   function report(text) {
     $("activity").textContent = text;
@@ -152,6 +154,8 @@
       }
     $("empty").hidden = state.rows.length > 0;
     $("clear").hidden = !state.rows.length;
+    $("result-count").hidden = !state.rows.length;
+    $("result-count").textContent = String(state.rows.length);
     if (state.status) report(state.status);
   }
   $("results").addEventListener("focusout", () =>
@@ -177,6 +181,7 @@
     $("results").replaceChildren();
     $("empty").hidden = false;
     $("clear").hidden = true;
+    $("result-count").hidden = true;
     report("准备就绪");
     lastState = null;
     if (tabId !== null) port?.postMessage({ type: "subscribe", tabId });
@@ -191,6 +196,7 @@
     if (windowId !== null) active().catch(() => {});
   }
   async function load() {
+    const id = ++settingsVersion;
     const cfg = await chrome.storage.local.get([
       ...controls,
       "webDisplayMode",
@@ -199,21 +205,35 @@
       "targetLanguage",
       "translationGlossary",
     ]);
+    if (id !== settingsVersion) return;
     for (const key of controls)
       $(key).checked =
-        key === "selectionTranslate" ? cfg[key] !== false : !!cfg[key];
+        key === "selectionTranslate" || key === "inputAutoReplace" ? cfg[key] !== false : !!cfg[key];
     $("webDisplayMode").value = globalThis.MAS_webDisplayMode(
       cfg.webDisplayMode,
     );
     const provider = registry.byId(registry.resolveProviderId(cfg));
     $("translationProvider").value = provider?.id || "none";
-    $("targetLanguage").value = cfg.targetLanguage || "简体中文";
+    const target = cfg.targetLanguage || "简体中文";
+    const language = $("targetLanguage");
+    language.querySelector("[data-custom]")?.remove();
+    if (![...language.options].some((option) => option.value === target)) {
+      const custom = new Option(target, target);
+      custom.dataset.custom = "1";
+      language.append(custom);
+    }
+    language.value = target;
     $("translationGlossary").value = cfg.translationGlossary || "general";
-    $("selectionTranslate").disabled = !registry.isChatProvider(provider);
-    $("selectionTranslate").title = registry.isChatProvider(provider)
+    const ai = registry.isChatProvider(provider);
+    $("selectionTranslate").disabled = !ai;
+    $("selectionTranslate").checked = ai && cfg.selectionTranslate !== false;
+    $("selectionTranslate").title = ai
       ? "选词查释义，选句看译文"
       : "划词词典需要 AI 翻译来源";
-    $("translationGlossary").disabled = !registry.isChatProvider(provider);
+    $("inputAutoReplace").disabled = !ai || cfg.selectionTranslate === false;
+    $("inputAutoReplace").checked = !$("inputAutoReplace").disabled && cfg.inputAutoReplace !== false;
+    $("inputAutoReplace").title = "开启 AI 划词词典后，可翻译并替换输入框里选中的文字";
+    $("translationGlossary").disabled = !ai;
     $("provider-label").textContent =
       `${provider?.label || "请选择翻译来源"} · ${cfg.targetLanguage || "简体中文"}`;
     $("provider-hint").textContent =
