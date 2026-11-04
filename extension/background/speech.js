@@ -10,11 +10,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       const url = new URL(base);
       if (!["http:", "https:"].includes(url.protocol)) throw new Error("后端地址必须为 HTTP 或 HTTPS");
       const body = new FormData();
-      body.append("audio", new Blob([bytes], { type: "audio/webm" }), "video-audio.webm");
+      const format = message.format === "wav" ? "wav" : "webm";
+      body.append("audio", new Blob([bytes], { type: `audio/${format}` }), `video-audio.${format}`);
       const response = await fetch(`${base}/api/transcribe-audio`, { method: "POST", body, signal: AbortSignal.timeout(60000) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `语音识别失败 (${response.status})`);
-      reply({ ok: true, text: String(data.text || "").slice(0, 5000), language: data.language });
+      reply({ ok: true, text: String(data.text || "").slice(0, 5000), language: data.language, segments: data.segments });
     } catch (error) { reply({ ok: false, reason: String(error.message || error).slice(0, 250) }); }
   })();
   return true;

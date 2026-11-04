@@ -22,8 +22,19 @@ if (live) {
 const out = process.env.MAS_SCREENSHOT_DIR || join(tmpdir(),'maslingo-video-qa');
 mkdirSync(out,{recursive:true});
 const audio = speech ? readFileSync(process.env.MAS_VIDEO_WAV) : null;
+let directVideo;
 const server = http.createServer((req,res)=>{
   if(req.url==='/voice.wav'){res.writeHead(200,{'Content-Type':'audio/wav'});res.end(audio);return;}
+  if(req.url==='/video.webm'&&directVideo){
+    const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range||'');
+    const start=range?Number(range[1]):0;
+    const end=range?.[2]?Math.min(Number(range[2]),directVideo.length-1):directVideo.length-1;
+    if(start>end){res.writeHead(416,{'Content-Range':`bytes */${directVideo.length}`});res.end();return;}
+    const headers={'Content-Type':'video/webm','Accept-Ranges':'bytes','Content-Length':end-start+1};
+    if(range) headers['Content-Range']=`bytes ${start}-${end}/${directVideo.length}`;
+    res.writeHead(range?206:200,headers);
+    res.end(directVideo.subarray(start,end+1));return;
+  }
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
   res.end(`<!doctype html><html><head><title>MasLingo Video QA</title><style>
   body{margin:24px;background:#eee;font:18px system-ui}h1{font-size:24px}
@@ -44,13 +55,24 @@ try{
     ...(process.env.MAS_TEST_PROXY?[`--proxy-server=${process.env.MAS_TEST_PROXY}`]:[])]});
   const worker=await(await browser.waitForTarget(t=>t.type()==='service_worker')).worker();
   await worker.evaluate(async ({key,live})=>{
-    globalThis.videoCalls=[]; globalThis.videoAudioRequests=0;
+    globalThis.videoCalls=[]; globalThis.videoAudioRequests=0; globalThis.offlineSegments=[]; globalThis.offlineSeconds=0; globalThis.offlineClips=0;
     const oldFetch=fetch;
     globalThis.fetch=async(...args)=>{
       // Isolate video requests from the panel's unrelated startup OCR probe.
       if(String(args[0]).endsWith('/health')) return new Response('{}',{status:503});
       if(String(args[0]).endsWith('/api/transcribe-audio')) videoAudioRequests++;
-      const response=await oldFetch(...args);if(String(args[0]).includes('api.deepseek.com'))videoCalls.push({status:response.status});return response;
+      const response=await oldFetch(...args);
+      if(String(args[0]).includes('api.deepseek.com'))videoCalls.push({status:response.status});
+      const clip=args[1]?.body instanceof FormData&&args[1].body.get('audio');
+      if(clip?.type==='audio/wav'&&response.ok) {
+        const {segments}=await response.clone().json();
+        for(const segment of segments) offlineSegments.push({
+          ...segment, start:segment.start+offlineSeconds, end:segment.end+offlineSeconds, clip:offlineClips,
+        });
+        offlineSeconds+=(clip.size-44)/32000;
+        offlineClips++;
+      }
+      return response;
     };
     if(live){const get=chrome.storage.local.get.bind(chrome.storage.local);chrome.storage.local.get=async keys=>({...await get(keys),translationApiKey:key});}
     else Object.assign(MAS_providers.byId('deepseek'),{adapter:async request=>{videoCalls.push(request.texts);if(globalThis.videoDelay)await new Promise(done=>setTimeout(done,videoDelay));return {url:'data:application/json,'+encodeURIComponent(JSON.stringify(request.texts.map(t=>'译文：'+t))),init:{}};},parse:payload=>payload});
@@ -67,9 +89,9 @@ try{
     const ctx=canvas.getContext('2d');const stream=canvas.captureStream(10);
     const draw=setInterval(()=>{ctx.fillStyle='#152d40';ctx.fillRect(0,0,720,405);ctx.fillStyle='#fff';ctx.font='28px sans-serif';ctx.fillText('MasLingo · Video subtitles',100,210);},100);
     let audioContext,source;
-    if(speech){audioContext=new AudioContext();const buffer=await audioContext.decodeAudioData(await(await fetch('/voice.wav')).arrayBuffer());source=audioContext.createBufferSource();source.buffer=buffer;const target=audioContext.createMediaStreamDestination();source.connect(target);stream.addTrack(target.stream.getAudioTracks()[0]);source.start();}
+    if(speech){audioContext=new AudioContext();const buffer=await audioContext.decodeAudioData(await(await fetch('/voice.wav')).arrayBuffer());source=audioContext.createBufferSource();source.buffer=buffer;source.loop=true;const target=audioContext.createMediaStreamDestination();source.connect(target);stream.addTrack(target.stream.getAudioTracks()[0]);source.start();}
     const chunks=[];const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'+(speech?',opus':'')});recorder.ondataavailable=e=>chunks.push(e.data);
-    const stopped=new Promise(done=>recorder.onstop=done);recorder.start();await new Promise(done=>setTimeout(done,speech?9000:2000));recorder.stop();await stopped;
+    const stopped=new Promise(done=>recorder.onstop=done);recorder.start();await new Promise(done=>setTimeout(done,speech?17000:2000));recorder.stop();await stopped;
     clearInterval(draw);stream.getTracks().forEach(t=>t.stop());await audioContext?.close();
     const video=document.querySelector('video');video.src=URL.createObjectURL(new Blob(chunks,{type:'video/webm'}));video.loop=true;
     await new Promise(done=>video.onloadeddata=done);
@@ -260,9 +282,33 @@ try{
     assert.equal(await worker.evaluate(()=>videoAudioRequests),audioCount,'closing the bar prevents further audio uploads');
     assert.equal(await page.evaluate(()=>videoRoot().querySelector('.caption').textContent),'','closing suppresses late results');
     assert.equal(await page.evaluate(()=>getComputedStyle(videoRoot().host).display),'none');
+    directVideo=Buffer.from(await page.$eval('video',async video=>Array.from(new Uint8Array(await(await fetch(video.currentSrc)).arrayBuffer()))));
+    await page.$eval('video',video=>{video.pause();video.src='/video.webm';});
+    await page.waitForFunction(()=>document.querySelector('video').readyState>=2);
+    assert.deepEqual(await worker.evaluate(id=>chrome.tabs.sendMessage(id,{type:'READER_VIDEO'},{frameId:0}),tabId),{ok:true});
+    if(!await page.evaluate(()=>videoRoot().querySelector('.auto-prepare').checked)) await click('.auto-prepare');
+    assert.equal(await page.evaluate(()=>videoRoot().querySelector('.prepare').textContent),'预处理视频音频');
+    assert.equal(await page.evaluate(()=>videoRoot().querySelector('.prepare').disabled),false);
+    await click('.start');
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('可以播放'),{timeout:90000});
+    assert.ok(await page.$eval('video',video=>video.paused&&video.currentTime===0),'offline speech does not start or advance the video');
+    const segments=await worker.evaluate(()=>offlineSegments);
+    assert.match(segments.map(segment=>segment.text).join(' '),/testing video subtitles/i);
+    const {start,end,text,clip}=segments.at(-1);
+    assert.ok(clip>0,'the final timed subtitle comes from a later audio clip');
+    const counts=await worker.evaluate(()=>[videoCalls.length,videoAudioRequests]);
+    const midpoint=(start+end)/2;
+    await page.$eval('video',(video,time)=>video.currentTime=time,midpoint);
+    await page.waitForFunction(text=>videoRoot().querySelector('.caption').textContent.includes(text)&&videoRoot().querySelector('.caption').textContent.includes('\n'),{},text.trim().replace(/\s+/g,' '));
+    await page.screenshot({path:join(out,'video-offline-audio.png')});
+    await page.$eval('video',video=>video.play());
+    await page.waitForFunction(time=>document.querySelector('video').currentTime>time+0.1,{},midpoint);
+    await page.$eval('video',video=>video.pause());
+    assert.deepEqual(await worker.evaluate(()=>[videoCalls.length,videoAudioRequests]),counts,'seeking and playing reuse prepared speech and translations');
+    console.log('PASS no-caption HTTP video -> paused audio preprocessing -> timestamped bilingual subtitles');
   }
   assert.deepEqual(errors,[]);console.log('PASS no script errors; screenshots: '+out);
 }catch(error){
-  if(page&&!page.isClosed())console.log(await page.evaluate(()=>({videoTime:document.querySelector('video')?.currentTime,paused:document.querySelector('video')?.paused,status:videoRoot().querySelector('.status').textContent,caption:videoRoot().querySelector('.caption').textContent})));
+  if(page&&!page.isClosed())console.log(await page.evaluate(()=>({videoTime:document.querySelector('video')?.currentTime,duration:document.querySelector('video')?.duration,paused:document.querySelector('video')?.paused,status:videoRoot().querySelector('.status').textContent,preparation:videoRoot().querySelector('.prepare-status').textContent,caption:videoRoot().querySelector('.caption').textContent})));
   throw error;
 }finally{key='';await browser?.close();await new Promise(done=>server.close(done));}

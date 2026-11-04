@@ -9,6 +9,9 @@
   const PAIR_WAIT_MS = 20000;
   const MAX_WAITING_CUES = 16;
   const MAX_PREPARED_TEXTS = 2500;
+  const MAX_MEDIA_BYTES = 80 * 1024 * 1024;
+  const MAX_MEDIA_SECONDS = 15 * 60;
+  const AUDIO_RATE = 16000;
   const MIN_AUDIO_MS = 1400;
   const MAX_AUDIO_MS = 5000;
   const AUDIO_PAUSE_MS = 220;
@@ -17,6 +20,87 @@
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
   const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
+
+  function encodeAudio(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function wavClip(samples, from, to) {
+    const bytes = (to - from) * 2;
+    const wav = new ArrayBuffer(44 + bytes);
+    const data = new DataView(wav);
+    data.setUint32(0, 0x52494646); // RIFF
+    data.setUint32(4, bytes + 36, true);
+    data.setUint32(8, 0x57415645); // WAVE
+    data.setUint32(12, 0x666d7420); // fmt
+    data.setUint32(16, 16, true);
+    data.setUint16(20, 1, true); // PCM
+    data.setUint16(22, 1, true); // Mono
+    data.setUint32(24, AUDIO_RATE, true);
+    data.setUint32(28, AUDIO_RATE * 2, true);
+    data.setUint16(32, 2, true);
+    data.setUint16(34, 16, true);
+    data.setUint32(36, 0x64617461); // data
+    data.setUint32(40, bytes, true);
+    for (let i = from; i < to; i++) {
+      const sample = Math.max(-1, Math.min(1, samples[i]));
+      data.setInt16(44 + (i - from) * 2, sample * 32767, true);
+    }
+    return new Blob([wav], { type: "audio/wav" });
+  }
+
+  function clipEnd(samples, from) {
+    const end = Math.min(samples.length, from + 11 * AUDIO_RATE);
+    if (end === samples.length) return end;
+    const window = AUDIO_RATE / 10;
+    // Prefer a pause near the end to keep sentences together.
+    for (let cut = end; cut >= end - 2 * AUDIO_RATE; cut -= window) {
+      let energy = 0;
+      for (let i = cut - window; i < cut; i++) energy += samples[i] ** 2;
+      if (energy / window < MIN_SPEECH_RMS ** 2) return cut;
+    }
+    return end;
+  }
+
+  async function readVideoAudio(url, signal) {
+    const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]), credentials: "same-origin" });
+    if (!response.ok || response.status === 206 || !response.body) throw new Error("无法读取完整的视频文件");
+    const reader = response.body.getReader();
+    const parts = [];
+    let size = 0;
+    try {
+      if (Number(response.headers.get("content-length")) > MAX_MEDIA_BYTES) throw new Error("视频文件超过 80 MB");
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_MEDIA_BYTES) throw new Error("视频文件超过 80 MB");
+        parts.push(value);
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
+    }
+    const data = await new Blob(parts).arrayBuffer();
+    signal.throwIfAborted();
+    const context = new OfflineAudioContext(1, 1, AUDIO_RATE);
+    let audio;
+    try { audio = await context.decodeAudioData(data); }
+    catch { throw new Error("浏览器无法从该视频文件解码音频"); }
+    if (audio.duration > MAX_MEDIA_SECONDS) throw new Error("音轨超过 15 分钟");
+    if (audio.numberOfChannels === 1) return audio.getChannelData(0);
+    const mix = new OfflineAudioContext(1, audio.length, AUDIO_RATE);
+    const source = mix.createBufferSource();
+    source.buffer = audio;
+    source.connect(mix.destination);
+    source.start();
+    return (await mix.startRendering()).getChannelData(0);
+  }
 
   function trackTexts(cues) {
     // Reproduce the text shown at each boundary, including overlapping cues.
@@ -209,7 +293,7 @@
     });
     const state = { video, host, root, enabled: false, generation: 0, translationRevision: 0, cache: new Map(), inflight: 0, prefetching: false,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "",
-      hasTracks: false, preparation: null,
+      hasTracks: false, preparation: null, generatedCues: null, allowAudioPreparation: false,
       currentCue: null, waitingCues: [], showing: null, lagged: false,
       stream: null, recorder: null, audioContext: null, audioMeter: null,
       speech: false, speechBusy: false, speechText: "", speechUntil: 0, audioQueue: [], timer: null };
@@ -236,6 +320,7 @@
     function reset() {
       state.translationRevision++;
       state.cache.clear();
+      state.preparation?.controller?.abort();
       state.preparation = null;
       $(".prepare-status").textContent = "";
       resetTimeline();
@@ -270,6 +355,8 @@
     }
     function stop() {
       state.enabled = false;
+      state.generatedCues = null;
+      state.allowAudioPreparation = false;
       stopSpeech(); reset(); restoreSources();
       if (state.output) state.output.mode = "disabled";
       $(".idle").hidden = false;
@@ -285,7 +372,14 @@
       $(".start").setAttribute("aria-pressed", "true");
       $(".start").textContent = "停止字幕";
     }
-    $(".start").onclick = () => { if (state.enabled) stop(); else { start(); tick(); } };
+    $(".start").onclick = event => {
+      if (state.enabled) stop();
+      else {
+        state.allowAudioPreparation = event.isTrusted;
+        start();
+        tick();
+      }
+    };
     $(".mode").onchange = () => { chrome.storage.local.set({ videoDisplayMode: mode() }); clearOutput(); tick(); };
     $(".track").onchange = () => { restoreSources(); reset(); tick(); };
 
@@ -308,12 +402,13 @@
         }
         return;
       }
-      const chosen = $(".track").value === "auto"
+      const chosen = ($(".track").value === "auto"
         ? tracks.find(t => t.mode === "showing") || (tracks.includes(state.sourceTrack) ? state.sourceTrack : tracks[0])
-        : tracks[Number($(".track").value)];
+        : tracks[Number($(".track").value)]) || null;
       if (chosen !== state.sourceTrack) {
         restoreSources();
         reset();
+        state.generatedCues = null;
         state.sourceTrack = chosen;
         chosen?.addEventListener("cuechange", tick);
       }
@@ -347,41 +442,103 @@
     }
     function finishPreparation(message) {
       state.preparation.running = false;
-      prepareButton.textContent = "预翻译字幕轨";
+      state.preparation.controller?.abort();
+      prepareButton.textContent = state.preparation.audio ? "预处理视频音频" : "预翻译字幕轨";
       if (state.preparation.ready) prepareButton.disabled = true;
       setPrepareStatus(message);
     }
-    function beginPreparation(now, automatic) {
-      state.preparation = { automatic, running: true, ready: false, texts: null, deadline: now + 8000 };
+    function mediaUrl() {
+      if (!/^https?:\/\//i.test(video.currentSrc) || !Number.isFinite(video.duration) ||
+          video.duration <= 0 || video.duration > MAX_MEDIA_SECONDS || video.mediaKeys ||
+          /\.(?:m3u8|mpd)(?:[?#]|$)/i.test(video.currentSrc)) return "";
+      return video.currentSrc;
     }
-    prepareButton.onclick = () => {
+
+    async function recognizeVideo(job, url) {
+      const signal = job.controller.signal;
+      try {
+        setPrepareStatus("正在读取视频音轨…");
+        const samples = await readVideoAudio(url, signal);
+        const cues = [];
+        for (let from = 0; from < samples.length;) {
+          signal.throwIfAborted();
+          const to = clipEnd(samples, from);
+          setPrepareStatus(`正在识别视频语音… ${Math.floor(from / samples.length * 100)}%`);
+          const audio = await encodeAudio(wavClip(samples, from, to));
+          signal.throwIfAborted();
+          const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio, format: "wav" });
+          signal.throwIfAborted();
+          if (!response?.ok) throw new Error(response?.reason || "语音识别失败");
+          const clipLength = (to - from) / AUDIO_RATE;
+          for (const segment of response.segments || []) {
+            const text = clean(segment.text);
+            const startTime = from / AUDIO_RATE + Math.max(0, segment.start);
+            const endTime = from / AUDIO_RATE + Math.min(clipLength, segment.end);
+            if (text && Number.isFinite(startTime) && endTime > startTime) cues.push({ text, startTime, endTime });
+          }
+          from = to;
+        }
+        if (!cues.length) throw new Error("未识别到视频中的语音");
+        if (!video.isConnected || url !== video.currentSrc) { stop(); return; }
+        state.generatedCues = cues;
+        job.controller = null;
+        resetTimeline();
+        tick();
+      } catch (error) {
+        if (signal.aborted) return;
+        const message = error.name === "TimeoutError" ? "读取视频超时" :
+          error instanceof TypeError ? "无法读取该视频直链，网站可能限制了媒体访问" : error.message;
+        finishPreparation(`视频预处理失败：${message}`);
+      }
+    }
+
+    function beginPreparation(now, automatic, audio = false) {
+      const job = { automatic, audio, running: true, ready: false, texts: null, deadline: now + 8000 };
+      state.preparation = job;
+      if (audio && !state.generatedCues) {
+        job.controller = new AbortController();
+        recognizeVideo(job, mediaUrl());
+      }
+    }
+    prepareButton.onclick = event => {
       if (state.preparation?.running) {
         finishPreparation("已停止预翻译，已译字幕仍可使用。");
       } else {
+        const audio = !state.hasTracks;
+        if (audio && (!event.isTrusted || (!state.generatedCues && !mediaUrl()))) return;
+        if (audio) state.allowAudioPreparation = true;
         start();
         updateTracks();
-        if (!state.sourceTrack) return;
-        beginPreparation(performance.now(), false);
+        if (!audio && !state.sourceTrack) return;
+        beginPreparation(performance.now(), false, audio);
       }
       tick();
     };
 
     function prepareCaptions(now) {
-      const available = state.hasTracks && !state.speech && mode() !== "source";
-      if (!state.preparation && available && state.enabled && state.sourceTrack && autoPrepare.checked) beginPreparation(now, true);
+      const audioAvailable = !state.hasTracks && Boolean(state.generatedCues || mediaUrl());
+      const available = (state.hasTracks || audioAvailable) && !state.speech && mode() !== "source";
+      if (!state.preparation && available && state.enabled && autoPrepare.checked) {
+        if (state.sourceTrack) beginPreparation(now, true);
+        else if (state.allowAudioPreparation && (state.generatedCues || !webCaptions().some(element => clean(element.textContent)))) {
+          beginPreparation(now, true, true);
+        }
+      }
       const job = state.preparation;
       if (job?.running && (!available || (job.automatic && !autoPrepare.checked))) finishPreparation("预翻译已停止，已译字幕仍可使用。");
       prepareButton.disabled = !available || Boolean(job?.ready);
-      const label = job?.running ? "停止预翻译" : "预翻译字幕轨";
+      const label = job?.running ? "停止预翻译" : state.hasTracks ? "预翻译字幕轨" : "预处理视频音频";
       if (prepareButton.textContent !== label) prepareButton.textContent = label;
       if (!job) {
-        setPrepareStatus(!state.hasTracks || state.speech ? "预翻译需要可读取的字幕轨。" :
+        setPrepareStatus(state.speech ? "正在实时识别，可停止后再预处理。" :
+          !state.hasTracks && !audioAvailable ? "当前视频无法提前读取完整音轨，可使用实时识别。" :
           mode() === "source" ? "选择双语或纯译文后可预翻译。" :
-          autoPrepare.checked ? "开启字幕翻译后自动预翻译。" : "可手动预翻译字幕轨。");
+          autoPrepare.checked ? "开启字幕翻译后自动预翻译。" :
+          audioAvailable ? "可暂停播放并手动预处理音频。" : "可手动预翻译字幕轨。");
       }
-      if (!job?.running) return;
+      if (!job?.running || job.controller) return;
       if (!job.texts) {
-        const cues = state.sourceTrack?.cues;
+        const cues = job.audio ? state.generatedCues : state.sourceTrack?.cues;
         if (!cues?.length) {
           if (now >= job.deadline) finishPreparation("未读取到字幕，可加载播放器字幕后重试。");
           else setPrepareStatus("正在加载字幕轨…");
@@ -456,21 +613,24 @@
     function readCaptions(now) {
       if (state.speech) return { text: now < state.speechUntil ? state.speechText : "", upcoming: [] };
       const track = state.sourceTrack;
-      if (track) {
-        const cues = [...(track.cues || [])];
+      if (track || state.generatedCues) {
+        const cues = state.generatedCues || [...(track.cues || [])];
         const active = cues.filter(c => c.startTime <= video.currentTime && c.endTime > video.currentTime);
         return {
           text: clean(active.map(plainCue).join(" ")),
           upcoming: cues.filter(c => c.startTime > video.currentTime && c.startTime < video.currentTime + 30).slice(0, 10).map(plainCue),
         };
       }
-      const scope = video.closest("#movie_player, .bpx-player-container, .bilibili-player") || video.parentElement;
-      const elements = [...(scope?.querySelectorAll(domSelectors) || [])];
+      const elements = webCaptions();
       for (const element of elements) {
         if (!state.hiddenDom.has(element)) state.hiddenDom.set(element, { value: element.style.getPropertyValue("visibility"), priority: element.style.getPropertyPriority("visibility") });
         element.style.setProperty("visibility", "hidden", "important");
       }
       return { text: clean(elements.map(e => e.textContent).join(" ")), upcoming: [], rolling: true };
+    }
+    function webCaptions() {
+      const scope = video.closest("#movie_player, .bpx-player-container, .bilibili-player") || video.parentElement;
+      return [...(scope?.querySelectorAll(domSelectors) || [])];
     }
 
     function observeCue(text, rolling, now) {
@@ -555,7 +715,7 @@
 
     function idleStatus() {
       if (state.speech) return state.stream ? "正在识别标签页声音…" : "语音采集已结束";
-      return state.sourceTrack ? "等待当前字幕…" : "未发现字幕，请在播放器开启字幕，或点击无字幕识别";
+      return state.sourceTrack || state.generatedCues ? "等待当前字幕…" : "未发现字幕，可预处理视频音频或开启实时识别";
     }
 
     function render(text) {
@@ -607,12 +767,7 @@
       if (!clip) return;
       state.speechBusy = true;
       try {
-        const audio = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result.split(",")[1]);
-          reader.onerror = reject;
-          reader.readAsDataURL(clip.blob);
-        });
+        const audio = await encodeAudio(clip.blob);
         if (clip.generation !== state.generation || !state.speech) return;
         const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio });
         if (clip.generation !== state.generation || !state.speech) return;
