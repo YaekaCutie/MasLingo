@@ -3,8 +3,10 @@ import unittest
 from unittest.mock import patch
 from zipfile import ZIP_STORED, ZipFile
 
+from fastapi import HTTPException
 from PIL import Image
-from pypdf import PdfReader
+from pypdf import PdfReader, PdfWriter
+from pypdf.constants import UserAccessPermissions
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 
@@ -116,6 +118,30 @@ class FormatTests(unittest.TestCase):
             translated = PdfReader(io.BytesIO(self.export(data, ".pdf")))
             self.assertEqual(len(translated.pages), 2)
             self.assertIn("译 Recognized words", translated.pages[1].extract_text())
+
+    def test_pdf_with_permissions_password_can_be_translated(self):
+        stream = io.BytesIO()
+        canvas = Canvas(stream)
+        canvas.drawString(72, 720, "Original PDF")
+        canvas.save()
+        for password in ("", "open-password"):
+            with self.subTest(requires_password=bool(password)):
+                writer = PdfWriter(clone_from=io.BytesIO(stream.getvalue()))
+                writer.encrypt(password, "owner-password", permissions_flag=UserAccessPermissions.PRINT)
+                encrypted = io.BytesIO()
+                writer.write(encrypted)
+                data = encrypted.getvalue()
+                if password:
+                    with self.assertRaises(HTTPException) as error:
+                        self.text(data, ".pdf")
+                    self.assertEqual(error.exception.status_code, 422)
+                    self.assertIn("打开密码", error.exception.detail)
+                else:
+                    self.assertEqual(self.text(data, ".pdf"), ["Original PDF"])
+                    bilingual = PdfReader(io.BytesIO(self.export(data, ".pdf", "bilingual")))
+                    self.assertEqual(len(bilingual.pages), 2)
+                    self.assertIn("Original PDF", bilingual.pages[0].extract_text())
+                    self.assertIn("译 Original PDF", bilingual.pages[1].extract_text())
 
     def test_legacy_route_converts_to_modern_and_back(self):
         with patch("backend.document_legacy.libreoffice", return_value="soffice"), \

@@ -127,8 +127,8 @@ def translated_page(lines, page_number):
 def process_pdf(data, mapping, mode):
     try:
         source = PdfReader(io.BytesIO(data))
-        if source.is_encrypted:
-            raise HTTPException(422, "请先解锁 PDF 再翻译")
+        if source.is_encrypted and not source.decrypt(""):
+            raise HTTPException(422, "此 PDF 需要打开密码，请先解锁 PDF 再翻译")
         if len(source.pages) > 150:
             raise HTTPException(413, "PDF 不能超过 150 页")
         target = PdfWriter() if mapping.translations is not None else None
