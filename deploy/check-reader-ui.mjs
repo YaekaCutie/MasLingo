@@ -164,6 +164,12 @@ async function createPage(kind) {
               Hello: "你好",
               "Hello everyone.": "大家好。",
               "A failed translation can be retried.": "失败的翻译可以重试。",
+              "Read the": "请阅读",
+              "project guide": "项目指南",
+              or: "或",
+              "release notes": "发布说明",
+              "before you begin.": "再开始。",
+              "Read the project guide or release notes before you begin.": "开始前请阅读项目指南或发布说明。",
             })[t] || t,
         ),
         skipped: message.texts.map(() => false),
@@ -524,6 +530,40 @@ try {
     "paragraph target applies immediately",
   );
   await screenshot(source, "paragraph-context-toolbar.png");
+  const originalLinked = await source.evaluate(() => {
+    const paragraph = document.createElement("p");
+    paragraph.id = "linked";
+    paragraph.innerHTML = 'Read the <a href="#guide-target"><strong>project guide</strong></a> or <a href="#release-target">release notes</a> before you begin.';
+    document.querySelector("#source").before(paragraph);
+    globalThis.fixtureLink = paragraph.querySelector("a");
+    globalThis.fixtureLinkClicks = 0;
+    fixtureLink.addEventListener("click", () => { fixtureLinkClicks++; });
+    return paragraph.textContent;
+  });
+  await source.hover("#linked");
+  await source.waitForFunction(() => document.querySelector("#linked + [data-maslingo-textbox]")
+    ?.shadowRoot.querySelector(".text").textContent === "开始前请阅读项目指南或发布说明。");
+  await openParagraphQuick("#linked");
+  await quickClick(".cover");
+  await source.waitForFunction(() => fixtureLink.textContent === "项目指南");
+  assert.deepEqual(await source.$$eval("#linked a", anchors =>
+    anchors.map(anchor => [anchor.getAttribute("href"), anchor.textContent])), [
+    ["#guide-target", "项目指南"], ["#release-target", "发布说明"],
+  ]);
+  await source.click('#linked a[href="#guide-target"]');
+  assert.ok(await source.evaluate(() =>
+    document.querySelector("#linked a") === fixtureLink &&
+    fixtureLink.querySelector("strong")?.textContent === "项目指南" &&
+    fixtureLinkClicks === 1 && location.hash === "#guide-target"),
+  "translated hyperlink keeps its node, formatting, handler and navigation");
+  await source.evaluate(() => fixtureLink.setAttribute("href", "#updated-guide-target"));
+  await quickClick(".cover");
+  assert.equal(await source.$eval("#linked", node => node.textContent), originalLinked);
+  assert.ok(await source.evaluate(() => document.querySelector("#linked a") === fixtureLink &&
+    fixtureLink.getAttribute("href") === "#updated-guide-target"));
+  await source.$eval("#linked", node => node.remove());
+  await source.mouse.click(1, 1);
+  await openParagraphQuick("#source");
   assert.ok(
     await source.evaluate(
       () =>

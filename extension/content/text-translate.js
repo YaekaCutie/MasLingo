@@ -253,6 +253,9 @@
       covered: false,
       originalNodes: null,
       coverSpan: null,
+      inlineCover: null,
+      linkedParts: null,
+      linkedTranslations: null,
       collapsed: false,
       translated: false,
       loading: false,
@@ -321,11 +324,12 @@
         box.sameLanguage = false;
         if (!box.covered) coverButton.disabled = true;
       },
-      setText(value) {
+      setText(value, linkedTranslations = null) {
         retry.hidden = true;
         text.dataset.state = "done";
         text.textContent = value || "";
         box.translation = value || "";
+        box.linkedTranslations = linkedTranslations;
         box.translated = true;
         box.sameLanguage = false;
         box.error = false;
@@ -351,11 +355,7 @@
         box.error = true;
         if (!box.covered) coverButton.disabled = true;
       },
-      /**
-       * Replace the paragraph's own text with the translation (or put the
-       * original back). The original child nodes are parked in a fragment, so
-       * links and inline markup survive a round trip.
-       */
+      // Linked paragraphs keep their original anchors and event handlers.
       toggleCover() {
         if (!box.paragraph || (!box.canCover && !box.covered) || (!box.translation && !box.covered)) return;
         if (!box.covered && !canCoverParagraph(box.paragraph)) {
@@ -366,25 +366,44 @@
         }
         if (!box.covered) {
           box.wasPinnedBeforeCover = box.pinned;
-          const fragment = document.createDocumentFragment();
-          while (box.paragraph.firstChild) fragment.appendChild(box.paragraph.firstChild);
-          box.originalNodes = fragment;
-          const span = document.createElement("span");
-          span.dataset.maslingoCover = "1";
-          span.style.whiteSpace = "pre-wrap";
-          span.textContent = box.translation;
-          box.paragraph.appendChild(span);
-          box.coverSpan = span;
+          if (box.paragraph.querySelector("a[href]")) {
+            const unit = unitFor(box.paragraph);
+            const parts = linkedParts(unit);
+            if (!parts || !sameLinkedParts(parts, box.linkedParts) || !box.linkedTranslations) {
+              invalidate(box);
+              if (unit?.text === box.paragraphText) enqueue(box);
+              else scheduleScan();
+              return;
+            }
+            box.inlineCover = coverLinkedParts(box.paragraph, parts, box.linkedTranslations);
+          } else {
+            const fragment = document.createDocumentFragment();
+            while (box.paragraph.firstChild) fragment.appendChild(box.paragraph.firstChild);
+            box.originalNodes = fragment;
+            const span = document.createElement("span");
+            span.dataset.maslingoCover = "1";
+            span.style.whiteSpace = "pre-wrap";
+            span.textContent = box.translation;
+            box.paragraph.appendChild(span);
+            box.coverSpan = span;
+          }
           box.covered = true;
           if (!box.collapsed) box.toggleCollapsed();
         } else {
           // A client-side page may replace the paragraph while it is covered.
           // Its new content wins; never append the parked stale original to it.
-          const unchanged = box.coverSpan?.parentNode === box.paragraph && box.paragraph.childNodes.length === 1;
-          box.coverSpan?.remove();
-          if (unchanged && box.originalNodes) box.paragraph.appendChild(box.originalNodes);
+          if (box.inlineCover) {
+            for (const { node, parent, original, translated } of box.inlineCover.edits) {
+              if (node.parentNode === parent && box.paragraph.contains(node) && node.data === translated) node.data = original;
+            }
+          } else {
+            const unchanged = coverIntact(box);
+            box.coverSpan?.remove();
+            if (unchanged && box.originalNodes) box.paragraph.appendChild(box.originalNodes);
+          }
           box.originalNodes = null;
           box.coverSpan = null;
+          box.inlineCover = null;
           box.covered = false;
           if (box.collapsed) box.toggleCollapsed();
         }
@@ -528,6 +547,62 @@
     return { element, nodes, text };
   }
 
+  function linkedParts(unit) {
+    if (!unit?.element.querySelector("a[href]")) return null;
+    const { element, nodes } = unit;
+    const included = new Set(nodes);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+    const parts = [];
+    let part, node;
+    while ((node = walker.nextNode())) {
+      if (node.tagName === "BR" || node.tagName === "IMG") { part = null; continue; }
+      if (!included.has(node)) continue;
+      const anchor = node.parentElement.closest("a[href]");
+      const link = anchor && anchor !== element && element.contains(anchor) ? anchor : null;
+      if (!part || part.link !== link) {
+        part = { link, nodes: [], raw: "" };
+        parts.push(part);
+      }
+      part.nodes.push(node);
+      part.raw += node.data;
+    }
+    return parts.map(part => ({ ...part, text: normalized(part.raw) }));
+  }
+
+  function sameLinkedParts(parts, previous) {
+    return parts.length === previous?.length && parts.every((part, index) =>
+      part.text === previous[index].text && Boolean(part.link) === Boolean(previous[index].link));
+  }
+
+  function coverLinkedParts(element, parts, translations) {
+    const edits = [];
+    parts.forEach(({ nodes, raw, text }, index) => {
+      const result = translations[index];
+      if (!result || result === text) return;
+      const first = nodes.find(node => node.data.trim());
+      for (const node of nodes) {
+        const original = node.data;
+        const translated = node === first ? preserveSpacing(raw, result) : "";
+        if (original !== translated) {
+          edits.push({ node, parent: node.parentNode, original, translated });
+          node.data = translated;
+        }
+      }
+    });
+    return { edits, text: element.textContent };
+  }
+
+  function preserveSpacing(raw, text) {
+    return raw.match(/^\s*/)[0] + text + raw.match(/\s*$/)[0];
+  }
+
+  function coverIntact(box) {
+    const inline = box.inlineCover;
+    if (inline) return box.paragraph.textContent === inline.text && inline.edits.every(({ node, parent, translated }) =>
+      node.parentNode === parent && box.paragraph.contains(node) && node.data === translated);
+    return box.coverSpan?.parentNode === box.paragraph && box.paragraph.childNodes.length === 1;
+  }
+
   function automaticCandidate(element) {
     if (bingSearchPage) return element.matches(BING_RESULT_SUBTITLE) && canCoverParagraph(element);
     // Reading mode concentrates on the article when one exists. Menus/forms
@@ -551,7 +626,7 @@
   }
 
   function sourceUnchanged(box) {
-    return box.covered || unitFor(box.paragraph)?.text === box.paragraphText;
+    return box.covered ? coverIntact(box) : unitFor(box.paragraph)?.text === box.paragraphText;
   }
 
   function invalidate(box) {
@@ -564,6 +639,8 @@
     box.dismissed = false;
     box.key = "";
     if (box.covered) box.toggleCover();
+    box.linkedParts = null;
+    box.linkedTranslations = null;
   }
 
   function discard(box) {
@@ -666,7 +743,13 @@
     box.displaySelect.value = displayModeFor(box);
     box.displaySelect.querySelector('[value=translated]').disabled=!box.canCover;
     const inline = !['TD','TH','LI','DD','DT','CAPTION','BUTTON','SUMMARY','A'].includes(box.paragraph.tagName) && !['TABLE','TBODY','THEAD','TR','UL','OL','DL'].includes(box.paragraph.parentElement?.tagName);
-    const anchorRect=()=>{const node=box.coverSpan || box.nodes.at(-1);if(!node?.isConnected)return box.paragraph.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(node);return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();};
+    const anchorRect = () => {
+      const node = box.coverSpan || (box.inlineCover ? box.paragraph : box.nodes.at(-1));
+      if (!node?.isConnected) return box.paragraph.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return [...range.getClientRects()].at(-1) || box.paragraph.getBoundingClientRect();
+    };
     const controls = [box.sourceSelect, box.select, box.providerSelect, box.displaySelect, box.coverButton, box.origin, box.retry];
     globalThis.MAS_quick?.keepBadge({owner:box,element:box.paragraph,inline,observe:box.host.shadowRoot,
       label: box.paragraphText.slice(0, 40),
@@ -724,6 +807,8 @@
     if ((box.translated || box.sameLanguage) && box.key === keyFor(box)) return;
     box.requestId++;
     box.key = keyFor(box);
+    const needsLinkedParts = box.canCover && displayModeFor(box) === "translated" && box.paragraph.querySelector("a[href]");
+    box.linkedParts = needsLinkedParts ? linkedParts(unitFor(box.paragraph)) : null;
     box.loading = true;
     box.setLoading();
     queue.add(box);
@@ -739,6 +824,47 @@
     ]).finally(() => clearTimeout(timer));
   }
 
+  function requestTexts(box, texts) {
+    return withTimeout(chrome.runtime.sendMessage({
+      type: "TRANSLATE_TEXT_BLOCKS",
+      texts,
+      source: box.getSource(),
+      target: box.getLanguage(),
+      provider: box.providerSelect.value,
+    }));
+  }
+
+  async function requestLinked(box, parts, isCurrent) {
+    const translations = parts.map(part => part.text);
+    const pending = parts.map((part, index) => /\p{L}/u.test(part.text) ? index : -1).filter(index => index >= 0);
+    let skipped = true;
+    for (let offset = 0; offset < pending.length;) {
+      if (!isCurrent()) return null;
+      const batch = [];
+      let chars = 0;
+      while (offset < pending.length && batch.length < 4) {
+        const index = pending[offset];
+        const length = parts[index].text.length;
+        if (batch.length && chars + length > 7000) break;
+        batch.push(index);
+        chars += length;
+        offset++;
+      }
+      const result = await requestTexts(box, batch.map(index => parts[index].text));
+      if (!result?.ok) return result;
+      for (let i = 0; i < batch.length; i++) {
+        if (result.skipped?.[i]) continue;
+        const text = String(result.translations?.[i] ?? "").trim();
+        if (!text) return { ok: false, reason: "服务未返回完整的链接译文，请重试" };
+        translations[batch[i]] = text;
+        skipped = false;
+      }
+    }
+    const paragraph = parts.map(({ raw, text }, index) =>
+      text === translations[index] ? raw : preserveSpacing(raw, translations[index])).join("");
+    return { ok: true, translations: [paragraph], skipped: [skipped], linkedTranslations: translations };
+  }
+
   function pump() {
     if (!enabled) { queue.clear(); return; }
     while (activeRequests < 2 && queue.size) {
@@ -748,6 +874,7 @@
       for (const box of [first, ...queue]) {
         if (group.includes(box) || !queue.has(box)) continue;
         if (box.getSource() !== first.getSource() || box.getLanguage() !== first.getLanguage() || box.providerSelect.value !== first.providerSelect.value) continue;
+        if (group.length && (group[0].linkedParts || box.linkedParts)) continue;
         if (group.length >= 4 || (group.length && chars + box.paragraphText.length > 7000)) continue;
         queue.delete(box);
         if (displayModeFor(box) === "source") { box.loading = false; continue; }
@@ -758,13 +885,11 @@
       if (!group.length) continue;
       const requests = group.map((box) => ({ box, id: box.requestId, key: box.key }));
       activeRequests++;
-      withTimeout(chrome.runtime.sendMessage({
-        type: "TRANSLATE_TEXT_BLOCKS",
-        texts: group.map((box) => box.paragraphText),
-        source: first.getSource(),
-        target: first.getLanguage(),
-        provider: first.providerSelect.value,
-      })).then((response) => {
+      const leader = requests[0];
+      const request = leader.box.linkedParts
+        ? requestLinked(leader.box, leader.box.linkedParts, () => current(leader.box, leader.id, leader.key))
+        : requestTexts(leader.box, group.map((box) => box.paragraphText));
+      request.then((response) => {
         requests.forEach(({ box, id, key }, index) => {
           if (!current(box, id, key)) return;
           if (!response?.ok) { box.setError(response?.reason || "未知错误"); return; }
@@ -776,7 +901,7 @@
             return;
           }
           const text = String(response.translations?.[index] ?? "").trim();
-          if (text) { box.setText(text); applyDisplay(box); }
+          if (text) { box.setText(text, response.linkedTranslations); applyDisplay(box); }
           else box.setError("服务未返回该段译文，请重试");
         });
       }).catch((error) => {
@@ -880,14 +1005,18 @@
       if (!element.isConnected) { discard(box); continue; }
       if (bingSearchPage && !element.matches(BING_RESULT_SUBTITLE)) { discard(box); continue; }
       const wasDisplayed = box.visible || box.covered;
+      const wasCovered = box.covered;
       if (box.covered) {
-        if (box.coverSpan?.parentNode === element && element.childNodes.length === 1) continue;
+        if (coverIntact(box)) continue;
         invalidate(box);
+        const restored = unitFor(element);
+        if (restored) next.set(element, restored);
+        else next.delete(element);
       }
       const unit = next.get(element);
       if (!unit) { discard(box); continue; }
-      if (unit.text !== box.paragraphText) {
-        invalidate(box);
+      if (unit.text !== box.paragraphText || wasCovered) {
+        if (!wasCovered) invalidate(box);
         box.paragraphText = unit.text;
         box.nodes = unit.nodes;
         box.canCover = canCoverParagraph(element) && !element.contains(box.host);
