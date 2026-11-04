@@ -1,25 +1,21 @@
 """Translate the text in Word packages while keeping the original document parts."""
 
-import io
 import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
-from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
+from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from lxml import etree
 from starlette.concurrency import run_in_threadpool
+from .document_common import MAX_FILE_BYTES, PARSE_ERRORS, SPACE, TextMap, open_package, write_package, xml, xml_bytes
 
 router = APIRouter(prefix="/api/document")
 MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-MAX_FILE_BYTES = 15 * 1024 * 1024
-MAX_EXPANDED_BYTES = 80 * 1024 * 1024
 PART = re.compile(r"word/(document|header\d+|footer\d+|footnotes|endnotes)\.xml")
 NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 
 def w(name):
@@ -35,13 +31,6 @@ class TextGroup:
     @property
     def text(self):
         return "".join(node.text or "" for node in self.nodes)
-
-
-def xml(data):
-    root = etree.fromstring(data, etree.XMLParser(resolve_entities=False, no_network=True))
-    if root.getroottree().docinfo.doctype:
-        raise HTTPException(422, "Word 文档包含不支持的 XML 声明")
-    return root
 
 
 def paragraphs(root):
@@ -83,21 +72,6 @@ def paragraphs(root):
         yield paragraph, groups
 
 
-def split_text(text):
-    """Split long runs into bounded requests and keep the split whitespace."""
-    while len(text) > 1000:
-        window = text[:1000]
-        cut = max(window.rfind(" ", 500), window.rfind("。", 500) + 1,
-                  window.rfind("！", 500) + 1, window.rfind("？", 500) + 1)
-        cut = cut if cut >= 500 else 1000
-        chunk = text[:cut]
-        remainder = text[cut:]
-        text = remainder.lstrip()
-        yield chunk.strip(), remainder[:len(remainder) - len(text)]
-    if text:
-        yield text, ""
-
-
 def set_text(node, text):
     node.text = text
     if text != text.strip():
@@ -121,27 +95,16 @@ def add_line(paragraph, pairs):
 
 def process(data, translations=None, mode=None):
     try:
-        with ZipFile(io.BytesIO(data)) as source:
-            items = source.infolist()
-            names = set(source.namelist())
-            if len(items) > 2000 or sum(item.file_size for item in items) > MAX_EXPANDED_BYTES:
-                raise HTTPException(413, "Word 文档内部资源过大")
-            if len(names) != len(items) or any(
-                item.flag_bits & 1 or "\\" in item.filename or item.filename.startswith("/") or
-                ".." in PurePosixPath(item.filename).parts or item.filename.startswith("_xmlsignatures/")
-                for item in items
-            ):
-                raise HTTPException(422, "不支持加密、签名或结构异常的 Word 文档")
+        with open_package(data) as source:
             types = xml(source.read("[Content_Types].xml"))
-            if "word/document.xml" not in names or not any(
+            if "word/document.xml" not in source.namelist() or not any(
                 part.get("PartName") == "/word/document.xml" and part.get("ContentType") == MIME + ".main+xml"
                 for part in types
             ):
                 raise HTTPException(422, "请选择 Word .docx 文档")
-            texts = []
+            mapping = TextMap(translations)
             changed_parts = {}
-            total_chars = 0
-            for item in items:
+            for item in source.infolist():
                 if not PART.fullmatch(item.filename):
                     continue
                 root = xml(source.read(item))
@@ -156,23 +119,7 @@ def process(data, translations=None, mode=None):
                             pairs.append((group, None))
                             continue
                         original = group.text
-                        trimmed = original.strip()
-                        result = original
-                        if trimmed and any(char.isalpha() for char in trimmed):
-                            pieces = []
-                            for text, separator in split_text(trimmed):
-                                index = len(texts)
-                                texts.append(text)
-                                total_chars += len(text)
-                                if len(texts) > 2500 or total_chars > 200000:
-                                    raise HTTPException(413, "文档超过 2,500 个翻译片段或 20 万字符")
-                                if translations is not None:
-                                    if index >= len(translations):
-                                        raise HTTPException(422, "译文数量与文档不匹配")
-                                    pieces.append(translations[index].strip() + separator)
-                            if translations is not None:
-                                result = original[:len(original) - len(original.lstrip())] + "".join(pieces)
-                                result += original[len(original.rstrip()):]
+                        result = mapping.apply(original)
                         pairs.append((group, result))
                         if result != original:
                             changed_paragraph = True
@@ -184,31 +131,33 @@ def process(data, translations=None, mode=None):
                         add_line(paragraph, pairs)
                     changed |= changed_paragraph
                 if changed:
-                    changed_parts[item.filename] = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+                    changed_parts[item.filename] = xml_bytes(root)
             if translations is None:
-                return {"texts": texts}
-            if len(translations) != len(texts):
-                raise HTTPException(422, "译文数量与文档不匹配")
-            output = io.BytesIO()
-            with ZipFile(output, "w", compression=ZIP_DEFLATED) as target:
-                for item in items:
-                    content = changed_parts[item.filename] if item.filename in changed_parts else source.read(item)
-                    target.writestr(item.filename, content)
-            return output.getvalue()
-    except (BadZipFile, KeyError, RuntimeError, etree.XMLSyntaxError, ValueError) as error:
+                return {"texts": mapping.texts}
+            mapping.validate()
+            return write_package(source, changed_parts)
+    except PARSE_ERRORS as error:
         raise HTTPException(422, "无法读取该 Word .docx 文档") from error
 
 
 async def read_document(file):
     data = await file.read(MAX_FILE_BYTES + 1)
     if len(data) > MAX_FILE_BYTES:
-        raise HTTPException(413, "Word 文档不能超过 15 MB")
+        raise HTTPException(413, "文档不能超过 15 MB")
     return data
+
+
+def dispatch(data, suffix, translations=None, mode=None):
+    if suffix == ".docx":
+        return process(data, translations, mode), MIME
+    from .document_formats import process_format
+    return process_format(data, suffix, translations, mode)
 
 
 @router.post("/text")
 async def document_text(file: UploadFile = File(...)):
-    return await run_in_threadpool(process, await read_document(file))
+    output, _ = await run_in_threadpool(dispatch, await read_document(file), Path(file.filename or "").suffix.lower())
+    return output
 
 
 @router.post("/export")
@@ -220,5 +169,7 @@ async def document_export(file: UploadFile = File(...), texts: str = Form(...), 
     if (mode not in ("bilingual", "translated") or not isinstance(translations, list) or
             len(translations) > 2500 or any(not isinstance(text, str) or not text.strip() for text in translations)):
         raise HTTPException(422, "译文或文档导出方式无效")
-    data = await run_in_threadpool(process, await read_document(file), translations, mode)
-    return Response(data, media_type=MIME)
+    data, mime = await run_in_threadpool(
+        dispatch, await read_document(file), Path(file.filename or "").suffix.lower(), translations, mode,
+    )
+    return Response(data, media_type=mime)

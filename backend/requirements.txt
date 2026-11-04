@@ -7,3 +7,6 @@ manga-ocr
 onnxruntime
 opencv-python-headless
 lxml
+pypdf>=6,<7
+pypdfium2>=4,<6
+reportlab[shaping]>=4.4,<6

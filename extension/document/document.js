@@ -7,11 +7,14 @@
   const progress = $("progress");
   const translateButton = $("translate");
   const maxSize = 15 * 1024 * 1024;
+  const formats = new Set(fileInput.accept.split(","));
+  const legacy = new Set([".doc", ".xls", ".ppt", ".rtf"]);
   let controller = null;
   let cached = null;
 
   sourceSelect.append(new Option(registry.autoSource), ...registry.languages.map(language => new Option(language.name)));
   targetSelect.append(...registry.languages.map(language => new Option(language.name)));
+  const suffix = file => /\.[^.]+$/.exec(file?.name || "")?.[0].toLowerCase() || "";
 
   async function settings() {
     const cfg = await chrome.storage.local.get(["translationProvider", "translationMode", "targetLanguage"]);
@@ -36,7 +39,7 @@
     let response;
     try {
       response = await fetch(`${base}/api/document/${path}`, {
-        method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]), redirect: "error",
+        method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]), redirect: "error",
       });
     } catch {
       signal.throwIfAborted();
@@ -55,7 +58,8 @@
     const link = document.createElement("a");
     link.href = url;
     const suffix = mode === "bilingual" ? "双语" : "译文";
-    link.download = `${file.name.replace(/\.docx$/i, "")}-${suffix}.docx`;
+    const extension = /\.[^.]+$/.exec(file.name)[0];
+    link.download = `${file.name.slice(0, -extension.length)}-${suffix}${extension}`;
     document.body.append(link);
     link.click();
     link.remove();
@@ -69,7 +73,7 @@
     const mode = $("mode").value;
     const key = JSON.stringify([base, provider.id, source, target]);
     if (cached?.file !== file || cached.key !== key) {
-      status("正在读取 Word 文档…");
+      status("正在读取文件…");
       const response = await requestDocument(base, "text", file, signal);
       const { texts } = await response.json();
       if (!Array.isArray(texts) || !texts.length) throw new Error("没有找到可翻译的文字");
@@ -98,13 +102,13 @@
       batch.forEach((text, index) => translations.set(text, output[index]));
       progress.value = translations.size;
     }
-    status("正在生成 Word 文档…");
+    status("正在生成导出文件…");
     const response = await requestDocument(base, "export", file, signal, {
       texts: JSON.stringify(texts.map(text => translations.get(text))), mode,
     });
     const blob = await response.blob();
     signal.throwIfAborted();
-    if (!blob.size || !blob.type.includes("wordprocessingml.document")) throw new Error("后端未返回 Word 文件");
+    if (!blob.size || blob.type.includes("application/json")) throw new Error("后端未返回有效的文件");
     download(blob, file, mode);
     status("翻译完成，已生成下载文件。");
   }
@@ -113,8 +117,8 @@
     event.preventDefault();
     if (controller) return;
     const file = fileInput.files[0];
-    if (!file || !/\.docx$/i.test(file.name) || !file.size || file.size > maxSize) {
-      status("请选择 15 MB 以内的 Word .docx 文档", true);
+    if (!file || !formats.has(suffix(file)) || !file.size || file.size > maxSize) {
+      status("请选择格式列表中 15 MB 以内的文件", true);
       return;
     }
     controller = new AbortController();
@@ -135,7 +139,17 @@
     }
   };
   $("cancel").onclick = () => controller?.abort();
-  fileInput.onchange = () => { cached = null; progress.hidden = true; status("请选择输出方式后开始翻译。"); };
+  fileInput.onchange = () => {
+    cached = null;
+    progress.hidden = true;
+    const extension = suffix(fileInput.files[0]);
+    const note = $("format-note");
+    note.textContent = extension === ".pdf" ? "双语 PDF 在原页后附译文页，纯译文 PDF 会重排文字。扫描页需启用 OCR。" :
+      legacy.has(extension) ? "旧版格式需要后端安装 LibreOffice。转换可能改变分页或排版。" :
+      extension ? "按原格式导出。译文长度变化可能影响换行或版面。" : "";
+    note.hidden = !note.textContent;
+    status("请选择输出方式后开始翻译。");
+  };
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !Object.keys(changes).some(key => key.startsWith("translation") || key === "backendUrl")) return;
     cached = null;
