@@ -12,6 +12,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       const body = new FormData();
       const format = message.format === "wav" ? "wav" : "webm";
       body.append("audio", new Blob([bytes], { type: `audio/${format}` }), `video-audio.${format}`);
+      if (typeof message.language === "string" && /^[a-z]{2,3}$/.test(message.language)) body.append("language", message.language);
       const response = await fetch(`${base}/api/transcribe-audio`, { method: "POST", body, signal: AbortSignal.timeout(60000) });
       const data = await response.json();
       if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : `语音识别失败 (${response.status})`);

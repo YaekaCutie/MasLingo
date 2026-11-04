@@ -23,17 +23,19 @@ const out = process.env.MAS_SCREENSHOT_DIR || join(tmpdir(),'maslingo-video-qa')
 mkdirSync(out,{recursive:true});
 const audio = speech ? readFileSync(process.env.MAS_VIDEO_WAV) : null;
 let directVideo;
+let longAudio;
 const server = http.createServer((req,res)=>{
   if(req.url==='/voice.wav'){res.writeHead(200,{'Content-Type':'audio/wav'});res.end(audio);return;}
-  if(req.url==='/video.webm'&&directVideo){
+  const media=req.url==='/video.webm'?directVideo:req.url==='/long-audio.wav'?longAudio:null;
+  if(media){
     const range=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range||'');
     const start=range?Number(range[1]):0;
-    const end=range?.[2]?Math.min(Number(range[2]),directVideo.length-1):directVideo.length-1;
-    if(start>end){res.writeHead(416,{'Content-Range':`bytes */${directVideo.length}`});res.end();return;}
-    const headers={'Content-Type':'video/webm','Accept-Ranges':'bytes','Content-Length':end-start+1};
-    if(range) headers['Content-Range']=`bytes ${start}-${end}/${directVideo.length}`;
+    const end=range?.[2]?Math.min(Number(range[2]),media.length-1):media.length-1;
+    if(start>end){res.writeHead(416,{'Content-Range':`bytes */${media.length}`});res.end();return;}
+    const headers={'Content-Type':media===longAudio?'audio/wav':'video/webm','Accept-Ranges':'bytes','Content-Length':end-start+1};
+    if(range) headers['Content-Range']=`bytes ${start}-${end}/${media.length}`;
     res.writeHead(range?206:200,headers);
-    res.end(directVideo.subarray(start,end+1));return;
+    res.end(media.subarray(start,end+1));return;
   }
   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});
   res.end(`<!doctype html><html><head><title>MasLingo Video QA</title><style>
@@ -48,6 +50,18 @@ const server = http.createServer((req,res)=>{
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
 let browser, page;
 const wait=ms=>new Promise(done=>setTimeout(done,ms));
+function oneHourWav(samples, speechOffset) {
+  const sampleRate=8000;
+  const pcmSize=3600*sampleRate*2;
+  const wav=Buffer.alloc(44+pcmSize);
+  wav.write('RIFF');wav.writeUInt32LE(36+pcmSize,4);wav.write('WAVEfmt ',8);
+  wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);
+  wav.writeUInt32LE(sampleRate,24);wav.writeUInt32LE(sampleRate*2,28);
+  wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);
+  wav.write('data',36);wav.writeUInt32LE(pcmSize,40);
+  samples.forEach((value,index)=>wav.writeInt16LE(value,44+2*(speechOffset*sampleRate+index)));
+  return wav;
+}
 try{
   const extension=resolve('extension');
   browser=await puppeteer.launch({headless:true,ignoreDefaultArgs:['--mute-audio'],args:['--no-sandbox','--disable-features=DisableLoadExtensionCommandLineSwitch',`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,
@@ -55,12 +69,16 @@ try{
     ...(process.env.MAS_TEST_PROXY?[`--proxy-server=${process.env.MAS_TEST_PROXY}`]:[])]});
   const worker=await(await browser.waitForTarget(t=>t.type()==='service_worker')).worker();
   await worker.evaluate(async ({key,live})=>{
-    globalThis.videoCalls=[]; globalThis.videoAudioRequests=0; globalThis.offlineSegments=[]; globalThis.offlineSeconds=0; globalThis.offlineClips=0;
+    globalThis.videoCalls=[]; globalThis.videoLanguages=[]; globalThis.audioLanguages=[];
+    globalThis.videoAudioRequests=0; globalThis.offlineSegments=[]; globalThis.offlineSeconds=0; globalThis.offlineClips=0;
     const oldFetch=fetch;
     globalThis.fetch=async(...args)=>{
       // Isolate video requests from the panel's unrelated startup OCR probe.
       if(String(args[0]).endsWith('/health')) return new Response('{}',{status:503});
-      if(String(args[0]).endsWith('/api/transcribe-audio')) videoAudioRequests++;
+      if(String(args[0]).endsWith('/api/transcribe-audio')){
+        videoAudioRequests++;
+        audioLanguages.push(args[1].body.get('language'));
+      }
       const response=await oldFetch(...args);
       if(String(args[0]).includes('api.deepseek.com'))videoCalls.push({status:response.status});
       const clip=args[1]?.body instanceof FormData&&args[1].body.get('audio');
@@ -75,7 +93,7 @@ try{
       return response;
     };
     if(live){const get=chrome.storage.local.get.bind(chrome.storage.local);chrome.storage.local.get=async keys=>({...await get(keys),translationApiKey:key});}
-    else Object.assign(MAS_providers.byId('deepseek'),{adapter:async request=>{videoCalls.push(request.texts);if(globalThis.videoDelay)await new Promise(done=>setTimeout(done,videoDelay));return {url:'data:application/json,'+encodeURIComponent(JSON.stringify(request.texts.map(t=>'译文：'+t))),init:{}};},parse:payload=>payload});
+    else Object.assign(MAS_providers.byId('deepseek'),{adapter:async request=>{videoCalls.push(request.texts);videoLanguages.push([request.sourceName,request.target]);if(globalThis.videoDelay)await new Promise(done=>setTimeout(done,videoDelay));return {url:'data:application/json,'+encodeURIComponent(JSON.stringify(request.texts.map(t=>'译文：'+t))),init:{}};},parse:payload=>payload});
     await chrome.storage.local.set({translationProvider:'deepseek',translationMode:'openai-compatible',translationApiKey:'',translationModel:'deepseek-flash',translationModelProvider:'deepseek',targetLanguage:'简体中文',videoDisplayMode:'bilingual',webAutoTranslate:false,hoverTranslate:false,selectionTranslate:false});
   },{key,live}); key='';
   page=await browser.newPage();await page.setViewport({width:1100,height:850});
@@ -111,6 +129,11 @@ try{
   assert.equal(await worker.evaluate(()=>videoCalls.length),0,'no request before explicit start');
   const click=async selector=>(await page.evaluateHandle(s=>videoRoot().querySelector(s),selector)).asElement().click();
   const select=async value=>page.evaluate(value=>{const e=videoRoot().querySelector('.mode');e.value=value;e.dispatchEvent(new Event('change'));},value);
+  const setLanguage=(selector,value)=>page.evaluate((selector,value)=>{
+    const control=videoRoot().querySelector(selector);
+    control.value=value;
+    control.dispatchEvent(new Event('change'));
+  },selector,value);
   const visibleButtons=()=>page.evaluate(()=>[...videoRoot().querySelectorAll('button')].filter(button=>button.offsetWidth).map(button=>button.className));
   const openSettings=async()=>{
     if(await page.evaluate(()=>videoRoot().querySelector('.settings').hidden)) await click('.gear');
@@ -130,10 +153,18 @@ try{
   }),'opening settings from the reader keeps the docked menu below the player');
   assert.ok((await visibleButtons()).includes('prepare'),'settings immediately exposes subtitle actions');
   assert.ok(await page.evaluate(()=>videoRoot().querySelector('.auto-prepare').checked),'automatic preparation is on by default');
+  assert.deepEqual(await page.evaluate(()=>[videoRoot().querySelector('.source-language').value,videoRoot().querySelector('.target-language').value]),['自动识别','']);
   await click('.start');
   await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('\n'),{timeout:90000});
   await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('已预翻译 3 条'),{timeout:90000});
   if(!live) assert.ok(await worker.evaluate(()=>videoCalls.flat().includes('A cue automatically prepared before it is played.')));
+  if(!live){
+    const firstRequest=await worker.evaluate(()=>videoLanguages.length);
+    await setLanguage('.source-language','English');
+    await setLanguage('.target-language','Français（法语）');
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('已预翻译 3 条'));
+    assert.ok(await worker.evaluate(index=>videoLanguages.slice(index).some(([source,target])=>source==='英文'&&target==='Français（法语）'),firstRequest));
+  }
   assert.equal(await page.evaluate(()=>track.mode),'hidden');
   await page.mouse.move(10,10);
   await page.screenshot({path:join(out,'video-settings-default.png')});
@@ -266,6 +297,7 @@ try{
   console.log('PASS cancelled capture and stopped/late captions');
   if(speech){
     await page.$eval('.ytp-caption-window-container',e=>e.textContent='');
+    await setLanguage('.source-language','English');
     await select('bilingual');await page.$eval('video',v=>{v.currentTime=0;return v.play();});
     const startedAt = Date.now();
     await click('.speech');
@@ -306,6 +338,32 @@ try{
     await page.$eval('video',video=>video.pause());
     assert.deepEqual(await worker.evaluate(()=>[videoCalls.length,videoAudioRequests]),counts,'seeking and playing reuse prepared speech and translations');
     console.log('PASS no-caption HTTP video -> paused audio preprocessing -> timestamped bilingual subtitles');
+    assert.ok(await worker.evaluate(()=>audioLanguages.length>0&&audioLanguages.every(language=>language==='en')),'selected source language reaches the real speech backend');
+    await setLanguage('.target-language','日本語');
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('可以播放'));
+    assert.equal(await worker.evaluate(()=>videoAudioRequests),counts[1],'changing only the target language reuses the audio transcription');
+
+    const speechOffset=3580;
+    const samples=await page.evaluate(async()=>{
+      const context=new OfflineAudioContext(1,1,8000);
+      const clip=await context.decodeAudioData(await(await fetch('/voice.wav')).arrayBuffer());
+      return Array.from(clip.getChannelData(0),value=>Math.round(Math.max(-1,Math.min(1,value))*32767));
+    });
+    longAudio=oneHourWav(samples,speechOffset);
+    await worker.evaluate(()=>{offlineSegments=[];offlineSeconds=0;offlineClips=0;});
+    await page.$eval('video',video=>{video.src='/long-audio.wav';});
+    await page.waitForFunction(()=>document.querySelector('video').readyState>=2&&document.querySelector('video').duration===3600);
+    await openSettings();
+    await click('.start');
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('可以播放'),{timeout:120000});
+    const longResult=await worker.evaluate(()=>({clips:offlineClips,segment:offlineSegments[0]}));
+    assert.ok(longResult.clips>0&&longResult.clips<=3,'silent clips in a one-hour file are not uploaded');
+    assert.match(longResult.segment.text,/hello|everyone/i);
+    const firstClipStart=Math.floor(speechOffset/11)*11;
+    await page.$eval('video',(video,time)=>video.currentTime=time,firstClipStart+(longResult.segment.start+longResult.segment.end)/2);
+    await page.waitForFunction(()=>/hello|everyone/i.test(videoRoot().querySelector('.caption').textContent));
+    await page.screenshot({path:join(out,'video-one-hour.png')});
+    console.log('PASS one-hour media skips silence and preserves subtitles near the one-hour mark');
   }
   assert.deepEqual(errors,[]);console.log('PASS no script errors; screenshots: '+out);
 }catch(error){

@@ -5,7 +5,7 @@ import os
 from functools import lru_cache
 
 import numpy as np
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
@@ -54,12 +54,15 @@ def decode(data):
     return np.concatenate(chunks).astype(np.float32) / 32768.0
 
 
-def transcribe(data):
+def transcribe(data, language=None):
     samples = decode(data)
     if np.max(np.abs(samples)) < 0.002:
         return {"text": "", "segments": [], "language": ""}
-    segments, info = model().transcribe(
-        samples, beam_size=1, vad_filter=True, condition_on_previous_text=False,
+    recognizer = model()
+    if language and language not in recognizer.supported_languages:
+        raise HTTPException(422, "当前语音模型不支持选择的源语言")
+    segments, info = recognizer.transcribe(
+        samples, language=language, beam_size=1, vad_filter=True, condition_on_previous_text=False,
         vad_parameters={"min_silence_duration_ms": 350},
     )
     result = [{"start": s.start, "end": s.end, "text": s.text.strip()}
@@ -68,7 +71,9 @@ def transcribe(data):
 
 
 @router.post("/api/transcribe-audio")
-async def transcribe_audio(audio: UploadFile = File(...)):
+async def transcribe_audio(
+    audio: UploadFile = File(...), language: str | None = Form(None, pattern=r"^[a-z]{2,3}$")
+):
     if os.getenv("MAS_ENABLE_SPEECH", "0") != "1":
         raise HTTPException(503, "语音识别未启用：安装 backend/requirements-speech.txt 并设置 MAS_ENABLE_SPEECH=1")
     data = await audio.read(MAX_BYTES + 1)
@@ -81,7 +86,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         raise HTTPException(429, "语音识别繁忙，请稍后重试")
     async with _slot:
         try:
-            return await run_in_threadpool(transcribe, data)
+            return await run_in_threadpool(transcribe, data, language)
         except HTTPException:
             raise
         except ImportError as error:

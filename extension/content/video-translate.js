@@ -9,14 +9,18 @@
   const PAIR_WAIT_MS = 20000;
   const MAX_WAITING_CUES = 16;
   const MAX_PREPARED_TEXTS = 2500;
-  const MAX_MEDIA_BYTES = 80 * 1024 * 1024;
-  const MAX_MEDIA_SECONDS = 15 * 60;
+  const MAX_MEDIA_BYTES = 160 * 1024 * 1024;
+  const MAX_MEDIA_SECONDS = 60 * 60;
   const AUDIO_RATE = 16000;
   const MIN_AUDIO_MS = 1400;
   const MAX_AUDIO_MS = 5000;
   const AUDIO_PAUSE_MS = 220;
   const MIN_SPEECH_RMS = 0.006;
-  const preferenceKeys = ["videoDisplayMode", "videoAutoPrepare", "translationProvider", "translationMode"];
+  const registry = globalThis.MAS_providers;
+  const AUTO_SOURCE = registry.autoSource;
+  const languageNames = registry.languages.map(language => language.name);
+  const preferenceKeys = ["videoDisplayMode", "videoAutoPrepare", "videoSourceLanguage", "videoTargetLanguage",
+    "targetLanguage", "translationProvider", "translationMode"];
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
   const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
@@ -30,7 +34,14 @@
     });
   }
 
-  function wavClip(samples, from, to) {
+  function monoSample(channels, index) {
+    if (channels.length === 1) return channels[0][index];
+    let sum = 0;
+    for (const channel of channels) sum += channel[index];
+    return sum / channels.length;
+  }
+
+  function wavClip(channels, from, to) {
     const bytes = (to - from) * 2;
     const wav = new ArrayBuffer(44 + bytes);
     const data = new DataView(wav);
@@ -47,59 +58,59 @@
     data.setUint16(34, 16, true);
     data.setUint32(36, 0x64617461); // data
     data.setUint32(40, bytes, true);
+    let peak = 0;
     for (let i = from; i < to; i++) {
-      const sample = Math.max(-1, Math.min(1, samples[i]));
+      const sample = Math.max(-1, Math.min(1, monoSample(channels, i)));
+      peak = Math.max(peak, Math.abs(sample));
       data.setInt16(44 + (i - from) * 2, sample * 32767, true);
     }
-    return new Blob([wav], { type: "audio/wav" });
+    return peak >= 0.002 ? new Blob([wav], { type: "audio/wav" }) : null;
   }
 
-  function clipEnd(samples, from) {
-    const end = Math.min(samples.length, from + 11 * AUDIO_RATE);
-    if (end === samples.length) return end;
+  function clipEnd(channels, from, length) {
+    const end = Math.min(length, from + 11 * AUDIO_RATE);
+    if (end === length) return end;
     const window = AUDIO_RATE / 10;
     // Prefer a pause near the end to keep sentences together.
     for (let cut = end; cut >= end - 2 * AUDIO_RATE; cut -= window) {
       let energy = 0;
-      for (let i = cut - window; i < cut; i++) energy += samples[i] ** 2;
+      for (let i = cut - window; i < cut; i++) energy += monoSample(channels, i) ** 2;
       if (energy / window < MIN_SPEECH_RMS ** 2) return cut;
     }
     return end;
   }
 
-  async function readVideoAudio(url, signal) {
-    const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]), credentials: "same-origin" });
+  async function downloadVideo(url, signal) {
+    const response = await fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(180000)]), credentials: "same-origin" });
     if (!response.ok || response.status === 206 || !response.body) throw new Error("无法读取完整的视频文件");
     const reader = response.body.getReader();
     const parts = [];
     let size = 0;
     try {
-      if (Number(response.headers.get("content-length")) > MAX_MEDIA_BYTES) throw new Error("视频文件超过 80 MB");
+      if (Number(response.headers.get("content-length")) > MAX_MEDIA_BYTES) throw new Error("视频文件超过 160 MB");
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > MAX_MEDIA_BYTES) throw new Error("视频文件超过 80 MB");
+        if (size > MAX_MEDIA_BYTES) throw new Error("视频文件超过 160 MB");
         parts.push(value);
       }
     } finally {
       await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
-    const data = await new Blob(parts).arrayBuffer();
+    return new Blob(parts).arrayBuffer();
+  }
+
+  async function readVideoAudio(url, signal) {
+    const data = await downloadVideo(url, signal);
     signal.throwIfAborted();
     const context = new OfflineAudioContext(1, 1, AUDIO_RATE);
     let audio;
     try { audio = await context.decodeAudioData(data); }
     catch { throw new Error("浏览器无法从该视频文件解码音频"); }
-    if (audio.duration > MAX_MEDIA_SECONDS) throw new Error("音轨超过 15 分钟");
-    if (audio.numberOfChannels === 1) return audio.getChannelData(0);
-    const mix = new OfflineAudioContext(1, audio.length, AUDIO_RATE);
-    const source = mix.createBufferSource();
-    source.buffer = audio;
-    source.connect(mix.destination);
-    source.start();
-    return (await mix.startRendering()).getChannelData(0);
+    if (audio.duration > MAX_MEDIA_SECONDS) throw new Error("音轨超过 1 小时");
+    return audio;
   }
 
   function trackTexts(cues) {
@@ -148,6 +159,9 @@
       .floating[data-menu-above] .settings{top:auto;bottom:calc(100% + 4px);margin-top:0}
       .auto-option{display:flex;align-items:center;gap:5px;min-height:27px;cursor:pointer}
       .auto-option input{margin:0;accent-color:#285de5}
+      .languages{display:flex;flex-basis:100%;gap:7px}
+      .languages label{display:grid;gap:3px;flex:1;min-width:0;font-size:12px}
+      .languages select{width:100%;min-width:0}
       button,select{font:inherit;color:inherit;background:#f7f7f8;border:1px solid #ddd;border-radius:6px;padding:3px 6px;min-height:27px;cursor:pointer;max-width:100%}
       button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:default}
       .status,.prepare-status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:12px}
@@ -178,6 +192,10 @@
       <button class="speech" aria-pressed="false" title="共享当前标签页声音，音频发送给设置中的后端；仅文字发给翻译来源">无字幕识别</button>
       <select class="mode" aria-label="字幕显示模式"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
       <select class="track" aria-label="字幕轨"><option value="auto">自动选择字幕</option></select>
+      <div class="languages">
+        <label>源语言<select class="source-language"></select></label>
+        <label>目标语言<select class="target-language"></select></label>
+      </div>
       <button class="prepare" aria-describedby="prepare-status">预翻译字幕轨</button>
       <label class="auto-option"><input class="auto-prepare" type="checkbox" checked>自动预翻译</label>
       <span class="prepare-status" id="prepare-status" role="status"></span>
@@ -296,11 +314,44 @@
       hasTracks: false, preparation: null, generatedCues: null, allowAudioPreparation: false,
       currentCue: null, waitingCues: [], showing: null, lagged: false,
       stream: null, recorder: null, audioContext: null, audioMeter: null,
-      speech: false, speechBusy: false, speechText: "", speechUntil: 0, audioQueue: [], timer: null };
+      speech: false, speechBusy: false, speechText: "", speechUntil: 0, audioQueue: [], audioRequest: null, timer: null };
     players.set(video, state);
     const status = text => { $(".status").textContent = text; };
     const mode = () => $(".mode").value;
     $(".mode").value = globalThis.MAS_webDisplayMode(preferences.videoDisplayMode);
+    const sourceSelect = $(".source-language");
+    const targetSelect = $(".target-language");
+    sourceSelect.append(new Option(AUTO_SOURCE), ...languageNames.map(name => new Option(name)));
+    targetSelect.append(new Option("", ""), ...languageNames.map(name => new Option(name)));
+    let sourceLanguage, targetLanguage;
+
+    function syncLanguages() {
+      const oldSource = sourceLanguage;
+      const oldTarget = targetLanguage;
+      sourceSelect.value = preferences.videoSourceLanguage || AUTO_SOURCE;
+      targetSelect.value = preferences.videoTargetLanguage || "";
+      const globalTarget = preferences.targetLanguage || "简体中文";
+      targetSelect.options[0].textContent = `跟随全局（${globalTarget}）`;
+      sourceLanguage = sourceSelect.value || AUTO_SOURCE;
+      targetLanguage = targetSelect.value || globalTarget;
+      if (!oldSource || (oldSource === sourceLanguage && oldTarget === targetLanguage)) return;
+      if (oldSource !== sourceLanguage) {
+        state.generatedCues = null;
+        reset();
+        flushRecording();
+      } else if (state.preparation?.controller) resetTranslation();
+      else reset();
+      tick();
+    }
+    syncLanguages();
+    state.syncLanguages = syncLanguages;
+    function saveLanguage(key, value) {
+      preferences[key] = value;
+      for (const player of players.values()) player.syncLanguages();
+      chrome.storage.local.set({ [key]: value });
+    }
+    sourceSelect.onchange = () => saveLanguage("videoSourceLanguage", sourceSelect.value);
+    targetSelect.onchange = () => saveLanguage("videoTargetLanguage", targetSelect.value);
 
     function clearOutput() {
       $(".caption").textContent = "";
@@ -317,13 +368,16 @@
       state.speechText = "";
       clearOutput();
     }
-    function reset() {
+    function resetTranslation() {
       state.translationRevision++;
       state.cache.clear();
+      resetTimeline();
+    }
+    function reset() {
       state.preparation?.controller?.abort();
       state.preparation = null;
       $(".prepare-status").textContent = "";
-      resetTimeline();
+      resetTranslation();
     }
     function restoreSources() {
       state.sourceTrack?.removeEventListener("cuechange", tick);
@@ -458,15 +512,16 @@
       const signal = job.controller.signal;
       try {
         setPrepareStatus("正在读取视频音轨…");
-        const samples = await readVideoAudio(url, signal);
+        const audio = await readVideoAudio(url, signal);
+        const channels = Array.from({ length: audio.numberOfChannels }, (_, channel) => audio.getChannelData(channel));
         const cues = [];
-        for (let from = 0; from < samples.length;) {
+        for (let from = 0; from < audio.length;) {
           signal.throwIfAborted();
-          const to = clipEnd(samples, from);
-          setPrepareStatus(`正在识别视频语音… ${Math.floor(from / samples.length * 100)}%`);
-          const audio = await encodeAudio(wavClip(samples, from, to));
-          signal.throwIfAborted();
-          const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio, format: "wav" });
+          const to = clipEnd(channels, from, audio.length);
+          const clip = wavClip(channels, from, to);
+          if (!clip) { from = to; continue; }
+          setPrepareStatus(`正在识别视频语音… ${Math.floor(from / audio.length * 100)}%`);
+          const response = await requestTranscription(clip, "wav", () => !signal.aborted);
           signal.throwIfAborted();
           if (!response?.ok) throw new Error(response?.reason || "语音识别失败");
           const clipLength = (to - from) / AUDIO_RATE;
@@ -531,7 +586,8 @@
       if (prepareButton.textContent !== label) prepareButton.textContent = label;
       if (!job) {
         setPrepareStatus(state.speech ? "正在实时识别，可停止后再预处理。" :
-          !state.hasTracks && !audioAvailable ? "当前视频无法提前读取完整音轨，可使用实时识别。" :
+          !state.hasTracks && !audioAvailable ? (Number.isFinite(video.duration) && video.duration > MAX_MEDIA_SECONDS ?
+            "视频超过 1 小时，可使用实时识别。" : "当前视频无法提前读取完整音轨，可使用实时识别。") :
           mode() === "source" ? "选择双语或纯译文后可预翻译。" :
           autoPrepare.checked ? "开启字幕翻译后自动预翻译。" :
           audioAvailable ? "可暂停播放并手动预处理音频。" : "可手动预翻译字幕轨。");
@@ -575,8 +631,7 @@
 
     function translate(texts, prefetch = false) {
       if (mode() === "source" || state.inflight >= 2 || (prefetch && state.prefetching)) return;
-      const registry = globalThis.MAS_providers;
-      const provider = registry?.byId(registry.resolveProviderId(preferences));
+      const provider = registry.byId(registry.resolveProviderId(preferences));
       // Single-text providers are serialized by the worker. A large batch
       // would keep even its first translation waiting for later requests.
       const batchSize = provider?.perRequest ? 1 : 4;
@@ -586,7 +641,7 @@
       for (const text of fresh) state.cache.set(text, { pending: true });
       state.inflight++;
       if (prefetch) state.prefetching = true;
-      send({ type: "TRANSLATE_TEXT_BLOCKS", texts: fresh, source: "自动识别" }).then(result => {
+      send({ type: "TRANSLATE_TEXT_BLOCKS", texts: fresh, source: sourceLanguage, target: targetLanguage }).then(result => {
         if (revision !== state.translationRevision || !state.enabled) return;
         if (!result?.ok) throw new Error(result?.reason || "字幕翻译失败");
         fresh.forEach((text, i) => {
@@ -761,15 +816,23 @@
       gear.focus({ preventScroll: true });
     };
 
+    async function requestTranscription(blob, format, isCurrent) {
+      const audio = await encodeAudio(blob);
+      while (state.audioRequest) await state.audioRequest.catch(() => {});
+      if (!isCurrent()) return;
+      const request = send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio, format, language: registry.languageBase(sourceLanguage) });
+      state.audioRequest = request;
+      try { return await request; }
+      finally { state.audioRequest = null; }
+    }
+
     async function transcribeNext() {
       if (!state.speech || state.speechBusy) return;
       const clip = state.audioQueue.shift();
       if (!clip) return;
       state.speechBusy = true;
       try {
-        const audio = await encodeAudio(clip.blob);
-        if (clip.generation !== state.generation || !state.speech) return;
-        const response = await send({ type: "TRANSCRIBE_VIDEO_AUDIO", audio });
+        const response = await requestTranscription(clip.blob, "webm", () => clip.generation === state.generation && state.speech);
         if (clip.generation !== state.generation || !state.speech) return;
         if (!response?.ok) throw new Error(response?.reason || "语音识别失败");
         if (performance.now() - clip.capturedAt > PAIR_WAIT_MS) {
@@ -904,7 +967,8 @@
       for (const state of players.values()) state.root.querySelector(".mode").value = globalThis.MAS_webDisplayMode(preferences.videoDisplayMode);
     }
     if (changes.videoAutoPrepare) for (const state of players.values()) state.syncAutoPrepare();
-    if (Object.keys(changes).some(key => key.startsWith("translation") || key === "targetLanguage")) for (const state of players.values()) state.reset();
+    if (changes.videoSourceLanguage || changes.videoTargetLanguage || changes.targetLanguage) for (const state of players.values()) state.syncLanguages();
+    if (Object.keys(changes).some(key => key.startsWith("translation"))) for (const state of players.values()) state.reset();
   });
   const scanTimer = setInterval(scan, 2000);
   const tickTimer = setInterval(() => { for (const state of players.values()) state.tick(); }, 150);
