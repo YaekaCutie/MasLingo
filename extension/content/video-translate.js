@@ -113,18 +113,17 @@
     return audio;
   }
 
-  function trackTexts(cues) {
+  function* timedCaptions(cues) {
     // Reproduce the text shown at each boundary, including overlapping cues.
     const boundaries = [];
     for (const [index, cue] of Array.from(cues).entries()) {
-      if (cue.endTime <= cue.startTime) continue;
+      if (!(cue.endTime > cue.startTime)) continue;
       const text = plainCue(cue);
       if (!text) continue;
       boundaries.push({ time: cue.startTime, index, text }, { time: cue.endTime, index });
     }
     boundaries.sort((a, b) => a.time - b.time);
     const active = new Map();
-    const texts = new Set();
     for (let i = 0; i < boundaries.length;) {
       const time = boundaries[i].time;
       do {
@@ -133,10 +132,32 @@
         else active.delete(index);
       } while (boundaries[i]?.time === time);
       const text = clean([...active].sort(([a], [b]) => a - b).map(([, line]) => line).join(" "));
-      if (text) texts.add(text);
+      if (text && i < boundaries.length) yield { start: time, end: boundaries[i].time, text };
+    }
+  }
+
+  function trackTexts(cues) {
+    const texts = new Set();
+    for (const { text } of timedCaptions(cues)) {
+      texts.add(text);
       if (texts.size > MAX_PREPARED_TEXTS) break;
     }
     return texts;
+  }
+
+  function captionText(source, translated, mode) {
+    if (mode === "source") return source;
+    if (mode === "translated") return translated || "";
+    return [source, translated === source ? "" : translated].filter(Boolean).join("\n");
+  }
+
+  function subtitleTimestamp(ms, separator) {
+    const clock = [Math.floor(ms / 3600000), Math.floor(ms / 60000) % 60, Math.floor(ms / 1000) % 60];
+    return clock.map(part => String(part).padStart(2, "0")).join(":") + separator + String(ms % 1000).padStart(3, "0");
+  }
+
+  function escapeVtt(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
   function attach(video) {
@@ -166,16 +187,19 @@
       button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:default}
       .status,.prepare-status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:12px}
       .status:empty,.prepare-status:empty{display:none}
+      .subtitle-exports{display:flex;flex-basis:100%;flex-wrap:wrap;gap:7px}
       [hidden]{display:none!important}
       button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #285de5;outline-offset:1px}
       button{transition:background .16s}button:hover{background:#f3f6fc}button[aria-pressed=true]:hover{background:#194bc8}
-      .caption,.idle{max-width:100%;text-align:center;white-space:pre-line;overflow-wrap:anywhere;font:14px/1.6 system-ui}
+      .caption,.idle,.prepare-indicator{max-width:100%;text-align:center;white-space:pre-line;overflow-wrap:anywhere;font:14px/1.6 system-ui}
+      .prepare-indicator{color:#62656b;font-size:12px}
       @container (max-width:440px){.surface{padding:34px 12px 12px}.actions{top:4px;right:5px}}
       @media(prefers-reduced-motion:reduce){button{transition:none}}
       .caption:empty{display:none}
     </style><div class="float"><div class="surface">
       <div class="caption" aria-live="off"></div>
       <span class="idle">字幕已就绪，可在设置中开启</span>
+      <span class="prepare-indicator" hidden></span>
       <div class="actions">
       <button class="gear" type="button" aria-label="字幕设置" aria-expanded="false" aria-controls="settings" title="字幕设置，可拖动浮窗">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -199,6 +223,10 @@
       <button class="prepare" aria-describedby="prepare-status">预翻译字幕轨</button>
       <label class="auto-option"><input class="auto-prepare" type="checkbox" checked>自动预翻译</label>
       <span class="prepare-status" id="prepare-status" role="status"></span>
+      <div class="subtitle-exports" hidden>
+        <button class="export-srt" type="button" title="按当前字幕显示模式导出">导出 SRT</button>
+        <button class="export-vtt" type="button" title="按当前字幕显示模式导出">导出 WebVTT</button>
+      </div>
       <span class="status" role="status"></span>
     </div></div>`;
     function placeHost(rect) {
@@ -262,6 +290,7 @@
       gear.setAttribute("aria-expanded", String(open));
       if (open) window.addEventListener("pointerdown", dismissMenuOutside, true);
       else window.removeEventListener("pointerdown", dismissMenuOutside, true);
+      updatePreparationUi();
       if (position) placeFloating();
     }
     surface.addEventListener("pointerdown", event => {
@@ -474,6 +503,8 @@
 
     const prepareButton = $(".prepare");
     const prepareStatus = $(".prepare-status");
+    const indicator = $(".prepare-indicator");
+    const exportControls = $(".subtitle-exports");
     const autoPrepare = $(".auto-prepare");
     autoPrepare.checked = preferences.videoAutoPrepare !== false;
     function setAutoPrepare(enabled) {
@@ -494,6 +525,70 @@
     function setPrepareStatus(message) {
       if (prepareStatus.textContent !== message) prepareStatus.textContent = message;
     }
+
+    function updatePreparationUi() {
+      const job = state.preparation;
+      exportControls.hidden = !job?.ready;
+      indicator.hidden = !menu.hidden || !(job?.running || (job?.ready && video.paused));
+      if (!indicator.hidden && indicator.textContent !== prepareStatus.textContent) {
+        indicator.textContent = prepareStatus.textContent;
+      }
+    }
+
+    function markNewCaptions() {
+      state.preparation.ready = false;
+      prepareButton.disabled = false;
+      setPrepareStatus("字幕轨出现了新内容，可以再次预翻译。");
+    }
+
+    function exportSubtitles(format) {
+      const job = state.preparation;
+      const cues = job?.audio ? state.generatedCues : state.sourceTrack?.cues;
+      if (!job?.ready || !cues?.length) return;
+      const displayMode = mode();
+      const isVtt = format === "vtt";
+      const separator = isVtt ? "." : ",";
+      const newline = isVtt ? "\n" : "\r\n";
+      const entries = [];
+      for (const { start, end, text } of timedCaptions(cues)) {
+        const translated = state.cache.get(text)?.text;
+        if (displayMode !== "source" && (!job.texts.has(text) || !translated)) {
+          markNewCaptions();
+          updatePreparationUi();
+          prepareButton.focus({ preventScroll: true });
+          return;
+        }
+        if (!Number.isFinite(end) || entries.length >= 10000) {
+          setPrepareStatus("当前字幕轨含无效时间或超过 10,000 段，无法完整导出。");
+          return;
+        }
+        const from = Math.max(0, Math.round(start * 1000));
+        const to = Math.max(from + 1, Math.round(end * 1000));
+        const timing = `${subtitleTimestamp(from, separator)} --> ${subtitleTimestamp(to, separator)}`;
+        const output = captionText(text, translated, displayMode);
+        entries.push(isVtt ? `${timing}\n${escapeVtt(output)}` :
+          [entries.length + 1, timing, output.replace(/\n/g, newline)].join(newline));
+      }
+      if (!entries.length) {
+        setPrepareStatus("字幕轨中没有可导出的字幕。");
+        return;
+      }
+      const contents = (isVtt ? "WEBVTT\n\n" : "\ufeff") + entries.join(newline.repeat(2)) + newline;
+      const url = URL.createObjectURL(new Blob([contents], { type: isVtt ? "text/vtt;charset=utf-8" : "text/plain;charset=utf-8" }));
+      const title = document.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, " ").trim().slice(0, 80) || "视频";
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `MasLingo-${title}-${displayMode}.${format}`;
+      root.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    }
+
+    for (const format of ["srt", "vtt"]) {
+      $(`.export-${format}`).onclick = event => { if (event.isTrusted) exportSubtitles(format); };
+    }
+
     function finishPreparation(message) {
       state.preparation.running = false;
       state.preparation.controller?.abort();
@@ -720,9 +815,7 @@
       }
       const prepared = state.preparation;
       if (prepared?.ready && text && !prepared.texts.has(text)) {
-        prepared.ready = false;
-        prepareButton.disabled = false;
-        setPrepareStatus("字幕轨出现了新内容，可以再次预翻译。");
+        markNewCaptions();
       }
       if (prepared?.ready) {
         // Prepared tracks follow the media clock, including brief cues and gaps.
@@ -730,8 +823,7 @@
         state.waitingCues.length = 0;
         state.showing = null;
         const translated = state.cache.get(text)?.text;
-        render(mode() === "translated" ? (translated || "") :
-          [text, translated === text ? "" : translated].filter(Boolean).join("\n"));
+        render(captionText(text, translated, mode()));
         status(text ? "字幕已同步" : idleStatus());
         return;
       }
@@ -758,8 +850,7 @@
       }
 
       const ready = state.showing;
-      const output = !ready ? "" : mode() === "translated" ? (ready.translation || "")
-        : [ready.cue.text, ready.translation === ready.cue.text ? "" : ready.translation].filter(Boolean).join("\n");
+      const output = ready ? captionText(ready.cue.text, ready.translation, mode()) : "";
       render(output);
       if (ready?.error) status(`字幕翻译失败：${ready.error}`);
       else if (state.lagged) status("处理速度跟不上播放，已跳过过期片段");
@@ -782,7 +873,7 @@
         // Short rolling native cues also work in a video-only fullscreen player.
         if (state.lastOutput !== text || !state.output.activeCues?.length) {
           for (const cue of [...(state.output.cues || [])]) state.output.removeCue(cue);
-          if (text) state.output.addCue(new VTTCue(video.currentTime, video.currentTime + 0.6, text.replace(/&/g, "&amp;").replace(/</g, "&lt;")));
+          if (text) state.output.addCue(new VTTCue(video.currentTime, video.currentTime + 0.6, escapeVtt(text)));
         }
       } else {
         if (state.output) state.output.mode = "disabled";
@@ -803,10 +894,10 @@
         else placeHost(rect);
       }
       updateTracks();
-      prepareCaptions(performance.now());
-      if (!state.enabled) return;
       const now = performance.now();
-      presentCaptions(readCaptions(now), now);
+      prepareCaptions(now);
+      if (state.enabled) presentCaptions(readCaptions(now), now);
+      updatePreparationUi();
     }
     state.tick = tick;
     state.openSettings = () => {

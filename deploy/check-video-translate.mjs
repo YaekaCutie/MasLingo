@@ -2,7 +2,7 @@
 // Optional --speech: actual tab audio -> running backend -> subtitle overlay.
 // MAS_VIDEO_WAV supplies a synthetic speech fixture. --live reads a hidden key.
 import assert from 'node:assert/strict';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
@@ -48,7 +48,7 @@ const server = http.createServer((req,res)=>{
   </style></head><body><h1>Video subtitle test</h1><div id="player-shell"><div id="player-stack"><media-controller id="movie_player"><video controls></video><div class="ytp-caption-window-container"></div></media-controller></div></div></body></html>`);
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));
-let browser, page;
+let browser, page, downloads;
 const wait=ms=>new Promise(done=>setTimeout(done,ms));
 function oneHourWav(samples, speechOffset) {
   const sampleRate=8000;
@@ -67,6 +67,8 @@ try{
   browser=await puppeteer.launch({headless:true,ignoreDefaultArgs:['--mute-audio'],args:['--no-sandbox','--disable-features=DisableLoadExtensionCommandLineSwitch',`--disable-extensions-except=${extension}`,`--load-extension=${extension}`,
     '--autoplay-policy=no-user-gesture-required','--auto-select-tab-capture-source-by-title=MasLingo Video QA','--allow-http-screen-capture',
     ...(process.env.MAS_TEST_PROXY?[`--proxy-server=${process.env.MAS_TEST_PROXY}`]:[])]});
+  downloads=mkdtempSync(join(tmpdir(),'maslingo-caption-downloads-'));
+  await browser.defaultBrowserContext().setDownloadBehavior({policy:'allow',downloadPath:downloads});
   const worker=await(await browser.waitForTarget(t=>t.type()==='service_worker')).worker();
   await worker.evaluate(async ({key,live})=>{
     globalThis.videoCalls=[]; globalThis.videoLanguages=[]; globalThis.audioLanguages=[];
@@ -128,6 +130,14 @@ try{
   assert.ok(await page.evaluate(()=>videoRoot().querySelector('.surface').getBoundingClientRect().top>=document.querySelector('video').getBoundingClientRect().bottom),'the floating window defaults to below the video');
   assert.equal(await worker.evaluate(()=>videoCalls.length),0,'no request before explicit start');
   const click=async selector=>(await page.evaluateHandle(s=>videoRoot().querySelector(s),selector)).asElement().click();
+  const downloadSubtitle=async(format,mode)=>{
+    const file=join(downloads,`MasLingo-MasLingo Video QA-${mode}.${format}`);
+    await click(`.export-${format}`);
+    for(let i=0;i<60&&!existsSync(file);i++) await wait(100);
+    const contents=readFileSync(file,'utf8');
+    unlinkSync(file);
+    return contents;
+  };
   const select=async value=>page.evaluate(value=>{const e=videoRoot().querySelector('.mode');e.value=value;e.dispatchEvent(new Event('change'));},value);
   const setLanguage=(selector,value)=>page.evaluate((selector,value)=>{
     const control=videoRoot().querySelector(selector);
@@ -196,17 +206,38 @@ try{
     await click('.auto-prepare');
     await page.evaluate(()=>{
       track.addCue(new VTTCue(0.83,1.12,'An overlapping subtitle.'));
-      track.addCue(new VTTCue(70,75,'A cue beyond the normal prefetch window.'));
+      track.addCue(new VTTCue(70,75,'A cue beyond the prefetch window & the current playback.'));
     });
     await worker.evaluate(()=>globalThis.videoDelay=550);
     await select('bilingual');
     await click('.start');
     await page.waitForFunction(()=>videoRoot().querySelector('.caption').textContent.includes('Please enjoy'));
     assert.ok(await page.evaluate(()=>videoRoot().querySelector('.prepare-status').textContent.includes('手动预翻译')));
-    assert.equal(await worker.evaluate(()=>videoCalls.flat().includes('A cue beyond the normal prefetch window.')),false);
+    assert.equal(await worker.evaluate(()=>videoCalls.flat().includes('A cue beyond the prefetch window & the current playback.')),false);
     await click('.prepare');
+    await click('.gear');
+    await page.waitForFunction(()=>{
+      const indicator=videoRoot().querySelector('.prepare-indicator');
+      return !indicator.hidden&&indicator.textContent.includes('正在预翻译');
+    },{timeout:2500});
     await page.waitForFunction(()=>videoRoot().querySelector('.prepare-status').textContent.includes('已预翻译 5 条'));
-    assert.ok(await worker.evaluate(()=>['Please enjoy the video. An overlapping subtitle.','A cue beyond the normal prefetch window.'].every(text=>videoCalls.flat().includes(text))));
+    await page.waitForFunction(()=>videoRoot().querySelector('.prepare-indicator').textContent.includes('可以播放'));
+    await openSettings();
+    assert.ok(await worker.evaluate(()=>['Please enjoy the video. An overlapping subtitle.','A cue beyond the prefetch window & the current playback.'].every(text=>videoCalls.flat().includes(text))));
+    const beforeExport=await worker.evaluate(()=>videoCalls.length);
+    const srt=await downloadSubtitle('srt','bilingual');
+    assert.ok(srt.startsWith('\ufeff1\r\n00:00:00,000 --> 00:00:00,620\r\nHello everyone.\r\n译文：Hello everyone.'));
+    assert.ok(srt.includes('00:00:00,830 --> 00:00:01,120\r\nPlease enjoy the video. An overlapping subtitle.\r\n译文：Please enjoy the video. An overlapping subtitle.'));
+    await select('source');
+    const vtt=await downloadSubtitle('vtt','source');
+    assert.ok(vtt.startsWith('WEBVTT\n\n00:00:00.000 --> 00:00:00.620\nHello everyone.'));
+    assert.ok(vtt.includes('00:01:10.000 --> 00:01:15.000\nA cue beyond the prefetch window &amp; the current playback.'));
+    assert.ok(!vtt.includes('译文：'));
+    await select('translated');
+    const translated=await downloadSubtitle('srt','translated');
+    assert.ok(translated.startsWith('\ufeff1\r\n00:00:00,000 --> 00:00:00,620\r\n译文：Hello everyone.'));
+    assert.equal(await worker.evaluate(()=>videoCalls.length),beforeExport,'exporting any mode reuses prepared translations');
+    await select('bilingual');
     await page.screenshot({path:join(out,'video-settings.png')});
     const preparedCount=await worker.evaluate(()=>videoCalls.length);
     await click('.gear');
@@ -363,10 +394,15 @@ try{
     await page.$eval('video',(video,time)=>video.currentTime=time,firstClipStart+(longResult.segment.start+longResult.segment.end)/2);
     await page.waitForFunction(()=>/hello|everyone/i.test(videoRoot().querySelector('.caption').textContent));
     await page.screenshot({path:join(out,'video-one-hour.png')});
+    const hourVtt=await downloadSubtitle('vtt','bilingual');
+    assert.match(hourVtt,/00:59:\d{2}\.\d{3} --> 00:59:\d{2}\.\d{3}\n[^\n]*(?:Hello|everyone)/i);
     console.log('PASS one-hour media skips silence and preserves subtitles near the one-hour mark');
   }
   assert.deepEqual(errors,[]);console.log('PASS no script errors; screenshots: '+out);
 }catch(error){
   if(page&&!page.isClosed())console.log(await page.evaluate(()=>({videoTime:document.querySelector('video')?.currentTime,duration:document.querySelector('video')?.duration,paused:document.querySelector('video')?.paused,status:videoRoot().querySelector('.status').textContent,preparation:videoRoot().querySelector('.prepare-status').textContent,caption:videoRoot().querySelector('.caption').textContent})));
   throw error;
-}finally{key='';await browser?.close();await new Promise(done=>server.close(done));}
+}finally{
+  key='';await browser?.close();await new Promise(done=>server.close(done));
+  if(downloads) try{rmdirSync(downloads);}catch{}
+}
