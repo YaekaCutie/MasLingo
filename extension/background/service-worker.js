@@ -407,6 +407,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
           return;
         }
+        if (provider.chat && globalThis.MAS_providers.glossaries.some(glossary => glossary.id === message.glossary)) {
+          cfg.translationGlossary = message.glossary;
+        }
         const texts = (message.texts || [])
           .map((text) => String(text ?? ""))
           .filter((text) => text.trim());

@@ -1,40 +1,150 @@
 (() => {
   const $ = id => document.getElementById(id);
   const registry = globalThis.MAS_providers;
+  const fileInput = $("file");
+  const providerSelect = $("provider");
   const sourceSelect = $("source");
   const targetSelect = $("target");
-  const fileInput = $("file");
+  const glossarySelect = $("glossary");
   const progress = $("progress");
-  const translateButton = $("translate");
-  const maxSize = 15 * 1024 * 1024;
   const formats = new Set(fileInput.accept.split(","));
   const legacy = new Set([".doc", ".xls", ".ppt", ".rtf"]);
-  let controller = null;
-  let cached = null;
+  const maxSize = 15 * 1024 * 1024;
+  const pageSize = 5;
+  let config = null;
+  let settingsVersion = 0;
+  let file = null;
+  let active = null;
+  let job = null;
+  let previewPage = 0;
 
-  sourceSelect.append(new Option(registry.autoSource), ...registry.languages.map(language => new Option(language.name)));
-  targetSelect.append(...registry.languages.map(language => new Option(language.name)));
-  const suffix = file => /\.[^.]+$/.exec(file?.name || "")?.[0].toLowerCase() || "";
+  // The global settings hold one provider's credentials. Quick choices here
+  // are limited to services that do not need those credentials.
+  providerSelect.append(new Option("跟随扩展设置", ""), ...["google-free", "bing-free", "mymemory"]
+    .map(id => registry.byId(id)).filter(Boolean).map(provider => new Option(provider.label, provider.id)));
+  const languageOptions = () => registry.languages.map(language => new Option(language.name));
+  sourceSelect.append(new Option(registry.autoSource), ...languageOptions());
+  targetSelect.append(new Option("跟随全局", ""), ...languageOptions());
+  glossarySelect.append(new Option("跟随扩展设置", ""),
+    ...registry.glossaries.map(glossary => new Option(glossary.label, glossary.id)));
+  const suffix = selected => /\.[^.]+$/.exec(selected?.name || "")?.[0].toLowerCase() || "";
+  const selectedProvider = () => registry.byId(providerSelect.value || config?.provider);
+  const selectedTarget = () => targetSelect.value || config?.target || "简体中文";
+  const complete = () => Boolean(job?.unique.length && job.translations.size === job.unique.length);
 
-  async function settings() {
-    const cfg = await chrome.storage.local.get(["translationProvider", "translationMode", "targetLanguage"]);
-    const base = (await globalThis.MAS_backendCandidates())[0];
-    const url = new URL(base);
-    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("后端地址无效");
-    const provider = registry.byId(registry.resolveProviderId(cfg));
-    if (!provider) throw new Error("请先在扩展设置中选择翻译来源");
-    $("route").textContent = `文档交由 ${url.origin} 处理，待译文字发送给 ${provider.label}。`;
-    return { base, provider, defaultTarget: cfg.targetLanguage || "简体中文" };
+  function status(message, error = false, id = "status") {
+    $(id).textContent = message;
+    $(id).toggleAttribute("data-error", error);
   }
 
-  function status(message, error = false) {
-    $("status").textContent = message;
-    $("status").toggleAttribute("data-error", error);
+  function syncControls() {
+    const provider = selectedProvider();
+    const usable = provider && provider.id !== "none";
+    const ai = registry.isChatProvider(provider);
+    $("fields").disabled = Boolean(active);
+    $("cancel").hidden = !active;
+    $("translate").disabled = Boolean(active || !file || !config || !usable);
+    $("translate").textContent = complete() ? "重新翻译" : job?.translations.size ? "继续翻译" : "开始翻译";
+    $("swap").disabled = sourceSelect.value === registry.autoSource || !registry.languageByName(selectedTarget());
+    glossarySelect.disabled = !ai;
+    $("glossary-note").hidden = ai;
+    for (const id of ["download-bilingual", "download-translated", "copy"]) $(id).disabled = Boolean(active || !complete());
+    $("route").textContent = config ? (usable
+      ? `文件由 ${config.origin} 处理，待译文字发送给 ${provider.label}。`
+      : "请选择翻译来源，或前往扩展设置配置服务。") : "";
   }
 
-  async function requestDocument(base, path, file, signal, fields = {}) {
+  async function refreshSettings() {
+    const version = ++settingsVersion;
+    try {
+      const [cfg, backends] = await Promise.all([
+        chrome.storage.local.get(["translationProvider", "translationMode", "translationEndpoint", "targetLanguage", "translationGlossary"]),
+        globalThis.MAS_backendCandidates(),
+      ]);
+      if (version !== settingsVersion) return;
+      const url = new URL(backends[0]);
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("后端地址无效");
+      config = {
+        base: backends[0], origin: url.origin, provider: registry.resolveProviderId(cfg),
+        target: cfg.targetLanguage || "简体中文", glossary: cfg.translationGlossary || "general",
+      };
+      providerSelect.options[0].textContent = `跟随扩展设置（${registry.byId(config.provider)?.label || "未配置"}）`;
+      targetSelect.options[0].textContent = `跟随全局（${config.target}）`;
+      glossarySelect.options[0].textContent = `跟随扩展设置（${registry.glossaryById(config.glossary)?.label || "通用"}）`;
+    } catch (error) {
+      if (version !== settingsVersion) return;
+      config = null;
+      status(error.message, true);
+    }
+    syncControls();
+  }
+
+  function previewCell(label, value) {
+    const cell = document.createElement("div");
+    const heading = document.createElement("span");
+    heading.textContent = label;
+    const text = document.createElement("p");
+    text.textContent = value;
+    cell.append(heading, text);
+    return cell;
+  }
+
+  function renderPreview() {
+    const texts = job?.texts || [];
+    const list = $("preview-list");
+    const pages = Math.ceil(texts.length / pageSize);
+    const start = previewPage * pageSize;
+    list.replaceChildren();
+    for (const [index, text] of texts.slice(start, start + pageSize).entries()) {
+      const row = document.createElement("li");
+      row.className = "preview-row";
+      row.append(previewCell(`原文 ${start + index + 1}`, text),
+        previewCell("译文", job.translations.get(text) || "待翻译"));
+      list.append(row);
+    }
+    list.hidden = !texts.length;
+    $("preview-empty").hidden = Boolean(texts.length);
+    $("pager").hidden = pages < 2;
+    $("previous").disabled = previewPage === 0;
+    $("next").disabled = previewPage + 1 >= pages;
+    $("page-number").textContent = pages ? `${previewPage + 1} / ${pages}` : "";
+  }
+
+  function resetResults() {
+    job = null;
+    previewPage = 0;
+    progress.hidden = true;
+    status("", false, "result-status");
+    renderPreview();
+    syncControls();
+  }
+
+  function selectFile(selected) {
+    if (active) return;
+    const extension = suffix(selected);
+    if (selected && (!formats.has(extension) || !selected.size || selected.size > maxSize)) {
+      status("请选择格式列表中 15 MB 以内的非空文件。", true);
+      return;
+    }
+    file = selected;
+    $("file-name").textContent = file?.name || "拖入文档或选择文件";
+    $("file-meta").textContent = file
+      ? `${extension.slice(1).toUpperCase()} · ${Math.ceil(file.size / 1024).toLocaleString()} KB`
+      : "一次一个文件，最大 15 MB";
+    $("choose").textContent = file ? "更换文件" : "选择文件";
+    $("clear").hidden = !file;
+    const note = $("format-note");
+    note.textContent = extension === ".pdf" ? "双语 PDF 在原页后附译文页，纯译文 PDF 会重排文字。扫描页需启用 OCR。" :
+      legacy.has(extension) ? "旧版格式需要后端安装 LibreOffice。转换可能改变分页或排版。" :
+      extension ? "按原格式导出。译文长度变化可能影响换行或版面。" : "";
+    note.hidden = !note.textContent;
+    resetResults();
+    status(file ? "确认翻译设置后点击「开始翻译」。" : "请选择要翻译的文件。");
+  }
+
+  async function requestDocument(base, path, selected, signal, fields = {}) {
     const body = new FormData();
-    body.append("file", file);
+    body.append("file", selected);
     for (const [key, value] of Object.entries(fields)) body.append(key, value);
     let response;
     try {
@@ -53,34 +163,37 @@
     return response;
   }
 
-  function download(blob, file, mode) {
+  function download(blob, selected, mode) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    const suffix = mode === "bilingual" ? "双语" : "译文";
-    const extension = /\.[^.]+$/.exec(file.name)[0];
-    link.download = `${file.name.slice(0, -extension.length)}-${suffix}${extension}`;
+    const label = mode === "bilingual" ? "双语" : "译文";
+    const extension = /\.[^.]+$/.exec(selected.name)[0];
+    link.download = `${selected.name.slice(0, -extension.length)}-${label}${extension}`;
     document.body.append(link);
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
-  async function run(file, signal) {
-    const { base, provider } = await settings();
+  async function translate(signal) {
+    const provider = selectedProvider();
     const source = sourceSelect.value;
-    const target = targetSelect.value;
-    const mode = $("mode").value;
-    const key = JSON.stringify([base, provider.id, source, target]);
-    if (cached?.file !== file || cached.key !== key) {
+    const target = selectedTarget();
+    const glossary = registry.isChatProvider(provider) ? glossarySelect.value || config.glossary : "";
+    const base = config.base;
+    if (!job) {
       status("正在读取文件…");
       const response = await requestDocument(base, "text", file, signal);
       const { texts } = await response.json();
-      if (!Array.isArray(texts) || !texts.length) throw new Error("没有找到可翻译的文字");
-      cached = { file, key, texts, translations: new Map() };
+      signal.throwIfAborted();
+      if (!Array.isArray(texts) || !texts.length || texts.some(text => typeof text !== "string" || !text.trim())) {
+        throw new Error("没有找到可翻译的文字");
+      }
+      job = { file, base, texts, unique: [...new Set(texts)], translations: new Map() };
+      renderPreview();
     }
-    const { texts, translations } = cached;
-    const unique = [...new Set(texts)];
+    const { unique, translations } = job;
     const pending = unique.filter(text => !translations.has(text));
     const batchSize = provider.perRequest ? 1 : 2;
     progress.hidden = false;
@@ -91,72 +204,120 @@
       status(`正在翻译 ${translations.size} / ${unique.length}…`);
       const batch = pending.slice(i, i + batchSize);
       const result = await chrome.runtime.sendMessage({
-        type: "TRANSLATE_TEXT_BLOCKS", texts: batch, source, target, provider: provider.id,
+        type: "TRANSLATE_TEXT_BLOCKS", texts: batch, source, target, provider: provider.id, glossary,
       });
       signal.throwIfAborted();
       if (!result?.ok) throw new Error(result?.reason || "翻译请求失败");
       const output = result.translations;
       if (!Array.isArray(output) || output.length !== batch.length || output.some(text => typeof text !== "string" || !text.trim())) {
-        throw new Error("翻译服务返回的内容不完整，可重试剩余片段");
+        throw new Error("翻译服务返回的内容不完整，可继续翻译剩余片段");
       }
       batch.forEach((text, index) => translations.set(text, output[index]));
       progress.value = translations.size;
+      renderPreview();
     }
-    status("正在生成导出文件…");
-    const response = await requestDocument(base, "export", file, signal, {
+    status(`翻译完成，共 ${job.texts.length} 个片段。请选择下载方式。`);
+  }
+
+  async function exportDocument(mode, signal) {
+    const { base, file: selected, texts, translations } = job;
+    status("正在生成导出文件…", false, "result-status");
+    const response = await requestDocument(base, "export", selected, signal, {
       texts: JSON.stringify(texts.map(text => translations.get(text))), mode,
     });
     const blob = await response.blob();
     signal.throwIfAborted();
     if (!blob.size || blob.type.includes("application/json")) throw new Error("后端未返回有效的文件");
-    download(blob, file, mode);
-    status("翻译完成，已生成下载文件。");
+    download(blob, selected, mode);
+    status("已生成下载文件。", false, "result-status");
   }
 
-  $("form").onsubmit = async event => {
-    event.preventDefault();
-    if (controller) return;
-    const file = fileInput.files[0];
-    if (!file || !formats.has(suffix(file)) || !file.size || file.size > maxSize) {
-      status("请选择格式列表中 15 MB 以内的文件", true);
-      return;
-    }
-    controller = new AbortController();
-    $("fields").disabled = true;
-    translateButton.disabled = true;
-    $("cancel").hidden = false;
-    progress.hidden = true;
-    try { await run(file, controller.signal); }
+  async function operate(action, destination) {
+    if (active) return;
+    active = new AbortController();
+    syncControls();
+    try { await action(active.signal); }
     catch (error) {
-      const { aborted, reason } = controller.signal;
-      status(aborted ? (typeof reason === "string" ? reason : "已取消。再次开始可复用已完成的译文。") : error.message, !aborted);
+      const { aborted, reason } = active.signal;
+      status(aborted ? (typeof reason === "string" ? reason : "已取消。") : error.message, !aborted, destination);
+    } finally {
+      active = null;
+      syncControls();
     }
-    finally {
-      controller = null;
-      $("fields").disabled = false;
-      translateButton.disabled = false;
-      $("cancel").hidden = true;
-    }
+  }
+
+  $("form").onsubmit = event => {
+    event.preventDefault();
+    if ($("translate").disabled) return;
+    if (complete()) resetTranslations();
+    operate(translate, "status");
   };
-  $("cancel").onclick = () => controller?.abort();
-  fileInput.onchange = () => {
-    cached = null;
+  $("cancel").onclick = () => active?.abort(job?.translations.size && !complete()
+    ? "已取消。可继续翻译剩余片段。" : "已取消。");
+  for (const mode of ["bilingual", "translated"]) {
+    $(`download-${mode}`).onclick = () => {
+      if (complete()) operate(signal => exportDocument(mode, signal), "result-status");
+    };
+  }
+  $("copy").onclick = async () => {
+    if (!complete()) return;
+    try {
+      await navigator.clipboard.writeText(job.texts.map(text => job.translations.get(text)).join("\n\n"));
+      status("已复制纯译文。", false, "result-status");
+    } catch { status("无法写入剪贴板，可从预览中选择文字。", true, "result-status"); }
+  };
+  $("previous").onclick = () => { previewPage--; renderPreview(); };
+  $("next").onclick = () => { previewPage++; renderPreview(); };
+
+  function resetTranslations() {
+    if (!job) return;
+    job.translations.clear();
     progress.hidden = true;
-    const extension = suffix(fileInput.files[0]);
-    const note = $("format-note");
-    note.textContent = extension === ".pdf" ? "双语 PDF 在原页后附译文页，纯译文 PDF 会重排文字。扫描页需启用 OCR。" :
-      legacy.has(extension) ? "旧版格式需要后端安装 LibreOffice。转换可能改变分页或排版。" :
-      extension ? "按原格式导出。译文长度变化可能影响换行或版面。" : "";
-    note.hidden = !note.textContent;
-    status("请选择输出方式后开始翻译。");
+    status("", false, "result-status");
+    renderPreview();
+  }
+
+  function optionsChanged() {
+    if (job) status("翻译设置已更新，可重新开始翻译。");
+    resetTranslations();
+    syncControls();
+  }
+  for (const control of [providerSelect, sourceSelect, targetSelect, glossarySelect]) control.onchange = optionsChanged;
+  $("swap").onclick = () => {
+    const source = sourceSelect.value;
+    sourceSelect.value = selectedTarget();
+    targetSelect.value = source;
+    optionsChanged();
   };
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !Object.keys(changes).some(key => key.startsWith("translation") || key === "backendUrl")) return;
-    cached = null;
-    controller?.abort("翻译设置已变更，请重新开始。");
+
+  $("choose").onclick = () => fileInput.click();
+  $("clear").onclick = () => selectFile(null);
+  fileInput.onchange = () => {
+    if (fileInput.files[0]) selectFile(fileInput.files[0]);
+    fileInput.value = "";
+  };
+  document.addEventListener("dragover", event => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    $("drop").toggleAttribute("data-dragging", !active && $("drop").contains(event.target));
   });
-  settings().then(({ defaultTarget }) => {
-    if (![...targetSelect.options].some(option => option.value === defaultTarget)) targetSelect.append(new Option(defaultTarget));
-    targetSelect.value = defaultTarget;
-  }).catch(error => status(error.message, true)).finally(() => { translateButton.disabled = false; });
+  document.addEventListener("dragleave", event => {
+    if (!$("drop").contains(event.relatedTarget)) $("drop").removeAttribute("data-dragging");
+  });
+  document.addEventListener("drop", event => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    $("drop").removeAttribute("data-dragging");
+    if (active || !$("drop").contains(event.target)) return;
+    if (event.dataTransfer.files.length === 1) selectFile(event.dataTransfer.files[0]);
+    else status("请一次拖入一个文件。", true);
+  });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !Object.keys(changes).some(key => key.startsWith("translation") || key === "backendUrl" || key === "targetLanguage")) return;
+    active?.abort("扩展翻译设置已变更，请重新开始。");
+    config = null;
+    resetResults();
+    refreshSettings();
+  });
+  refreshSettings();
 })();

@@ -12,29 +12,63 @@
     <header class="brand">
       <span class="brand-mark" aria-hidden="true">M</span>
       <div><h1>文档翻译</h1><p>翻译办公文档、PDF、电子书和文本文件</p></div>
+      <a href="../options/options.html" target="_blank" rel="noopener">扩展设置</a>
     </header>
-    <form id="form">
-      <fieldset id="fields">
-        <label class="file">选择文件
-          <input id="file" type="file" accept=".docx,.doc,.xlsx,.xls,.pptx,.ppt,.odt,.ods,.odp,.rtf,.pdf,.epub,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.srt,.vtt" required>
-          <span class="hint">单文件最大 15 MB。支持 Word、Excel、PowerPoint、OpenDocument、PDF、EPUB、RTF、TXT、Markdown、HTML、CSV、TSV、SRT 和 WebVTT。</span>
-        </label>
-        <label>源语言<select id="source"></select></label>
-        <label>目标语言<select id="target"></select></label>
-        <label class="file">输出方式<select id="mode">
-          <option value="bilingual">双语对照</option>
-          <option value="translated">纯译文</option>
-        </select></label>
-        <p class="hint file" id="route"></p>
-        <p class="hint file" id="format-note" hidden></p>
-      </fieldset>
-      <div class="actions">
-        <button class="primary" id="translate" type="submit" disabled>翻译并下载</button>
-        <button id="cancel" type="button" hidden>取消</button>
-      </div>
-      <progress id="progress" aria-label="文档翻译进度" hidden></progress>
-      <p id="status" role="status">请选择要翻译的文件。</p>
-    </form>
+    <div class="workspace">
+      <form id="form" class="panel">
+        <fieldset id="fields">
+          <legend>文件与翻译设置</legend>
+          <div id="drop" class="drop">
+            <input id="file" type="file" accept=".docx,.doc,.xlsx,.xls,.pptx,.ppt,.odt,.ods,.odp,.rtf,.pdf,.epub,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.srt,.vtt" hidden>
+            <div class="file-info">
+              <strong id="file-name">拖入文档或选择文件</strong>
+              <p class="hint" id="file-meta">一次一个文件，最大 15 MB</p>
+            </div>
+            <div class="actions">
+              <button id="choose" type="button">选择文件</button>
+              <button id="clear" type="button" class="link" hidden>移除文件</button>
+            </div>
+          </div>
+          <label class="full">翻译来源<select id="provider"></select></label>
+          <div class="languages">
+            <label>源语言<select id="source"></select></label>
+            <button id="swap" type="button" aria-label="互换源语言和目标语言" title="选择具体源语言后可互换" disabled>⇄</button>
+            <label>目标语言<select id="target"></select></label>
+          </div>
+          <label class="full">专业术语库<select id="glossary"></select></label>
+          <p class="hint full" id="glossary-note" hidden>专业术语库需要 AI 翻译来源。</p>
+          <p class="hint full" id="route"></p>
+          <p class="hint full" id="format-note" hidden></p>
+          <details class="full">
+            <summary>支持的文件格式</summary>
+            <p class="hint">Word、Excel、PowerPoint、OpenDocument、PDF、EPUB、RTF、TXT、Markdown、HTML、CSV、TSV、SRT 和 WebVTT。</p>
+          </details>
+        </fieldset>
+        <div class="actions job-actions">
+          <button class="primary" id="translate" type="submit" disabled>开始翻译</button>
+          <button id="cancel" type="button" hidden>取消</button>
+        </div>
+        <progress id="progress" aria-label="文档翻译进度" hidden></progress>
+        <p id="status" role="status">请选择要翻译的文件。</p>
+      </form>
+      <section class="panel" aria-labelledby="preview-title">
+        <h2 id="preview-title">译文预览与下载</h2>
+        <p class="hint preview-hint">按翻译片段查看原文和译文。下载文件使用所选格式的排版。</p>
+        <div class="actions">
+          <button class="primary" id="download-bilingual" type="button" disabled>下载双语</button>
+          <button id="download-translated" type="button" disabled>下载纯译文</button>
+          <button id="copy" type="button" disabled>复制译文</button>
+        </div>
+        <p id="result-status" role="status" class="hint"></p>
+        <p id="preview-empty" class="preview-empty">读取文件后，这里会显示预览。</p>
+        <ol id="preview-list" hidden></ol>
+        <div id="pager" class="pager" hidden>
+          <button id="previous" type="button">上一页</button>
+          <span id="page-number" aria-live="polite"></span>
+          <button id="next" type="button">下一页</button>
+        </div>
+      </section>
+    </div>
   </main>
   <script src="../config.js"></script>
   <script src="../translation/providers.js"></script>
