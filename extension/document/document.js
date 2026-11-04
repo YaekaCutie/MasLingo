@@ -159,12 +159,14 @@
     body.append("file", selected);
     for (const [key, value] of Object.entries(fields)) body.append(key, value);
     let response;
+    const timeout = suffix(selected) === ".pdf" ? 300000 : 120000;
     try {
       response = await fetch(`${base}/api/document/${path}`, {
-        method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(120000)]), redirect: "error",
+        method: "POST", body, signal: AbortSignal.any([signal, AbortSignal.timeout(timeout)]), redirect: "error",
       });
-    } catch {
+    } catch (error) {
       signal.throwIfAborted();
+      if (error.name === "TimeoutError") throw new Error("文档处理超时，请拆成较短的文件后重试。");
       throw new Error("无法连接文档后端，请确认服务已开启");
     }
     if (!response.ok) {
@@ -195,7 +197,7 @@
     const glossary = registry.isChatProvider(provider) ? glossarySelect.value || config.glossary : "";
     const base = config.base;
     if (!job) {
-      status("正在读取文件…");
+      status(suffix(file) === ".pdf" ? "正在读取 PDF，扫描页需要识别文字，请稍候…" : "正在读取文件…");
       const response = await requestDocument(base, "text", file, signal);
       const { texts } = await response.json();
       signal.throwIfAborted();
@@ -216,7 +218,7 @@
       status(`正在翻译 ${translations.size} / ${unique.length}…`);
       const batch = pending.slice(i, i + batchSize);
       const result = await chrome.runtime.sendMessage({
-        type: "TRANSLATE_TEXT_BLOCKS", texts: batch, source, target, provider: provider.id, glossary,
+        type: "TRANSLATE_TEXT_BLOCKS", texts: batch, source, target, provider: provider.id, glossary, translateMixed: true,
       });
       signal.throwIfAborted();
       if (!result?.ok) throw new Error(result?.reason || "翻译请求失败");

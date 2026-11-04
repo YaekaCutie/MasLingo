@@ -118,6 +118,18 @@ try {
     JSON.stringify(paragraph));
   check("段落同语言不产生请求", received.length === beforeParagraph);
 
+  const mixed = "Please complete this question.（请填写答案）";
+  const document = await popup.evaluate(({ chinese, mixed }) => chrome.runtime.sendMessage({
+    type: "TRANSLATE_TEXT_BLOCKS",
+    texts: [chinese, mixed],
+    source: "自动识别",
+    target: "简体中文",
+    translateMixed: true,
+  }), { chinese, mixed });
+  check("文档中英文混排片段送去翻译，纯中文仍跳过",
+    document?.ok && document.skipped?.[0] === true && document.skipped?.[1] === false &&
+      document.translations?.[1] === `译:${mixed}`, JSON.stringify(document));
+
   const english = "This paragraph is already written in English.";
   const beforeEnglish = received.length;
   const englishResult = await popup.evaluate((english) => chrome.runtime.sendMessage({

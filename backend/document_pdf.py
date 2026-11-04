@@ -19,6 +19,9 @@ from reportlab.pdfbase.ttfonts import TTFont, TTFError
 from reportlab.platypus import Paragraph, SimpleDocTemplate
 
 OCR_LOCK = Lock()
+MIN_TEXT_LAYER_LETTERS = 120
+SCAN_IMAGE_COVERAGE = 0.60
+MAX_SCAN_PAGES = 30
 
 
 @lru_cache(maxsize=1)
@@ -30,10 +33,29 @@ def ocr():
     return RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
 
 
-def scanned_lines(data, index):
+def has_page_scan(page, image_type, form_type):
+    left, bottom, right, top = page.get_bbox()
+    min_area = (right - left) * (top - bottom) * SCAN_IMAGE_COVERAGE
+    covers_page = False
+    for obj in page.get_objects(filter=[image_type, form_type]):
+        if obj.level == 0:
+            # Root forms include their transform. A nested image's raw bounds
+            # can be much larger than the area it actually covers on the page.
+            bounds = getattr(obj, "get_bounds", None) or obj.get_pos
+            x0, y0, x1, y1 = bounds()
+            width = max(0, min(right, x1) - max(left, x0))
+            height = max(0, min(top, y1) - max(bottom, y0))
+            covers_page = width * height >= min_area
+        if covers_page and obj.type == image_type:
+            return True
+    return False
+
+
+def scanned_lines(data, index, *, require_page_image=False, limit_reached=False):
     import numpy as np
     import pypdfium2
     from pypdfium2 import PdfiumError
+    from pypdfium2.raw import FPDF_PAGEOBJ_FORM, FPDF_PAGEOBJ_IMAGE
 
     # PDFium and the OCR model share a slot to keep concurrent scans bounded.
     with OCR_LOCK:
@@ -44,6 +66,10 @@ def scanned_lines(data, index):
                     width, height = page.get_size()
                     if not min(width, height) or min(width, height) < 0:
                         raise HTTPException(422, "PDF 页面尺寸无效")
+                    if require_page_image and not has_page_scan(page, FPDF_PAGEOBJ_IMAGE, FPDF_PAGEOBJ_FORM):
+                        return None
+                    if limit_reached:
+                        raise HTTPException(413, f"单个 PDF 最多识别 {MAX_SCAN_PAGES} 张扫描页")
                     bitmap = page.render(scale=min(2.4, 1900 / max(width, height)))
                     try:
                         image = np.asarray(bitmap.to_pil().convert("RGB"))[:, :, ::-1].copy()
@@ -111,15 +137,13 @@ def page_style(text):
     return face, wrap
 
 
-def translated_page(lines, page_number):
+def translated_page(lines):
     output = io.BytesIO()
     text = "\n".join(lines)
     face, wrap = page_style(text)
-    heading = ParagraphStyle("title", fontName="Helvetica-Bold", fontSize=13, leading=20, spaceAfter=14)
     body = ParagraphStyle("body", fontName=face, fontSize=11, leading=17, spaceAfter=5,
                           wordWrap=wrap, shaping=True, alignment=2 if wrap == "RTL" else 0)
-    flow = [Paragraph(f"Translation · {page_number}", heading)]
-    flow.extend(Paragraph(escape(line).replace("\n", "<br/>"), body) for line in lines if line.strip())
+    flow = [Paragraph(escape(line).replace("\n", "<br/>"), body) for line in lines if line.strip()]
     SimpleDocTemplate(output, pagesize=A4, title="MasLingo Translation").build(flow)
     return PdfReader(io.BytesIO(output.getvalue()))
 
@@ -135,21 +159,22 @@ def process_pdf(data, mapping, mode):
         scanned = 0
         for index, page in enumerate(source.pages):
             original = (page.extract_text() or "").strip()
-            if original:
-                lines = [line for line in original.splitlines() if line.strip()]
-            elif len(page.images):
-                scanned += 1
-                if scanned > 30:
-                    raise HTTPException(413, "单个 PDF 最多识别 30 张扫描页")
-                lines = scanned_lines(data, index)
-            else:
-                lines = []
+            lines = [line for line in original.splitlines() if line.strip()]
+            letters = sum(char.isalpha() for char in original)
+            if letters < MIN_TEXT_LAYER_LETTERS and len(page.images):
+                recognized = scanned_lines(data, index, require_page_image=bool(letters),
+                                           limit_reached=scanned >= MAX_SCAN_PAGES)
+                if recognized is not None:
+                    scanned += 1
+                    if recognized and (not letters or
+                                       sum(char.isalpha() for line in recognized for char in line) > letters):
+                        lines = recognized
             translated = [mapping.apply(line) for line in lines]
             if target is not None:
                 if mode == "bilingual":
                     target.add_page(page)
                 if lines:
-                    for translated_part in translated_page(translated, index + 1).pages:
+                    for translated_part in translated_page(translated).pages:
                         target.add_page(translated_part)
         if target is None:
             return None

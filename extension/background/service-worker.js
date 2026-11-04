@@ -428,6 +428,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             : (language?.zh || sourceName),
           target: globalThis.MAS_providers.targetForLanguage(provider, targetName),
           sourceLocked: Boolean(globalThis.MAS_providers.languageBase(sourceName)),
+          translateMixed: message.translateMixed === true,
         };
         const { translations, skipped } = await runTranslationDetailed(texts, cfg, overrides);
         sendResponse({ ok: true, translations, skipped });
@@ -984,9 +985,12 @@ async function runTranslationDetailed(texts, cfg, overrides = {}) {
       ? overrides.languageSample
       : text;
     const mayDetectSource = !overrides.sourceLocked || !sourceBase;
+    // An English question can include Chinese instructions or glosses.
+    const mixedDocumentLine = overrides.translateMixed && targetBase === "zh" &&
+      /\p{Script=Han}/u.test(text) && (text.match(/\b[a-z]{2,}\b/gi)?.length || 0) >= 3;
     if (targetBase && (
       sourceBase === targetBase ||
-      (mayDetectSource && (
+      (mayDetectSource && !mixedDocumentLine && (
         registry.likelySameLanguage(text, targetBase, sample) ||
         (await detectLanguageBase(sample)) === targetBase
       ))

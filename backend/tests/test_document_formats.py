@@ -118,6 +118,30 @@ class FormatTests(unittest.TestCase):
             translated = PdfReader(io.BytesIO(self.export(data, ".pdf")))
             self.assertEqual(len(translated.pages), 2)
             self.assertIn("译 Recognized words", translated.pages[1].extract_text())
+            for output in (bilingual, translated):
+                self.assertTrue(all("Translation ·" not in page.extract_text() for page in output.pages))
+
+    def test_pdf_reads_scanned_body_even_with_selectable_watermark(self):
+        stream = io.BytesIO()
+        canvas = Canvas(stream, pagesize=(300, 400))
+        image = ImageReader(Image.new("RGB", (300, 400), "white"))
+        canvas.beginForm("image")
+        canvas.drawImage(image, 0, 0)
+        canvas.endForm()
+        canvas.doForm("image")
+        canvas.drawString(20, 20, "Watermark")
+        canvas.showPage()
+        canvas.scale(0.1, 0.1)
+        canvas.doForm("image")
+        canvas.drawString(200, 800, "Selectable caption")
+        canvas.save()
+
+        with patch("backend.document_pdf.ocr") as recognize:
+            recognize.return_value.return_value = ([[None, "Scanned question and answer choices", 1]], None)
+            self.assertEqual(self.text(stream.getvalue(), ".pdf"), [
+                "Scanned question and answer choices", "Selectable caption",
+            ])
+            recognize.return_value.assert_called_once()
 
     def test_pdf_with_permissions_password_can_be_translated(self):
         stream = io.BytesIO()
