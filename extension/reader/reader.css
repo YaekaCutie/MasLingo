@@ -27,6 +27,9 @@ main {
 section {
   animation: enter 0.2s ease;
 }
+.document-entry {
+  margin-bottom: 18px;
+}
 .modes {
   padding-bottom: 22px;
   border-bottom: 1px solid var(--line);

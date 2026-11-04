@@ -371,6 +371,27 @@ try {
       fail(`popup errors: ${unexpected.join(" | ")}`);
     }
 
+    const reader = await browser.newPage();
+    await reader.setViewport({ width: 320, height: 680 });
+    await reader.goto(`chrome-extension://${extensionId}/reader/reader.html`, { waitUntil: "load" });
+    const documentUrl = `chrome-extension://${extensionId}/document/document.html`;
+    for (const [label, page] of [["popup", popup], ["reader", reader]]) {
+      await page.bringToFront();
+      const visible = await page.$eval("#openDocument", (entry) => {
+        const rect = entry.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= innerHeight;
+      });
+      if (!visible) fail(`${label} document entry is outside the first viewport`);
+      const [target] = await Promise.all([
+        browser.waitForTarget((candidate) => candidate.url() === documentUrl, { timeout: 10000 }),
+        page.click("#openDocument"),
+      ]);
+      const documentPage = await target.page();
+      await documentPage.waitForSelector('input[type="file"]');
+      pass(`${label} document entry opens the file picker page`);
+      await documentPage.close();
+    }
+
     const optionsErrors = [];
     const options = await browser.newPage();
     options.on("pageerror", (error) => optionsErrors.push(String(error)));

@@ -16,6 +16,9 @@ h1 {
 .wide {
   width: 100%;
 }
+.document-entry {
+  margin-top: 8px;
+}
 .intro {
   margin: 9px 0 22px;
 }

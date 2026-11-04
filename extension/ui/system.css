@@ -72,6 +72,22 @@ a {
   color: var(--blue);
   text-underline-offset: 3px;
 }
+a.action-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #cbd8f2;
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: var(--soft);
+  font-weight: 600;
+  text-decoration: none;
+}
+a.action-link:hover {
+  background: #e7efff;
+  border-color: #a9bdeb;
+}
 button.link {
   border: 0;
   color: var(--blue);
