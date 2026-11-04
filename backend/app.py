@@ -42,6 +42,7 @@ from .ocr.manga_ocr_engine import (
 from .translation.local_translator import translate_texts
 from .translation.openai_compatible import translate_texts as translate_openai_compatible
 from .speech import router as speech_router
+from .document import router as document_router
 
 logger = logging.getLogger(__name__)
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
@@ -96,6 +97,7 @@ async def lifespan(_app):
 
 app = FastAPI(title="MangaOCR Backend", lifespan=lifespan)
 app.include_router(speech_router)
+app.include_router(document_router)
 
 _ocr_slots = asyncio.Semaphore(OCR_CONCURRENCY)
 _ocr_busy = 0

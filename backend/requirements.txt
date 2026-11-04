@@ -6,3 +6,4 @@ numpy
 manga-ocr
 onnxruntime
 opencv-python-headless
+lxml

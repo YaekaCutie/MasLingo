@@ -1,0 +1,26 @@
+body { display: flow-root; min-height: 100vh; background: var(--soft); }
+main { max-width: 670px; margin: 48px auto; padding: 0 18px; }
+.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.brand-mark {
+  display: grid; place-items: center; width: 42px; height: 42px;
+  border-radius: 10px; color: white; background: var(--blue); font-weight: 700;
+}
+h1 { font-size: 24px; }
+header p, .hint { color: var(--muted); }
+form { background: white; border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+fieldset {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px; margin: 0; padding: 0; border: 0; min-inline-size: 0;
+}
+label { display: grid; gap: 5px; }
+.file { grid-column: 1 / -1; }
+.hint, #status { overflow-wrap: anywhere; }
+.actions { display: flex; gap: 8px; margin-top: 16px; }
+progress { display: block; width: 100%; margin-top: 12px; accent-color: var(--blue); }
+#status { margin-top: 10px; }
+#status[data-error] { color: #a52727; }
+[hidden] { display: none !important; }
+@media (max-width: 480px) {
+  main { margin-top: 24px; }
+  fieldset { grid-template-columns: minmax(0, 1fr); }
+}

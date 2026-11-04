@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MasLingo 文档翻译</title>
+  <link rel="stylesheet" href="../ui/system.css">
+  <link rel="stylesheet" href="document.css">
+</head>
+<body>
+  <main>
+    <header class="brand">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <div><h1>文档翻译</h1><p>翻译 Word 文档并保留原有样式</p></div>
+    </header>
+    <form id="form">
+      <fieldset id="fields">
+        <label class="file">Word 文档
+          <input id="file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required>
+          <span class="hint">支持 .docx，最大 15 MB</span>
+        </label>
+        <label>源语言<select id="source"></select></label>
+        <label>目标语言<select id="target"></select></label>
+        <label class="file">输出方式<select id="mode">
+          <option value="bilingual">双语对照</option>
+          <option value="translated">纯译文</option>
+        </select></label>
+        <p class="hint file" id="route"></p>
+      </fieldset>
+      <div class="actions">
+        <button class="primary" id="translate" type="submit" disabled>翻译并下载</button>
+        <button id="cancel" type="button" hidden>取消</button>
+      </div>
+      <progress id="progress" aria-label="文档翻译进度" hidden></progress>
+      <p id="status" role="status">请选择要翻译的 Word 文档。</p>
+    </form>
+  </main>
+  <script src="../config.js"></script>
+  <script src="../translation/providers.js"></script>
+  <script src="document.js"></script>
+</body>
+</html>
