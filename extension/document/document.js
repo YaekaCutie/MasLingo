@@ -81,7 +81,7 @@
       });
       if (override && !issues.get(override)) providerSelect.value = override;
       providerSelect.options[0].textContent = `跟随扩展设置（${registry.byId(config.provider)?.label || "未配置"}）`;
-      targetSelect.options[0].textContent = `跟随设置（${config.target}）`;
+      targetSelect.options[0].textContent = `跟随（${config.target}）`;
       glossarySelect.options[0].textContent = `跟随扩展设置（${registry.glossaryById(config.glossary)?.label || "通用"}）`;
     } catch (error) {
       if (version !== settingsVersion) return;
