@@ -13,7 +13,7 @@
   const MAX_AUDIO_MS = 5000;
   const AUDIO_PAUSE_MS = 220;
   const MIN_SPEECH_RMS = 0.006;
-  const preferenceKeys = ["videoDisplayMode", "translationProvider", "translationMode"];
+  const preferenceKeys = ["videoDisplayMode", "videoAutoPrepare", "translationProvider", "translationMode"];
   const plainCue = cue => clean(cue.getCueAsHTML ? cue.getCueAsHTML().textContent : cue.text);
   const domSelectors = ".ytp-caption-window-container, .bpx-player-subtitle-panel, .bilibili-player-video-subtitle";
   const playerSelector = "media-controller, #movie_player, .html5-video-player, .bpx-player-container, .bilibili-player, .video-js, .jwplayer, .plyr, .shaka-video-container, .mejs__container";
@@ -50,40 +50,55 @@
     host.style.cssText = "position:relative;display:none;box-sizing:border-box;clear:both;margin:8px 0;max-width:100%;pointer-events:none";
     const root = host.attachShadow({ mode: "open" });
     root.innerHTML = `<style>
-      :host{font:12px/1.5 system-ui;color:#202124}*{box-sizing:border-box}
-      .float{width:max-content;max-width:100%}
-      .surface,.settings{background:#fff;border:1px solid #dce3ee;border-radius:10px;box-shadow:0 2px 8px #1d35541c;pointer-events:auto}
-      .surface{display:flex;align-items:flex-start;gap:6px;width:max-content;max-width:100%;padding:4px;cursor:grab;touch-action:none;user-select:none}
+      :host{font:13px/1.5 system-ui;color:#202124}*{box-sizing:border-box}
+      .float{position:relative;container-type:inline-size}
+      .surface,.settings{background:#f8f8f8;pointer-events:auto}
+      .surface{position:relative;display:grid;place-items:center;min-height:80px;padding:13px 76px;border:1px solid #858585;border-radius:9px;box-shadow:0 8px 24px #0002;cursor:grab;touch-action:none;user-select:none}
       .surface:active,.gear:active{cursor:grabbing}
-      .gear{display:grid;place-items:center;flex:none;width:32px;height:32px;padding:0;cursor:grab}
-      .gear[aria-expanded=true]{color:#285de5;background:#edf3ff;border-color:#c6d6fa}
-      .settings{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:360px;max-width:100%;max-height:50vh;overflow:auto;margin-top:5px;padding:8px}
+      .actions{position:absolute;top:7px;right:8px;display:flex;gap:5px}
+      .actions button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;background:transparent;color:#383838}
+      .actions button:hover,.gear[aria-expanded=true]{background:#e8e8e8}
+      .gear{cursor:grab}
+      .settings{display:flex;align-items:center;flex-wrap:wrap;gap:7px;width:min(350px,100%);max-height:min(330px,var(--menu-space,50vh));overflow:auto;margin:6px 0 0 auto;padding:10px;border:1px solid #ddd;border-radius:6px;box-shadow:0 5px 18px #0002}
+      .floating .settings{position:absolute;z-index:1;right:0;top:100%}
+      .floating[data-menu-above] .settings{top:auto;bottom:calc(100% + 4px);margin-top:0}
+      .auto-option{display:flex;align-items:center;gap:5px;min-height:27px;cursor:pointer}
+      .auto-option input{margin:0;accent-color:#285de5}
       button,select{font:inherit;color:inherit;background:#f7f7f8;border:1px solid #ddd;border-radius:6px;padding:3px 6px;min-height:27px;cursor:pointer;max-width:100%}
       button[aria-pressed=true]{background:#285de5;color:#fff}button:disabled{opacity:.5;cursor:default}
-      .status,.prepare-status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:11px}
+      .status,.prepare-status{flex-basis:100%;color:#62656b;overflow-wrap:anywhere;font-size:12px}
       .status:empty,.prepare-status:empty{display:none}
       [hidden]{display:none!important}
-      button:focus-visible,select:focus-visible{outline:2px solid #285de5;outline-offset:2px}
+      button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #285de5;outline-offset:1px}
       button{transition:background .16s}button:hover{background:#f3f6fc}button[aria-pressed=true]:hover{background:#194bc8}
-      .caption{min-width:0;text-align:left;white-space:pre-line;overflow-wrap:anywhere;font:14px/1.65 system-ui;color:#18212f;padding:4px 6px}
+      .caption,.idle{max-width:100%;text-align:center;white-space:pre-line;overflow-wrap:anywhere;font:14px/1.6 system-ui}
+      @container (max-width:440px){.surface{padding:34px 12px 12px}.actions{top:4px;right:5px}}
       @media(prefers-reduced-motion:reduce){button{transition:none}}
       .caption:empty{display:none}
     </style><div class="float"><div class="surface">
       <div class="caption" aria-live="off"></div>
+      <span class="idle">字幕已就绪，可在设置中开启</span>
+      <div class="actions">
       <button class="gear" type="button" aria-label="字幕设置" aria-expanded="false" aria-controls="settings" title="字幕设置，可拖动浮窗">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
           <path d="m10 3-.5 2.3-1.7 1L5.5 5.6l-2 3.4 1.7 1.6v2.1L3.5 14l2 3.4 2.3-.7 1.7 1L10 20h4l.5-2.3 1.7-1 2.3.7 2-3.4-1.7-1.3v-2.1L20.5 9l-2-3.4-2.3.7-1.7-1L14 3z"/>
           <circle cx="12" cy="11.5" r="3"/>
         </svg>
       </button>
-    </div><div class="settings" id="settings" aria-label="字幕设置" hidden><button class="start" aria-pressed="false">翻译字幕</button>
+      <button class="close" type="button" aria-label="关闭字幕浮窗" title="关闭字幕浮窗">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+      </button>
+      </div>
+    </div><div class="settings" id="settings" aria-label="字幕设置" hidden>
+      <button class="start" aria-pressed="false">翻译字幕</button>
       <button class="speech" aria-pressed="false" title="共享当前标签页声音，音频发送给设置中的后端；仅文字发给翻译来源">无字幕识别</button>
       <select class="mode" aria-label="字幕显示模式"><option value="bilingual">双语对照</option><option value="translated">纯译文</option><option value="source">纯原文</option></select>
       <select class="track" aria-label="字幕轨"><option value="auto">自动选择字幕</option></select>
       <button class="prepare" aria-describedby="prepare-status">预翻译字幕轨</button>
-      <button class="dock" hidden>移回视频下方</button>
+      <label class="auto-option"><input class="auto-prepare" type="checkbox" checked>自动预翻译</label>
       <span class="prepare-status" id="prepare-status" role="status"></span>
-      <span class="status" role="status"></span></div></div>`;
+      <span class="status" role="status"></span>
+    </div></div>`;
     function placeHost(rect) {
       let anchor = video.closest(playerSelector) || video;
       // The player may be inside a fixed-size flex stack that also holds its
@@ -113,26 +128,42 @@
       }
     }
     const $ = selector => root.querySelector(selector);
+    const float = $(".float");
     const surface = $(".surface");
     const gear = $(".gear");
+    const menu = $(".settings");
     let position = null;
     let drag = null;
     let suppressClick = false;
+    let dismissed = false;
 
     function placeFloating() {
-      const { width, height } = $(".float").getBoundingClientRect();
+      const { width, height } = surface.getBoundingClientRect();
+      const viewportHeight = document.documentElement.clientHeight;
       const left = Math.max(8, Math.min(position.x, document.documentElement.clientWidth - width - 8));
-      const top = Math.max(8, Math.min(position.y, document.documentElement.clientHeight - height - 8));
+      const top = Math.max(8, Math.min(position.y, viewportHeight - height - 8));
       host.style.left = `${left}px`;
       host.style.top = `${top}px`;
+      if (!menu.hidden) {
+        const above = top - 8;
+        const below = viewportHeight - top - height - 10;
+        const openAbove = above >= 190 || above > below;
+        float.toggleAttribute("data-menu-above", openAbove);
+        menu.style.setProperty("--menu-space", `${Math.max(0, openAbove ? above : below)}px`);
+      }
+    }
+    function dismissMenuOutside(event) {
+      if (!event.composedPath().includes(host)) showSettings(false);
     }
     function showSettings(open) {
-      $(".settings").hidden = !open;
+      menu.hidden = !open;
       gear.setAttribute("aria-expanded", String(open));
+      if (open) window.addEventListener("pointerdown", dismissMenuOutside, true);
+      else window.removeEventListener("pointerdown", dismissMenuOutside, true);
       if (position) placeFloating();
     }
     surface.addEventListener("pointerdown", event => {
-      if (!event.isPrimary || event.button !== 0) return;
+      if (!event.isPrimary || event.button !== 0 || event.composedPath().includes($(".close"))) return;
       const rect = surface.getBoundingClientRect();
       const capture = event.composedPath().includes(gear) ? gear : surface;
       suppressClick = false;
@@ -153,7 +184,7 @@
         host.style.zIndex = "2147483646";
         host.style.margin = "0";
         host.style.maxWidth = "calc(100vw - 16px)";
-        $(".dock").hidden = false;
+        float.classList.add("floating");
       }
       placeFloating();
     });
@@ -162,25 +193,20 @@
     }
     gear.onclick = event => {
       if (suppressClick && event.detail) return;
-      showSettings($(".settings").hidden);
+      showSettings(menu.hidden);
+    };
+    $(".close").onclick = () => {
+      dismissed = true;
+      stop();
+      showSettings(false);
+      tick();
     };
     root.addEventListener("keydown", event => {
-      if (event.key !== "Escape" || $(".settings").hidden) return;
+      if (event.key !== "Escape" || menu.hidden) return;
       event.stopPropagation();
       showSettings(false);
       gear.focus({ preventScroll: true });
     });
-    $(".dock").onclick = () => {
-      position = null;
-      host.style.position = "relative";
-      host.style.zIndex = "";
-      host.style.margin = "8px 0";
-      host.style.maxWidth = "100%";
-      host.style.left = host.style.top = "";
-      $(".dock").hidden = true;
-      tick();
-      gear.focus({ preventScroll: true });
-    };
     const state = { video, host, root, enabled: false, generation: 0, translationRevision: 0, cache: new Map(), inflight: 0, prefetching: false,
       modes: new Map(), hiddenDom: new Map(), sourceTrack: null, output: null, lastOutput: "",
       hasTracks: false, preparation: null,
@@ -246,6 +272,7 @@
       state.enabled = false;
       stopSpeech(); reset(); restoreSources();
       if (state.output) state.output.mode = "disabled";
+      $(".idle").hidden = false;
       $(".start").setAttribute("aria-pressed", "false");
       $(".start").textContent = "翻译字幕";
       status("");
@@ -254,6 +281,7 @@
     state.reset = reset;
     function start() {
       state.enabled = true;
+      $(".idle").hidden = true;
       $(".start").setAttribute("aria-pressed", "true");
       $(".start").textContent = "停止字幕";
     }
@@ -297,6 +325,23 @@
 
     const prepareButton = $(".prepare");
     const prepareStatus = $(".prepare-status");
+    const autoPrepare = $(".auto-prepare");
+    autoPrepare.checked = preferences.videoAutoPrepare !== false;
+    function setAutoPrepare(enabled) {
+      autoPrepare.checked = enabled;
+      const job = state.preparation;
+      if (enabled && job?.automatic && !job.running && !job.ready) state.preparation = null;
+      tick();
+    }
+    autoPrepare.onchange = () => {
+      const enabled = autoPrepare.checked;
+      setAutoPrepare(enabled);
+      chrome.storage.local.set({ videoAutoPrepare: enabled });
+    };
+    state.syncAutoPrepare = () => {
+      const enabled = preferences.videoAutoPrepare !== false;
+      if (autoPrepare.checked !== enabled) setAutoPrepare(enabled);
+    };
     function setPrepareStatus(message) {
       if (prepareStatus.textContent !== message) prepareStatus.textContent = message;
     }
@@ -306,6 +351,9 @@
       if (state.preparation.ready) prepareButton.disabled = true;
       setPrepareStatus(message);
     }
+    function beginPreparation(now, automatic) {
+      state.preparation = { automatic, running: true, ready: false, texts: null, deadline: now + 8000 };
+    }
     prepareButton.onclick = () => {
       if (state.preparation?.running) {
         finishPreparation("已停止预翻译，已译字幕仍可使用。");
@@ -313,21 +361,23 @@
         start();
         updateTracks();
         if (!state.sourceTrack) return;
-        state.preparation = { running: true, ready: false, texts: null, deadline: performance.now() + 8000 };
+        beginPreparation(performance.now(), false);
       }
       tick();
     };
 
     function prepareCaptions(now) {
-      const job = state.preparation;
       const available = state.hasTracks && !state.speech && mode() !== "source";
-      if (!available && job?.running) finishPreparation("预翻译已停止。");
+      if (!state.preparation && available && state.enabled && state.sourceTrack && autoPrepare.checked) beginPreparation(now, true);
+      const job = state.preparation;
+      if (job?.running && (!available || (job.automatic && !autoPrepare.checked))) finishPreparation("预翻译已停止，已译字幕仍可使用。");
       prepareButton.disabled = !available || Boolean(job?.ready);
       const label = job?.running ? "停止预翻译" : "预翻译字幕轨";
       if (prepareButton.textContent !== label) prepareButton.textContent = label;
       if (!job) {
-        setPrepareStatus(!state.hasTracks || state.speech ? "预翻译需要可读取的完整字幕轨。" :
-          mode() === "source" ? "选择双语或纯译文后可预翻译。" : "可暂停视频，等字幕预翻译完成后再播放。");
+        setPrepareStatus(!state.hasTracks || state.speech ? "预翻译需要可读取的字幕轨。" :
+          mode() === "source" ? "选择双语或纯译文后可预翻译。" :
+          autoPrepare.checked ? "开启字幕翻译后自动预翻译。" : "可手动预翻译字幕轨。");
       }
       if (!job?.running) return;
       if (!job.texts) {
@@ -361,7 +411,8 @@
         finishPreparation(`已预翻译 ${completed} 条字幕，可以播放。`);
       } else {
         setPrepareStatus(`正在预翻译 ${completed} / ${job.texts.size}…`);
-        translate(remaining);
+        // Keep a translation slot free for the current cue during playback.
+        translate(remaining, !video.paused);
       }
     }
 
@@ -526,13 +577,13 @@
     }
 
     function tick() {
-      if (!video.isConnected) { stop(); host.remove(); players.delete(video); return; }
+      if (!video.isConnected) { showSettings(false); stop(); host.remove(); players.delete(video); return; }
       const rect = video.getBoundingClientRect();
       const full = document.fullscreenElement;
-      const showPanel = rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video;
+      const showPanel = !dismissed && rect.width >= 200 && rect.height >= 100 && !full && document.pictureInPictureElement !== video;
       host.style.display = showPanel ? "block" : "none";
       if (showPanel) {
-        host.style.width = `${Math.min(640, rect.width)}px`;
+        host.style.width = `${rect.width}px`;
         if (position) placeFloating();
         else placeHost(rect);
       }
@@ -543,7 +594,12 @@
       presentCaptions(readCaptions(now), now);
     }
     state.tick = tick;
-    state.openSettings = () => { showSettings(true); gear.focus({ preventScroll: true }); };
+    state.openSettings = () => {
+      dismissed = false;
+      tick();
+      showSettings(true);
+      gear.focus({ preventScroll: true });
+    };
 
     async function transcribeNext() {
       if (!state.speech || state.speechBusy) return;
@@ -692,6 +748,7 @@
     if (changes.videoDisplayMode) {
       for (const state of players.values()) state.root.querySelector(".mode").value = globalThis.MAS_webDisplayMode(preferences.videoDisplayMode);
     }
+    if (changes.videoAutoPrepare) for (const state of players.values()) state.syncAutoPrepare();
     if (Object.keys(changes).some(key => key.startsWith("translation") || key === "targetLanguage")) for (const state of players.values()) state.reset();
   });
   const scanTimer = setInterval(scan, 2000);
@@ -707,7 +764,6 @@
       .sort((a, b) => Number(a.paused) - Number(b.paused) || b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
     if (!video) return false;
     const state = players.get(video);
-    state.tick();
     state.openSettings();
     globalThis.MAS_reader?.focus(state.host);
     return true;
