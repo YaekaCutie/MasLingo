@@ -430,7 +430,7 @@
 
   /** OpenAI /v1/chat/completions shape, which most vendors now imitate. */
   function openAiCompatible(request) {
-    const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, glossary } = request;
+    const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, glossary, providerId } = request;
     const headers = { "Content-Type": "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     return {
@@ -440,7 +440,8 @@
         headers,
         body: JSON.stringify({
           model,
-          temperature: 0,
+          ...(providerId === "deepseek" && /^deepseek-(flash|v4-pro)$/.test(model)
+            ? { thinking: { type: "disabled" } } : {}),
           messages: [{
             role: "user",
             content: prompt || chatPrompt(texts, target, strength, sourceName, glossary),
@@ -461,15 +462,14 @@
   function gemini(request) {
     const { endpoint, apiKey, model, texts, target, strength, sourceName, prompt, glossary } = request;
     return {
-      url: `${endpoint}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      url: `${endpoint}/models/${encodeURIComponent(model)}:generateContent`,
       init: {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           contents: [{
             parts: [{ text: prompt || chatPrompt(texts, target, strength, sourceName, glossary) }],
           }],
-          generationConfig: { temperature: 0 },
         }),
       },
     };
@@ -477,7 +477,7 @@
   const parseGemini = (json, count) => {
     if (json?.error) throw new Error(json.error.message || "Gemini 返回错误");
     const parts = json?.candidates?.[0]?.content?.parts || [];
-    const content = parts.map((part) => part.text || "").join("");
+    const content = parts.filter(part => !part.thought).map(part => part.text || "").join("");
     return parseChatContent(content, count);
   };
 
@@ -497,7 +497,6 @@
         body: JSON.stringify({
           model,
           max_tokens: maxTokens || 2048,
-          temperature: 0,
           messages: [{
             role: "user",
             content: prompt || chatPrompt(texts, target, strength, sourceName, glossary),
@@ -532,7 +531,7 @@
     let content;
     if (provider?.adapter === gemini) {
       const parts = json?.candidates?.[0]?.content?.parts || [];
-      content = parts.map((part) => part.text || "").join("");
+      content = parts.filter(part => !part.thought).map(part => part.text || "").join("");
     } else if (provider?.adapter === claude) {
       content = (json?.content || []).map((block) => block.text || "").join("");
     } else {
@@ -577,7 +576,8 @@
   };
 
   function deepL(request) {
-    const { endpoint, apiKey, texts, source, target } = request;
+    const { apiKey, texts, source, target } = request;
+    const endpoint = apiKey.endsWith(":fx") ? "https://api-free.deepl.com" : "https://api.deepl.com";
     const body = { text: texts, target_lang: target };
     // Omitted source means "detect it": the paragraph translator's 自动识别.
     if (source) body.source_lang = source.toUpperCase();
@@ -593,6 +593,36 @@
   const parseDeepL = (json, count) => {
     if (json?.message) throw new Error(json.message);
     return joinResults((json?.translations || []).map((item) => item.text), count);
+  };
+
+  function azureTranslator({ endpoint, apiKey, appId, texts, source, target }) {
+    const params = new URLSearchParams({ "api-version": "3.0", to: target });
+    if (source) params.set("from", source);
+    const headers = { "Content-Type": "application/json", "Ocp-Apim-Subscription-Key": apiKey };
+    if (appId) headers["Ocp-Apim-Subscription-Region"] = appId;
+    return {
+      url: `${endpoint}?${params}`,
+      init: { method: "POST", headers, body: JSON.stringify(texts.map(Text => ({ Text }))) },
+    };
+  }
+  const parseAzure = (json, count) => {
+    if (json?.error) throw new Error(json.error.message || "Microsoft Translator 返回错误");
+    return joinResults((Array.isArray(json) ? json : []).map(item => item.translations?.[0]?.text), count);
+  };
+
+  function googleCloud({ endpoint, apiKey, texts, source, target }) {
+    return {
+      url: endpoint,
+      init: {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({ q: texts, source: source || undefined, target, format: "text" }),
+      },
+    };
+  }
+  const parseGoogleCloud = (json, count) => {
+    if (json?.error) throw new Error(json.error.message || "Google Cloud Translation 返回错误");
+    return joinResults((json?.data?.translations || []).map(item => item.translatedText), count);
   };
 
   // --- hashing helpers for the signed Chinese APIs --------------------------
@@ -744,7 +774,7 @@
   async function bingSession() {
     const now = Date.now();
     if (bingTokens && now - bingTokens.fetchedAt < BING_TOKEN_TTL_MS) return bingTokens;
-    const response = await fetch(BING_TRANSLATOR_PAGE, { credentials: "omit" });
+    const response = await fetch(BING_TRANSLATOR_PAGE, { credentials: "omit", cache: "no-store" });
     if (!response.ok) throw new Error(`必应翻译页面加载失败（${response.status}）`);
     // The regional page can redirect to www.bing.com. Send the POST directly
     // to that origin so a second redirect cannot turn it into a GET.
@@ -888,7 +918,7 @@
    * was never asked for.
    */
   function backend(request) {
-    const { endpoint, texts, target } = request;
+    const { endpoint, texts, source, target } = request;
     return {
       url: `${endpoint}/api/translate-text`,
       init: {
@@ -897,6 +927,7 @@
         body: JSON.stringify({
           texts,
           mode: "free-translate",
+          source_language: source,
           target_language: target,
         }),
       },
@@ -934,15 +965,17 @@
     },
     {
       id: "bing-free",
-      label: "必应翻译（免费，无需密钥）",
+      label: "必应翻译（网页接口，免密钥）",
       group: "翻译 API",
       adapter: bingFree,
       parse: parseBing,
+      resetSession: () => { bingTokens = null; },
       perRequest: true,
       source: "ja",
       target: "zh-Hans",
       host: "https://cn.bing.com/*",
-      note: "使用微软必应翻译的公开网页接口，无需密钥。若网页接口限流或不可用，请稍后重试或切换翻译来源。",
+      extraHosts: ["https://www.bing.com/*"],
+      note: "使用必应公开网页接口。网页限流或要求验证时，可切换至 Microsoft Translator 官方 API 或其他来源。",
     },
     {
       id: "mymemory",
@@ -964,10 +997,6 @@
       adapter: deepL,
       parse: parseDeepL,
       endpoint: "https://api-free.deepl.com",
-      endpointChoices: [
-        { value: "https://api-free.deepl.com", label: "免费版（api-free）" },
-        { value: "https://api.deepl.com", label: "付费版（api）" },
-      ],
       keyRequired: true,
       keyLabel: "DeepL API Key",
       source: "JA",
@@ -975,6 +1004,37 @@
       host: "https://api-free.deepl.com/*",
       extraHosts: ["https://api.deepl.com/*"],
       keyUrl: "https://www.deepl.com/pro-api",
+      note: "填写 DeepL API 密钥。扩展按密钥类型选择 Free 或 Pro 接口。",
+    },
+    {
+      id: "azure-translator",
+      label: "Microsoft Translator（Azure）",
+      group: "翻译 API",
+      adapter: azureTranslator,
+      parse: parseAzure,
+      endpoint: "https://api.cognitive.microsofttranslator.com/translate",
+      keyRequired: true,
+      appIdOptional: true,
+      appIdLabel: "Azure 资源区域",
+      source: "ja",
+      target: "zh-Hans",
+      host: "https://api.cognitive.microsofttranslator.com/*",
+      keyUrl: "https://portal.azure.com/",
+      note: "必应背后的官方翻译 API。区域或多服务资源需要填写 Azure 区域，例如 eastasia。",
+    },
+    {
+      id: "google-cloud",
+      label: "Google Cloud Translation",
+      group: "翻译 API",
+      adapter: googleCloud,
+      parse: parseGoogleCloud,
+      endpoint: "https://translation.googleapis.com/language/translate/v2",
+      keyRequired: true,
+      source: "ja",
+      target: "zh-CN",
+      host: "https://translation.googleapis.com/*",
+      keyUrl: "https://console.cloud.google.com/apis/credentials",
+      note: "使用 Cloud Translation Basic v2。请在 Google Cloud 项目启用 Cloud Translation API，并填写该项目的 API 密钥。",
     },
     {
       id: "baidu",
@@ -1018,12 +1078,10 @@
       adapter: openAiCompatible,
       parse: parseOpenAiCompatible,
       endpoint: "https://api.openai.com/v1/chat/completions",
-      // Verified against OpenRouter's live model directory (2026-10): the 4o
-      // generation is gone from the api; current ids are the GPT-6 family
-      // (Sol / Luna / Astra, ±pro) with GPT-6.1 Sol the newest.
       model: "gpt-6.1-sol",
       models: [
         { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+        { id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
         { id: "gpt-6-luna", label: "GPT-6 Luna" },
         { id: "gpt-6-astra", label: "GPT-6 Astra" },
       ],
@@ -1107,9 +1165,9 @@
       adapter: openAiCompatible,
       parse: parseOpenAiCompatible,
       endpoint: "https://api.siliconflow.cn/v1/chat/completions",
-      // Verified against models.dev's siliconflow catalogue (2026-10).
-      model: "deepseek-ai/DeepSeek-V4-Flash",
+      model: "deepseek-ai/DeepSeek-V4.1-Flash",
       models: [
+        { id: "deepseek-ai/DeepSeek-V4.1-Flash", label: "DeepSeek V4.1 Flash" },
         { id: "deepseek-ai/DeepSeek-V4-Flash", label: "DeepSeek V4 Flash" },
         { id: "deepseek-ai/DeepSeek-V4-Pro", label: "DeepSeek V4 Pro" },
         { id: "Qwen/Qwen3.6-27B", label: "Qwen3.6 27B" },
@@ -1131,7 +1189,7 @@
       models: [
         { id: "qwen/qwen3.8-27b", label: "Qwen3.8 27B" },
         { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
-        { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
+        { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B" },
       ],
       keyRequired: true,
       host: "https://api.groq.com/*",
@@ -1238,7 +1296,7 @@
       endpoint: "",
       model: "",
       endpointEditable: true,
-      keyRequired: false,
+      keyOptional: true,
       host: null,
       note: "任何兼容 /chat/completions 的服务都可以，例如自建网关或中转服务。保存时会请求该域名的访问权限。",
     },
@@ -1258,6 +1316,66 @@
   ];
 
   const byId = (id) => PROVIDERS.find((provider) => provider.id === id) || null;
+
+  const profileFields = ["translationEndpoint", "translationModel", "translationApiKey", "translationAppId"];
+  const profileKeys = ["translationProvider", "translationMode", "translationModelProvider", ...profileFields];
+  const profileKey = id => `translationProfile:${id}`;
+  const profileOwner = cfg => byId(cfg.translationModelProvider)?.id || resolveProviderId(cfg);
+
+  function providerSettings(cfg, id) {
+    const stored = profileOwner(cfg) === id ? cfg : cfg[profileKey(id)];
+    return Object.fromEntries(profileFields.map(key => [key, stored?.[key] || ""]));
+  }
+
+  function saveProvider(id, changes = {}, { onlyIfCurrent = false } = {}) {
+    return navigator.locks.request("maslingo-translation-provider", async () => {
+      const cfg = await chrome.storage.local.get([...profileKeys, profileKey(id)]);
+      if (onlyIfCurrent && resolveProviderId(cfg) !== id) {
+        throw new Error("翻译来源已在其他窗口变更，请确认来源后再保存。");
+      }
+      const owner = profileOwner(cfg);
+      const settings = providerSettings(cfg, id);
+      for (const key of profileFields) {
+        if (key in changes) settings[key] = changes[key];
+      }
+      await chrome.storage.local.set({
+        ...(owner !== id && byId(owner)?.adapter ? { [profileKey(owner)]: providerSettings(cfg, owner) } : {}),
+        [profileKey(id)]: null,
+        ...changes, ...settings,
+        translationProvider: id,
+        translationModelProvider: id,
+        translationMode: id === "none" ? "none" : ["google-free", "backend"].includes(id)
+          ? "free-translate" : "openai-compatible",
+      });
+    });
+  }
+
+  function configurationIssue(provider, settings) {
+    if (!provider?.adapter) return "翻译已关闭";
+    if (provider.keyRequired && !settings.translationApiKey) return "缺少密钥";
+    if (provider.appIdRequired && !settings.translationAppId) return `缺少${provider.appIdLabel || "应用 ID"}`;
+    if (provider.id === "custom") {
+      if (!settings.translationEndpoint) return "缺少接口地址";
+      if (!settings.translationModel) return "缺少模型名称";
+    }
+    return "";
+  }
+
+  function appendProviderOptions(select, { include = () => true, issues } = {}) {
+    const groups = new Map();
+    for (const provider of PROVIDERS.filter(include)) {
+      if (!groups.has(provider.group)) {
+        const group = select.ownerDocument.createElement("optgroup");
+        group.label = provider.group;
+        groups.set(provider.group, group);
+        select.append(group);
+      }
+      const missing = issues?.get(provider.id);
+      const option = new Option(missing ? `${provider.label}（${missing}）` : provider.label, provider.id);
+      option.disabled = Boolean(missing);
+      groups.get(provider.group).append(option);
+    }
+  }
 
   const LANGUAGE_HINTS = [
     ["简体中文", "zh"], ["繁體中文", "zh"], ["中文", "zh"], ["chinese", "zh"],
@@ -1339,20 +1457,11 @@
   /**
    * The target language for a provider, resolved in exactly one place.
    *
-   * Chat-based providers are told the language in words ("简体中文") because
-   * that is what their prompts need, while the dedicated translation APIs take
-   * vendor language *codes* ("ZH", "zh-CN"). The stored `targetLanguage` is
-   * whatever the settings page last saved for the chat box, so a code-based
-   * provider must never inherit it: switching from an LLM source to DeepL used
-   * to send `target_lang=繁體中文` and fail every request, while the
-   * connectivity probe — which resolved the value the other way round — still
-   * reported success. Both paths call this, so they cannot disagree again.
+   * Translate the shared target preference to the provider's language name or
+   * language code. The test request uses the same mapping as real translation.
    */
   function resolveTarget(provider, cfg = {}) {
-    if (provider?.targetKind === "code") {
-      return provider.target || cfg?.targetLanguage || "zh-CN";
-    }
-    return cfg?.targetLanguage || provider?.target || TARGET_DEFAULT;
+    return targetForLanguage(provider, cfg.targetLanguage) || provider?.target || TARGET_DEFAULT;
   }
 
   const languageByName = (name) =>
@@ -1363,7 +1472,7 @@
     if (provider?.id === "deepL") return language.deepl;
     if (provider?.id === "baidu") return language.baidu;
     if (provider?.id === "youdao") return language.youdao;
-    if (provider?.id === "bing-free") return language.bing;
+    if (["bing-free", "azure-translator"].includes(provider?.id)) return language.bing;
     if (provider?.id === "mymemory") return language.mymemory;
     return language.google;
   }
@@ -1394,7 +1503,7 @@
   function sourceForLanguage(provider, name) {
     const wanted = String(name || "").trim();
     if (!wanted || wanted === AUTO_SOURCE) {
-      if (provider?.id === "deepL") return "";
+      if (["deepL", "azure-translator", "google-cloud"].includes(provider?.id)) return "";
       if (provider?.id === "bing-free") return "auto-detect";
       if (provider?.id === "mymemory") return "Autodetect";
       return "auto";
@@ -1402,6 +1511,7 @@
     const language = languageByName(wanted);
     if (!language) return wanted;
     if (provider?.targetKind !== "code") return language.name;
+    if (provider.id === "deepL" && language.bing.startsWith("zh-")) return "ZH";
     return codeFor(provider, language);
   }
 
@@ -1420,15 +1530,18 @@
       provider.targetKind = "code";
       provider.chat = false;
     }
-    // Whether the settings page offers a free-text model box for this provider
-    // (only the OpenAI-compatible adapter reads one). The panel's model picker
-    // uses the same flag to decide whether "自定义…" can be honoured.
-    provider.modelEditable = provider.adapter === openAiCompatible;
+    provider.modelEditable = chatBased;
   }
 
   root.MAS_providers = {
     list: PROVIDERS,
     byId,
+    profileKeys,
+    profileKey,
+    providerSettings,
+    saveProvider,
+    configurationIssue,
+    appendProviderOptions,
     resolveProviderId,
     resolveTarget,
     targetForLanguage,

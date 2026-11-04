@@ -19,7 +19,6 @@ const translationEndpoint = document.getElementById("translationEndpoint");
 const translationModel = document.getElementById("translationModel");
 const translationAppId = document.getElementById("translationAppId");
 const translationApiKey = document.getElementById("translationApiKey");
-const translationProvider = providerSelect;
 const targetLanguage = document.getElementById("targetLanguage");
 const translationGlossary = document.getElementById("translationGlossary");
 const clearApiKey = document.getElementById("clearApiKey");
@@ -62,13 +61,9 @@ document.getElementById("revealKey").onclick = (event) => {
 };
 
 let savedApiKeyExists = false;
-let savedAppIdExists = false;
-// Which provider the stored model id was chosen for (see resolveModel in
-// providers.js) — switching sources must not carry it over.
-let savedModelOwner = "";
-let savedProviderId = "";
 let loadVersion = 0;
 let editVersion = 0;
+let providerDraftVersion = 0;
 const drafts = new Map();
 const providerFields = [
   "translationProvider", "translationEndpoint", "translationModel",
@@ -89,25 +84,6 @@ document.addEventListener("input", markDraft, true);
 document.addEventListener("change", markDraft, true);
 
 // --- 翻译来源选择 -----------------------------------------------------------
-
-function buildProviderOptions() {
-  const groups = new Map();
-  for (const provider of registry.list) {
-    if (!groups.has(provider.group)) groups.set(provider.group, []);
-    groups.get(provider.group).push(provider);
-  }
-  for (const [group, items] of groups) {
-    const optgroup = document.createElement("optgroup");
-    optgroup.label = group;
-    for (const provider of items) {
-      const option = document.createElement("option");
-      option.value = provider.id;
-      option.textContent = provider.label;
-      optgroup.appendChild(option);
-    }
-    providerSelect.appendChild(optgroup);
-  }
-}
 
 function buildGlossaryOptions() {
   for (const glossary of registry.glossaries || []) {
@@ -138,9 +114,12 @@ function describeProvider() {
 
   fieldEndpoint.hidden = !provider.endpointEditable;
   fieldModel.hidden = !provider.modelEditable;
-  fieldAppId.hidden = !provider.appIdRequired;
-  fieldKey.hidden = !provider.keyRequired;
-  fieldTarget.hidden = provider.targetKind !== "name";
+  fieldAppId.hidden = !(provider.appIdRequired || provider.appIdOptional);
+  fieldKey.hidden = !(provider.keyRequired || provider.keyOptional);
+  fieldTarget.hidden = !provider.adapter;
+  document.getElementById("targetHint").textContent = provider.targetKind === "name"
+    ? "与侧栏及文档页同步，也可输入其他语言名称。"
+    : "与侧栏及文档页同步。请选择此来源支持的目标语言。";
   const ai = registry.isChatProvider(provider);
   document.getElementById("translationStrength").disabled = !ai;
   fieldGlossary.classList.toggle("ai-disabled", !ai);
@@ -164,7 +143,10 @@ function describeProvider() {
       "保存时会向浏览器申请该域名的访问权限；只申请你填写的这一个域名。";
   }
   if (!fieldModel.hidden) {
-    translationModel.placeholder = provider.model ? `默认 ${provider.model}` : "例如 gpt-4o-mini";
+    translationModel.placeholder = provider.model ? `默认 ${provider.model}` : "填写接口支持的模型 ID";
+    document.getElementById("providerModels").replaceChildren(
+      ...registry.modelsOf(provider).map(model => new Option(model.label, model.id)),
+    );
   }
   if (!fieldKey.hidden) {
     keyLabel.textContent = provider.keyLabel || "API Key";
@@ -208,11 +190,23 @@ function showResult(text, kind = "ok") {
   result.dataset.kind = kind;
 }
 
-providerSelect.addEventListener("change", () => {
-  if (savedModelOwner && savedModelOwner !== providerSelect.value) {
-    translationModel.value = "";
+function showProviderSettings(settings) {
+  for (const input of [translationEndpoint, translationModel, translationAppId]) {
+    if (!drafts.has(input.id)) input.value = settings[input.id];
   }
+  savedApiKeyExists = Boolean(settings.translationApiKey);
   describeProvider();
+}
+
+providerSelect.addEventListener("change", async () => {
+  const version = ++providerDraftVersion;
+  const id = providerSelect.value;
+  for (const key of providerFields.slice(1)) drafts.delete(key);
+  translationApiKey.value = "";
+  clearApiKey.checked = false;
+  showProviderSettings(registry.providerSettings({}, id));
+  const cfg = await chrome.storage.local.get([...registry.profileKeys, registry.profileKey(id)]);
+  if (version === providerDraftVersion) showProviderSettings(registry.providerSettings(cfg, id));
 });
 
 selectionTranslate.addEventListener("change", () => {
@@ -230,26 +224,14 @@ document.getElementById("save").onclick = async () => {
   const editing = new Map(drafts);
   const providerChanged = editing.has("translationProvider");
   const endpoint = provider.endpointEditable
-    ? (providerChanged && !editing.has("translationEndpoint") ? "" : translationEndpoint.value.trim().replace(/\/+$/, ""))
-    : provider.endpoint || "";
+    ? translationEndpoint.value.trim().replace(/\/+$/, "")
+    : "";
 
   const cfg = {
     debugMode: debugMode.checked,
     backendUrl: backendUrl.value.trim().replace(/\/+$/, ""),
-    translationProvider: provider.id,
-    // Kept in step for the code paths that still read it. Both branches used to
-    // return the same string, so this looked like a mapping while mapping
-    // nothing — and it pinned the "自建后端" provider to a mode that always
-    // failed, whatever the user did.
-    translationMode: provider.id === "none" ? "none" : (provider.id === "google-free" || provider.id === "backend")
-      ? "free-translate"
-      : "openai-compatible",
     translationEndpoint: endpoint,
     translationModel: translationModel.value.trim(),
-    // Which provider the model box was filled in for. The panel has its own
-    // model picker now, and this is what keeps one vendor's model id from
-    // being sent to the next vendor after a source switch.
-    translationModelProvider: provider.id,
     translationAppId: translationAppId.value.trim(),
     autoTranslate: autoTranslate.checked,
     webAutoTranslate: webAutoTranslate.checked,
@@ -264,35 +246,26 @@ document.getElementById("save").onclick = async () => {
     fontScale: Number(fontScale.value) / 100,
     overlayOpacity: Number(overlayOpacity.value) / 100
   };
-  // Only the chat-based providers use the language *name*; saving the box's
-  // leftover value while it is hidden is how a code-based provider (DeepL,
-  // Baidu, Google) ended up being sent "繁體中文" as a language code. Leaving
-  // the key out preserves whatever was last typed for the providers that do
-  // use it.
-  if (provider.targetKind === "name") {
-    cfg.targetLanguage = targetLanguage.value.trim();
-  }
+  cfg.targetLanguage = targetLanguage.value.trim();
   const newKey = translationApiKey.value.trim();
   if (newKey) cfg.translationApiKey = newKey;
   else if (clearApiKey.checked) cfg.translationApiKey = "";
 
   // Saving one draft must not write old copies of fields edited in the sidebar.
-  const providerDefaults = new Set(["translationMode", "translationEndpoint", "translationModel", "translationModelProvider", "translationAppId"]);
   for (const key of Object.keys(cfg)) {
     if (editing.has(key) || key === "translationApiKey") continue;
-    if (providerChanged && providerDefaults.has(key)) continue;
-    if (key === "translationModelProvider" && editing.has("translationModel")) continue;
     delete cfg[key];
   }
-  if (!Object.keys(cfg).length) { showResult("没有需要保存的修改。"); return; }
+  if (!providerChanged && !Object.keys(cfg).length) { showResult("没有需要保存的修改。"); return; }
   const save = document.getElementById("save");
   save.disabled = true;
   try {
-    if (providerChanged || editing.has("translationEndpoint")) await ensureEndpointPermission(provider, endpoint);
-    if (!providerChanged && providerFields.some(key => editing.has(key)) && savedProviderId !== provider.id) {
-      throw new Error("翻译来源已在侧栏变更，请先确认完整设置中的来源，再保存接口、模型或密钥。");
+    if (editing.has("translationEndpoint")) await ensureEndpointPermission(provider, endpoint);
+    if (providerFields.some(key => editing.has(key))) {
+      await registry.saveProvider(provider.id, cfg, { onlyIfCurrent: !providerChanged });
+    } else {
+      await chrome.storage.local.set(cfg);
     }
-    await chrome.storage.local.set(cfg);
   } catch (error) {
     showResult(error.message, "error");
     return;
@@ -313,10 +286,13 @@ document.getElementById("test").onclick = async () => {
   testResult.dataset.kind = "pending";
   testResult.textContent = "正在测试…";
   try {
+    if (providerFields.some(key => drafts.has(key)) || drafts.has("targetLanguage")) {
+      throw new Error("请先保存翻译设置，再测试连接");
+    }
     const response = await chrome.runtime.sendMessage({ type: "TEST_TRANSLATION" });
     if (response?.ok) {
       testResult.dataset.kind = "ok";
-      testResult.textContent = `测试成功：「おはよう」→「${response.translated}」`;
+      testResult.textContent = `测试成功：「${response.text}」→「${response.translated}」`;
     } else {
       testResult.dataset.kind = "error";
       testResult.textContent = `测试失败：${response?.error || "未知错误"}`;
@@ -338,7 +314,9 @@ function describeBackend() {
 
 async function load() {
   const version = ++loadVersion;
-  const cfg = await chrome.storage.local.get(settingsKeys);
+  const cfg = await chrome.storage.local.get([
+    ...settingsKeys, ...registry.list.map(provider => registry.profileKey(provider.id)),
+  ]);
   if (version !== loadVersion) return;
   const set = (element, value) => {
     if (!drafts.has(element.id)) element[element.type === "checkbox" ? "checked" : "value"] = value;
@@ -360,26 +338,19 @@ async function load() {
 
   document.getElementById("version").textContent = chrome.runtime.getManifest().version;
 
-  savedProviderId = registry.resolveProviderId(cfg);
   if (!providerFields.some(key => drafts.has(key))) {
-    providerSelect.value = savedProviderId;
-    translationEndpoint.value = cfg.translationEndpoint || "";
-    savedModelOwner = cfg.translationModelProvider || "";
-    translationModel.value = savedModelOwner && savedModelOwner !== savedProviderId ? "" : cfg.translationModel || "";
-    translationAppId.value = cfg.translationAppId || "";
+    providerSelect.value = registry.resolveProviderId(cfg);
   }
   set(targetLanguage, cfg.targetLanguage || "");
   set(translationGlossary, registry.glossaryById?.(cfg.translationGlossary)?.id || "general");
-  savedApiKeyExists = Boolean(cfg.translationApiKey);
-  savedAppIdExists = Boolean(cfg.translationAppId);
-
   describeBackend();
-  describeProvider();
+  showProviderSettings(registry.providerSettings(cfg, providerSelect.value));
 }
 
 backendUrl.addEventListener("input", describeBackend);
 
-buildProviderOptions();
+registry.appendProviderOptions(providerSelect);
+for (const language of registry.languages) document.getElementById("targetLanguages").append(new Option(language.name));
 buildGlossaryOptions();
 load();
 chrome.storage.onChanged.addListener((changes, area) => {

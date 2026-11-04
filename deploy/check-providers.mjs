@@ -46,6 +46,19 @@ for (const [name, cfg, expected] of [
 ]) {
   check(name, providers.resolveProviderId(cfg) === expected);
 }
+const previousSettings = {
+  translationProvider: "azure-translator", translationModelProvider: "deepseek",
+  translationApiKey: "DEEPSEEK-FIXTURE", translationModel: "deepseek-flash",
+  translationEndpoint: "https://api.deepseek.com/v1/chat/completions",
+};
+check("旧版侧栏切换后，按配置归属读取密钥",
+  providers.providerSettings(previousSettings, "deepseek").translationApiKey === "DEEPSEEK-FIXTURE" &&
+  providers.providerSettings(previousSettings, "azure-translator").translationApiKey === "" &&
+  providers.providerSettings(previousSettings, "azure-translator").translationEndpoint === "");
+check("快捷来源读取对应配置",
+  providers.providerSettings({
+    ...previousSettings, [providers.profileKey("azure-translator")]: { translationApiKey: "AZURE-FIXTURE" },
+  }, "azure-translator").translationApiKey === "AZURE-FIXTURE");
 
 // --- hashing: the hand-written MD5 is the risky part ------------------------
 section("MD5（百度签名用，手写实现）");
@@ -94,9 +107,14 @@ check(
 
 const geminiReq = await requestFor("gemini");
 check("gemini 使用 generateContent", geminiReq.url.includes(":generateContent"));
-check("gemini 把密钥放在查询串", geminiReq.url.includes("key=KEY"));
+check("gemini 使用密钥请求头", geminiReq.init.headers["x-goog-api-key"] === "KEY" && !geminiReq.url.includes("KEY"));
+const deepseekRequest = await requestFor("deepseek", { providerId: "deepseek" });
+check("DeepSeek V4 翻译关闭思考模式",
+  JSON.parse(deepseekRequest.init.body).thinking?.type === "disabled");
 
 const claudeReq = await requestFor("claude");
+check("不固定推理模型的采样参数",
+  !("temperature" in JSON.parse(openaiReq.init.body)) && !("temperature" in JSON.parse(claudeReq.init.body)));
 check("claude 用 x-api-key", claudeReq.init.headers["x-api-key"] === "KEY");
 check("claude 声明 anthropic-version", Boolean(claudeReq.init.headers["anthropic-version"]));
 check(
@@ -107,6 +125,22 @@ check(
 const deepLReq = await requestFor("deepL");
 check("deepl 使用 DeepL-Auth-Key", deepLReq.init.headers.Authorization === "DeepL-Auth-Key KEY");
 check("deepl 一次带多条文本", JSON.parse(deepLReq.init.body).text.length === 2);
+const deepLFreeReq = await requestFor("deepL", { apiKey: "KEY:fx" });
+check("DeepL 根据密钥选择 Free / Pro",
+  deepLFreeReq.url === "https://api-free.deepl.com/v2/translate" && deepLReq.url === "https://api.deepl.com/v2/translate");
+
+const azureReq = await requestFor("azure-translator", { source: "", target: "zh-Hant", appId: "eastasia" });
+check("Microsoft Translator 自动识别和区域请求头",
+  new URL(azureReq.url).searchParams.get("to") === "zh-Hant" &&
+  !new URL(azureReq.url).searchParams.has("from") &&
+  azureReq.init.headers["Ocp-Apim-Subscription-Key"] === "KEY" &&
+  azureReq.init.headers["Ocp-Apim-Subscription-Region"] === "eastasia" &&
+  JSON.parse(azureReq.init.body)[1].Text === TEXTS[1]);
+const cloudReq = await requestFor("google-cloud", { source: "" });
+check("Google Cloud Basic v2 文本请求",
+  cloudReq.init.headers["x-goog-api-key"] === "KEY" &&
+  JSON.parse(cloudReq.init.body).format === "text" &&
+  !("source" in JSON.parse(cloudReq.init.body)));
 
 const googleReq = await requestFor("google-free", { text: "おはよう" });
 check("google 免密钥", !googleReq.init.headers || !googleReq.init.headers.Authorization);
@@ -492,11 +526,12 @@ check("Grok（xAI）条目存在，型号是现行 Grok 家族",
     && providers.byId("xai").host === "https://api.x.ai/*"
     && providers.byId("xai").model === "grok-4.7"
     && providers.modelsOf(providers.byId("xai")).some((m) => m.id === "grok-4.6"));
-check("自定义模型框只开给读它的适配器（OpenAI 兼容）",
+check("支持设置 AI 模型 ID",
   providers.byId("deepseek").modelEditable === true
     && providers.byId("custom").modelEditable === true
-    && providers.byId("gemini").modelEditable === false
-    && providers.byId("claude").modelEditable === false);
+    && providers.byId("gemini").modelEditable === true
+    && providers.byId("claude").modelEditable === true
+    && providers.byId("azure-translator").modelEditable === false);
 
 // --- response parsing -------------------------------------------------------
 section("响应解析");
@@ -508,10 +543,12 @@ const cases = [
   ["openai 带代码块", "openai", { choices: [{ message: { content: '```json\n["甲","乙"]\n```' } }] }],
   ["openai 前后有解释", "openai", { choices: [{ message: { content: '好的：\n["甲","乙"]\n完成' } }] }],
   ["openai 换行兜底", "openai", { choices: [{ message: { content: "1. 甲\n2. 乙" } }] }],
-  ["gemini", "gemini", { candidates: [{ content: { parts: [{ text: '["甲","乙"]' }] } }] }],
+  ["gemini", "gemini", { candidates: [{ content: { parts: [{ thought: true, text: "thinking" }, { text: '["甲","乙"]' }] } }] }],
   ["claude", "claude", { content: [{ text: '["甲","乙"]' }] }],
   ["google 免密钥", "google-free", [[["甲", "おはよう", null, null, 10], ["乙", "ありがとう", null, null, 10]], null, "ja"]],
   ["deepl", "deepL", { translations: [{ text: "甲" }, { text: "乙" }] }],
+  ["Microsoft Translator", "azure-translator", [{ translations: [{ text: "甲" }] }, { translations: [{ text: "乙" }] }]],
+  ["Google Cloud", "google-cloud", { data: { translations: [{ translatedText: "甲" }, { translatedText: "乙" }] } }],
   ["baidu", "baidu", { trans_result: [{ src: "a", dst: "甲" }, { src: "b", dst: "乙" }] }],
   ["youdao", "youdao", { errorCode: "0", translation: ["甲", "乙"] }],
   ["mymemory", "mymemory", { responseStatus: 200, responseData: { translatedText: "甲乙" } }],
@@ -583,8 +620,9 @@ check("对话类：用户填写的语言名生效",
   providers.resolveTarget(openAiProvider, { targetLanguage: "繁體中文" }) === "繁體中文");
 check("对话类：未填写时回落到默认语言名",
   providers.resolveTarget(openAiProvider, {}) === "简体中文");
-check("翻译 API：沿用语言代码，忽略用户填的语言名",
-  providers.resolveTarget(deepLProvider, { targetLanguage: "繁體中文" }) === "ZH");
+check("翻译 API：把全局目标语言转换成服务代码",
+  providers.resolveTarget(deepLProvider, { targetLanguage: "繁體中文" }) === "ZH-HANT" &&
+  providers.resolveTarget(providers.byId("azure-translator"), { targetLanguage: "繁體中文" }) === "zh-Hant");
 check("翻译 API：未填写时也返回语言代码",
   providers.resolveTarget(deepLProvider, {}) === "ZH");
 

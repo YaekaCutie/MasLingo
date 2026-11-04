@@ -360,6 +360,10 @@ try {
       } else {
         fail(`popup could not reach the backend; status was: ${JSON.stringify(status)}`);
       }
+      await popup.evaluate(() => {
+        document.getElementById("details").open = false;
+        window.scrollTo(0, 0);
+      });
     }
 
     // Connection failures against a backend that simply is not running are the

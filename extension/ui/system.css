@@ -41,6 +41,20 @@ textarea {
   color: var(--ink);
   background: #fff;
 }
+select {
+  min-height: 36px;
+  border-radius: 8px;
+  border-color: #d5deef;
+  padding-inline: 12px 8px;
+}
+select:not(:disabled):hover {
+  border-color: #a9bdeb;
+}
+select:disabled {
+  color: var(--muted);
+  background: var(--soft);
+  cursor: default;
+}
 button {
   font-weight: 500;
   transition:

@@ -343,6 +343,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           source: provider.source || "ja",
           texts: [message.text],
           strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
+          providerId: provider.id,
           glossary: cfg.translationGlossary || "general",
           // Baidu signs with a random salt and a timestamp; without them the
           // signature is built over the literal string "undefined" and the
@@ -401,7 +402,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           "translationAppId", "targetLanguage", "translationStrength",
           "translationGlossary",
         ]);
-        applyQuickProvider(cfg, message.provider);
+        await applyQuickProvider(cfg, message.provider);
         const provider = resolveProvider(cfg);
         if (!provider) {
           sendResponse({ ok: false, reason: "尚未选择翻译来源" });
@@ -521,8 +522,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "translationModel", "translationApiKey", "translationAppId", "targetLanguage",
         "translationStrength", "translationModelProvider", "translationGlossary",
       ]);
-      const translated = await runTranslation(["おはよう"], cfg);
-      sendResponse({ ok: true, translated: translated[0] });
+      const registry = globalThis.MAS_providers;
+      const provider = resolveProvider(cfg);
+      const issue = registry.configurationIssue(provider, registry.providerSettings(cfg, provider?.id));
+      if (issue) throw new Error(issue);
+      const japanese = registry.languageBase(registry.resolveTarget(provider, cfg)) === "ja";
+      const source = japanese ? "English" : "日本語";
+      const text = japanese ? "Good morning." : "おはよう";
+      const translated = await runTranslation([text], cfg, {
+        source: registry.sourceForLanguage(provider, source), sourceName: source, sourceLocked: true,
+      });
+      sendResponse({ ok: true, text, translated: translated[0] });
     } catch (error) {
       sendResponse({ ok: false, error: error.message });
     }
@@ -826,12 +836,14 @@ async function providerFetch(url, init, provider, timeoutMs) {
   let response;
   if (provider?.id === "backend") {
     const backends = await globalThis.MAS_backendCandidates();
+    const configured = url.slice(0, -"/api/translate-text".length);
+    if (configured !== provider.endpoint && !backends.includes(configured)) backends.unshift(configured);
     let lastError = null;
     response = null;
     for (const base of backends) {
       try {
-        const candidate = await timedFetch(`${base}${new URL(url).pathname}`, init);
-        if (candidate.ok || candidate.status >= 400) { response = candidate; break; }
+        const candidate = await timedFetch(`${base}/api/translate-text`, init);
+        if (candidate.ok || candidate.status !== 404) { response = candidate; break; }
         lastError = new Error(`${base} 响应失败: ${candidate.status}`);
       } catch (error) {
         lastError = error;
@@ -854,6 +866,10 @@ async function providerFetch(url, init, provider, timeoutMs) {
     // Some gateways answer with HTML on failure; keep a snippet for the message.
   }
   if (!response.ok) {
+    if (provider?.id === "bing-free" && [401, 403].includes(response.status)) {
+      provider.resetSession();
+      throw new Error(`必应网页翻译拒绝了会话（${response.status}）。可重试，或切换到 Microsoft Translator 官方 API。`);
+    }
     const detail = json?.error?.message || json?.message || json?.detail ||
       text.slice(0, 160).replace(/\s+/g, " ").trim();
     // 429 and the anti-bot interstitial are the two failures users will hit
@@ -861,7 +877,7 @@ async function providerFetch(url, init, provider, timeoutMs) {
     if (response.status === 429) {
       throw new Error("翻译服务限流了（429）。稍后再试，或在设置里换用其它翻译来源。");
     }
-    if (response.status === 403 || /sorry\/index/.test(text)) {
+    if ((response.status === 403 && !json) || /sorry\/index/.test(text)) {
       throw new Error("翻译服务拒绝了这次请求（疑似反爬限制）。请换用其它翻译来源。");
     }
     throw new Error(`翻译服务返回 ${response.status}${detail ? `：${detail}` : ""}`);
@@ -881,14 +897,17 @@ async function providerFetch(url, init, provider, timeoutMs) {
  * strength or target resolution cannot apply to only one of those paths.
  */
 function providerRequestCommon(provider, cfg, overrides = {}) {
+  const registry = globalThis.MAS_providers;
+  const settings = registry.providerSettings(cfg, provider.id);
   return {
-    endpoint: (cfg.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),
-    apiKey: cfg.translationApiKey || "",
-    appId: cfg.translationAppId || "",
-    model: globalThis.MAS_providers.resolveModel(provider, cfg),
+    endpoint: (settings.translationEndpoint || provider.endpoint || "").replace(/\/+$/, ""),
+    apiKey: settings.translationApiKey,
+    appId: settings.translationAppId,
+    model: registry.resolveModel(provider, { ...settings, translationModelProvider: provider.id }),
     mode: cfg.translationMode || "openai-compatible",
     strength: globalThis.MAS_providers.normalizeStrength(cfg.translationStrength),
     glossary: cfg.translationGlossary || "general",
+    providerId: provider.id,
     source: overrides.source ?? provider.source ?? "ja",
     // Chat models are told the language in words; code APIs already got a code.
     sourceName: overrides.sourceName || "日文",
@@ -1020,13 +1039,20 @@ async function runTranslation(texts, cfg, overrides = {}) {
 }
 
 // Context controls can select registered providers, never arbitrary endpoints.
-function applyQuickProvider(cfg, id) {
-  if(!id || id===globalThis.MAS_providers.resolveProviderId(cfg))return;
-  const provider=globalThis.MAS_providers.byId(id);
-  if(!provider || provider.id==='none')throw new Error('无效的翻译来源');
-  cfg.translationProvider=id;cfg.translationMode=effectiveMode(provider);
-  cfg.translationEndpoint=provider.endpoint || '';
-  cfg.translationModel='';cfg.translationModelProvider=id;
+async function applyQuickProvider(cfg, id) {
+  const registry = globalThis.MAS_providers;
+  if (!id || id === registry.resolveProviderId(cfg)) return;
+  const provider = registry.byId(id);
+  if (!provider?.adapter) throw new Error("无效的翻译来源");
+  const saved = await chrome.storage.local.get(registry.profileKey(id));
+  const settings = registry.providerSettings({ ...cfg, ...saved }, id);
+  const issue = registry.configurationIssue(provider, settings);
+  if (issue) throw new Error(`${provider.label}：${issue}，请前往扩展设置。`);
+  Object.assign(cfg, settings, {
+    translationProvider: id,
+    translationMode: effectiveMode(provider),
+    translationModelProvider: id,
+  });
 }
 
 
@@ -1053,7 +1079,7 @@ async function lookupSelection(rawText, rawContext, wantsDictionary = false, opt
     "translationAppId", "targetLanguage", "translationStrength",
     "translationGlossary",
   ]);
-  applyQuickProvider(cfg, options.provider);
+  await applyQuickProvider(cfg, options.provider);
   const provider = resolveProvider(cfg);
   if (!provider) throw new Error("尚未选择翻译来源");
 

@@ -18,13 +18,10 @@
   let job = null;
   let previewPage = 0;
 
-  // The global settings hold one provider's credentials. Quick choices here
-  // are limited to services that do not need those credentials.
-  providerSelect.append(new Option("跟随扩展设置", ""), ...["google-free", "bing-free", "mymemory"]
-    .map(id => registry.byId(id)).filter(Boolean).map(provider => new Option(provider.label, provider.id)));
+  providerSelect.append(new Option("跟随扩展设置", ""));
   const languageOptions = () => registry.languages.map(language => new Option(language.name));
   sourceSelect.append(new Option(registry.autoSource), ...languageOptions());
-  targetSelect.append(new Option("跟随全局", ""), ...languageOptions());
+  targetSelect.append(new Option("跟随扩展设置", ""), ...languageOptions());
   glossarySelect.append(new Option("跟随扩展设置", ""),
     ...registry.glossaries.map(glossary => new Option(glossary.label, glossary.id)));
   const suffix = selected => /\.[^.]+$/.exec(selected?.name || "")?.[0].toLowerCase() || "";
@@ -39,7 +36,8 @@
 
   function syncControls() {
     const provider = selectedProvider();
-    const usable = provider && provider.id !== "none";
+    const issue = config ? config.issues.get(provider?.id) || (!provider ? "翻译已关闭" : "") : "";
+    const usable = provider && !issue;
     const ai = registry.isChatProvider(provider);
     $("fields").disabled = Boolean(active);
     $("cancel").hidden = !active;
@@ -51,25 +49,39 @@
     for (const id of ["download-bilingual", "download-translated", "copy"]) $(id).disabled = Boolean(active || !complete());
     $("route").textContent = config ? (usable
       ? `文件由 ${config.origin} 处理，待译文字发送给 ${provider.label}。`
-      : "请选择翻译来源，或前往扩展设置配置服务。") : "";
+      : `${issue}。请选择其他来源，或前往扩展设置配置服务。`) : "";
+    $("provider-note").textContent = provider?.note || "";
+    $("provider-note").hidden = !provider?.note;
   }
 
   async function refreshSettings() {
     const version = ++settingsVersion;
     try {
       const [cfg, backends] = await Promise.all([
-        chrome.storage.local.get(["translationProvider", "translationMode", "translationEndpoint", "targetLanguage", "translationGlossary"]),
+        chrome.storage.local.get([
+          ...registry.profileKeys, "targetLanguage", "translationGlossary",
+          ...registry.list.map(provider => registry.profileKey(provider.id)),
+        ]),
         globalThis.MAS_backendCandidates(),
       ]);
       if (version !== settingsVersion) return;
       const url = new URL(backends[0]);
       if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("后端地址无效");
+      const issues = new Map(registry.list.map(provider => [
+        provider.id, registry.configurationIssue(provider, registry.providerSettings(cfg, provider.id)),
+      ]));
       config = {
         base: backends[0], origin: url.origin, provider: registry.resolveProviderId(cfg),
-        target: cfg.targetLanguage || "简体中文", glossary: cfg.translationGlossary || "general",
+        target: cfg.targetLanguage || "简体中文", glossary: cfg.translationGlossary || "general", issues,
       };
+      const override = providerSelect.value;
+      providerSelect.replaceChildren(new Option("跟随扩展设置", ""));
+      registry.appendProviderOptions(providerSelect, {
+        include: provider => Boolean(provider.adapter), issues,
+      });
+      if (override && !issues.get(override)) providerSelect.value = override;
       providerSelect.options[0].textContent = `跟随扩展设置（${registry.byId(config.provider)?.label || "未配置"}）`;
-      targetSelect.options[0].textContent = `跟随全局（${config.target}）`;
+      targetSelect.options[0].textContent = `跟随设置（${config.target}）`;
       glossarySelect.options[0].textContent = `跟随扩展设置（${registry.glossaryById(config.glossary)?.label || "通用"}）`;
     } catch (error) {
       if (version !== settingsVersion) return;
@@ -314,7 +326,8 @@
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !Object.keys(changes).some(key => key.startsWith("translation") || key === "backendUrl" || key === "targetLanguage")) return;
-    active?.abort("扩展翻译设置已变更，请重新开始。");
+    if (active) active.abort("扩展翻译设置已变更，请重新开始。");
+    else if (job) status("扩展翻译设置已变更，可重新开始翻译。");
     config = null;
     resetResults();
     refreshSettings();

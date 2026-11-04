@@ -245,7 +245,8 @@ class AppTests(unittest.TestCase):
     def test_translate_text_route(self, translate_texts_mock):
         response = self.client.post(
             "/api/translate-text",
-            json={"texts": ["こんにちは", "テスト"], "mode": "free-translate"},
+            json={"texts": ["こんにちは", "テスト"], "mode": "free-translate",
+                  "source_language": "auto", "target_language": "zh-TW"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -256,7 +257,7 @@ class AppTests(unittest.TestCase):
                 {"text": "テスト", "translated": "测试"},
             ],
         )
-        translate_texts_mock.assert_called_once_with(["こんにちは", "テスト"])
+        translate_texts_mock.assert_called_once_with(["こんにちは", "テスト"], "auto", "zh-TW")
 
     @patch("backend.translation.local_translator._translate_single", return_value="今天天气很好。你好")
     def test_google_translation_receives_full_japanese_sentence(self, translate_single_mock):
@@ -271,7 +272,7 @@ class AppTests(unittest.TestCase):
             result.json()["items"][0]["translated"],
             "今天天气很好。你好",
         )
-        translate_single_mock.assert_called_once_with(source)
+        translate_single_mock.assert_called_once_with(source, "ja", "zh-CN")
 
     @patch("backend.app.translate_texts")
     def test_translation_is_disabled_by_default(self, translate_texts_mock):

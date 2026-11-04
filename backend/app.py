@@ -142,6 +142,8 @@ class TranslationRequest(BaseModel):
     endpoint: str = ""
     model: str = ""
     api_key: str = ""
+    source_language: str = "ja"
+    target_language: str = "zh-CN"
 
 
 app.add_middleware(
@@ -250,7 +252,9 @@ async def translate_text(request: TranslationRequest):
                     400,
                     "此服务器已禁用 Google 翻译，请在扩展设置里改用 OpenAI-compatible API。",
                 )
-            translated = await run_in_threadpool(translate_texts, items)
+            translated = await run_in_threadpool(
+                translate_texts, items, request.source_language, request.target_language
+            )
         elif request.mode == "openai-compatible":
             # Resolution is a blocking DNS lookup, so it belongs off the loop.
             await run_in_threadpool(_check_endpoint_allowed, request.endpoint)

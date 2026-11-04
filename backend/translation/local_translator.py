@@ -35,11 +35,11 @@ def _retry_delay(exc: urllib_error.HTTPError, attempt: int) -> Optional[float]:
     return 0.5 * (2 ** attempt)
 
 
-def _translate_single(text: str) -> str:
+def _translate_single(text: str, source: str = "ja", target: str = "zh-CN") -> str:
     params = {
         "client": "gtx",
-        "sl": "ja",
-        "tl": "zh-CN",
+        "sl": source,
+        "tl": target,
         "dt": "t",
         "q": text,
     }
@@ -82,9 +82,9 @@ def _translate_single(text: str) -> str:
         raise RuntimeError("免费翻译服务返回的译文格式无效。") from exc
 
 
-def translate_texts(texts: Sequence[str]) -> list[str]:
+def translate_texts(texts: Sequence[str], source: str = "ja", target: str = "zh-CN") -> list[str]:
     cleaned = [str(text).strip() for text in texts if str(text).strip()]
     if not cleaned:
         return []
 
-    return [_translate_single(text) for text in cleaned]
+    return [_translate_single(text, source, target) for text in cleaned]

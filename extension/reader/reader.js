@@ -198,10 +198,9 @@
   async function load() {
     const id = ++settingsVersion;
     const cfg = await chrome.storage.local.get([
+      ...registry.profileKeys,
       ...controls,
       "webDisplayMode",
-      "translationProvider",
-      "translationMode",
       "targetLanguage",
       "translationGlossary",
     ]);
@@ -236,13 +235,12 @@
     $("translationGlossary").disabled = !ai;
     $("provider-label").textContent =
       `${provider?.label || "请选择翻译来源"} · ${cfg.targetLanguage || "简体中文"}`;
-    $("provider-hint").textContent =
-      provider?.id === "none"
-        ? "先在设置中选择翻译来源。"
-        : "悬停和划词结果显示在此侧栏。";
+    const issue = registry.configurationIssue(provider, registry.providerSettings(cfg, provider?.id));
+    $("provider-hint").textContent = issue
+      ? `${issue}，可在完整设置中配置。`
+      : "悬停和划词结果显示在此侧栏。";
   }
-  for (const p of registry.list)
-    $("translationProvider").append(new Option(p.label, p.id));
+  registry.appendProviderOptions($("translationProvider"));
   for (const l of registry.languages)
     $("targetLanguage").append(new Option(l.name, l.name));
   for (const g of registry.glossaries)
@@ -257,15 +255,8 @@
     $(key).addEventListener("change", async () => {
       try {
         const value = controls.includes(key) ? $(key).checked : $(key).value;
-        const update = { [key]: value };
-        if (key === "translationProvider")
-          update.translationMode =
-            value === "none"
-              ? "none"
-              : ["backend", "google-free"].includes(value)
-                ? "free-translate"
-                : "openai-compatible";
-        await chrome.storage.local.set(update);
+        if (key === "translationProvider") await registry.saveProvider(value);
+        else await chrome.storage.local.set({ [key]: value });
         report("偏好已保存");
       } catch {
         report("保存失败，请重试");
