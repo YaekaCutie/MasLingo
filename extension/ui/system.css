@@ -229,15 +229,7 @@ hr {
   align-items: center;
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  background: var(--blue);
-  color: white;
-  border-radius: 6px;
-  font-size: 15px;
-  font-weight: 700;
+  flex: none;
 }
 .state-dot {
   display: inline-block;

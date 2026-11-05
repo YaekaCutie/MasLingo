@@ -1,10 +1,6 @@
 body { display: flow-root; min-height: 100vh; background: var(--soft); }
 main { max-width: 1120px; margin: 38px auto; padding: 0 18px; }
 .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-.brand-mark {
-  display: grid; place-items: center; flex: none; width: 42px; height: 42px;
-  border-radius: 10px; color: white; background: var(--blue); font-weight: 700;
-}
 h1 { font-size: 24px; }
 header p, .hint { color: var(--muted); }
 .brand > a { margin-left: auto; white-space: nowrap; }

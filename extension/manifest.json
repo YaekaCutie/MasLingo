@@ -3,6 +3,12 @@
   "name": "MasLingo",
   "version": "1.1.8",
   "description": "网页、漫画与视频翻译：双语阅读、划词词典和独立阅读侧栏。",
+  "icons": {
+    "16": "assets/maslingo-16.png",
+    "32": "assets/maslingo-32.png",
+    "48": "assets/maslingo-48.png",
+    "128": "assets/maslingo-128.png"
+  },
   "permissions": [
     "activeTab",
     "scripting",
@@ -45,6 +51,11 @@
     "service_worker": "background/service-worker.js"
   },
   "action": {
+    "default_icon": {
+      "16": "assets/maslingo-16.png",
+      "24": "assets/maslingo-24.png",
+      "32": "assets/maslingo-32.png"
+    },
     "default_popup": "popup/popup.html"
   },
   "content_scripts": [
